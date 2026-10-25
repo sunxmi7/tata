@@ -139,6 +139,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{Name: "Messages", Path: "/messages", Meta: map[string]any{"title": "追问消息", "order": 11}},
 		{Name: "Audit", Path: "/audit", Meta: map[string]any{"title": "审计日志", "order": 12}},
 		{Name: "IAPOrders", Path: "/iap-orders", Meta: map[string]any{"title": "IAP 订单", "order": 13}},
+		{Name: "Grant", Path: "/grant", Meta: map[string]any{"title": "人工补发", "order": 14}},
 	}
 	writeOK(w, items)
 	return nil
@@ -388,7 +389,7 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	writeOK(w, map[string]any{
 		"reset_at":                "北京时间 08:00",
 		"daily_free_count":        1,
-		"shared_scope":            "全玩法共用：注册奖励，今日免费次数，然后钻石",
+		"shared_scope":            "全玩法共用：注册奖励，今日免费次数，人工补发免费次数，然后钻石",
 		"failure_policy":          "已扣不退",
 		"editable":                false,
 		"diamond_cost":            diamondCost,

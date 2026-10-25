@@ -94,23 +94,24 @@ func (a *App) adminLedger(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, user_id, reading_id, entitlement, amount, reason, result, created_at FROM ledger ORDER BY id DESC LIMIT 200`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, user_id, reading_id, entitlement, amount, reason, result, created_at, grant_id FROM ledger ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	list := []map[string]any{}
 	for rows.Next() {
-		var id, userID, readingID int64
+		var id, userID int64
+		var readingID, grantID sql.NullInt64
 		var entitlement, reason, result string
 		var amount int
 		var created time.Time
-		if err := rows.Scan(&id, &userID, &readingID, &entitlement, &amount, &reason, &result, &created); err != nil {
+		if err := rows.Scan(&id, &userID, &readingID, &entitlement, &amount, &reason, &result, &created, &grantID); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
-			"id": id, "user_id": userID, "reading_id": readingID, "entitlement": entitlement,
-			"amount": amount, "reason": reason, "result": result, "created_at": created,
+			"id": id, "user_id": userID, "reading_id": nullInt(readingID), "entitlement": entitlement,
+			"amount": amount, "reason": reason, "result": result, "created_at": created, "grant_id": nullInt(grantID),
 		})
 	}
 	writeOK(w, list)
@@ -369,9 +370,10 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
-	var subDiamonds, packDiamonds int
+	var subDiamonds, packDiamonds, adminGrantRemaining int
 	if uid > 0 {
 		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_diamonds, pack_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&subDiamonds, &packDiamonds)
+		_ = a.Store.QueryRow(r.Context(), `SELECT admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&adminGrantRemaining)
 	}
 	cost, configured, _ := loadDiamondCost(r.Context(), a.Store)
 	var diamondCost any
@@ -383,11 +385,12 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		"daily_free_used": used, "daily_free_count": 1,
 		"daily_free_remaining": dailyRemaining, "daily_used_flags": usedFlags,
 		"reward_remaining":            rewardRemaining,
+		"admin_grant_free_remaining":  adminGrantRemaining,
 		"paid_subscription_remaining": subRemaining, "paid_pack_remaining": packRemaining,
 		"subscription_prompt_required": subPrompt,
 		"free_label":                   "次数",
 		"paid_label":                   "钻石",
-		"priority":                     "注册奖励 → 今日免费次数 → 钻石 → 付费",
+		"priority":                     "注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费",
 		"diamond_spend_order":          "pack_then_subscription",
 		"diamond_cost":                 diamondCost,
 		"diamond_cost_configured":      configured,

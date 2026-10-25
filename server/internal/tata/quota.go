@@ -15,8 +15,11 @@ import (
 // Shared quota priority (B1, free tier keeps the older sub-order):
 //  1. registration reward (user-facing 次数)
 //  2. today's daily free (user-facing 次数)
-//  3. diamonds (user-facing 钻石 / 点数)
-//  4. paywall — success resumes the interrupted task; cancel keeps it and does not generate
+//  3. admin-granted free counts (user-facing 次数; skipped when the balance is 0)
+//  4. diamonds (user-facing 钻石 / 点数)
+//  5. paywall — success resumes the interrupted task; cancel keeps it and does not generate
+//
+// An admin grant only adds balance. It does not resume a paywall; that stays on IAP credit.
 //
 // Diamond bucket order is fixed: consumable pack first, then subscription.
 // One charge is taken from a single bucket (no split). Pack is spent first because
@@ -29,11 +32,12 @@ import (
 const (
 	chargeKeyPlay = "play"
 
-	entReward = "registration_reward"
-	entDaily  = "daily_free"
-	entPack   = "diamond_pack"
-	entSub    = "diamond_subscription"
-	entTrial  = "ai_trial"
+	entReward    = "registration_reward"
+	entDaily     = "daily_free"
+	entPack      = "diamond_pack"
+	entSub       = "diamond_subscription"
+	entTrial     = "ai_trial"
+	entAdminFree = "admin_grant_free"
 
 	quotaCharged   = "charged"
 	quotaAlready   = "already"
@@ -55,7 +59,7 @@ const (
 	paywallCancel  = "cancelled"
 	paywallUncfg   = "unconfigured"
 
-	quotaClosedNote = "已按优先级处理：注册奖励，今日免费次数，然后钻石"
+	quotaClosedNote = "已按优先级处理：注册奖励，今日免费次数，人工补发免费次数，然后钻石"
 	wechatQuotaNote = "注册奖励优先于今日免费次数，提问时自动扣减"
 )
 
@@ -170,6 +174,16 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 		}
 		return quotaDecision{Status: quotaCharged, Entitlement: entDaily, Amount: 1, Continue: true}, nil
 	}
+	granted, err := consumeAdminGrant(ctx, tx, opts.UserID)
+	if err != nil {
+		return quotaDecision{}, err
+	}
+	if granted {
+		if err := recordCharge(ctx, tx, opts, entAdminFree, 1, "", "消耗人工补发免费次数"); err != nil {
+			return quotaDecision{}, err
+		}
+		return quotaDecision{Status: quotaCharged, Entitlement: entAdminFree, Amount: 1, Continue: true}, nil
+	}
 	cost, configured, err := loadDiamondCost(ctx, tx)
 	if err != nil {
 		return quotaDecision{}, err
@@ -247,6 +261,14 @@ func takeDailyFree(ctx context.Context, tx Tx, uid int64, cycle string, readingI
 		return true, nil
 	}
 	tag, err := tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, readingID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func consumeAdminGrant(ctx context.Context, ex execer, uid int64) (bool, error) {
+	tag, err := ex.Exec(ctx, `UPDATE rewards SET admin_grant_remaining = admin_grant_remaining - 1 WHERE user_id=$1 AND admin_grant_remaining > 0`, uid)
 	if err != nil {
 		return false, err
 	}
