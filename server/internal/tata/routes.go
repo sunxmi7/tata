@@ -103,6 +103,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret", a.h(a.appInterpret))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/confirm-quota", a.h(a.appConfirmQuota))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/use-reward", a.h(a.appUseReward))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/paywall", a.h(a.appCancelPaywall))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups", a.h(a.appFollowup))
 	mux.HandleFunc("GET /api/app/v1/readings/{id}/messages", a.h(a.appMessages))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/workflow", a.h(a.appWorkflow))

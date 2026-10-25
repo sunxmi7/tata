@@ -27,9 +27,14 @@ func (a *App) generate(ctx context.Context, id int64, adminRetry bool) (map[stri
 	if userID == nil {
 		return nil, biz("获取答案前必须登录")
 	}
-	if !quotaConsumed && !first && !rewardConsumed && kind != "daily" {
-		return nil, biz("今日免费体验额度已用完，本次记录已保存到历史记录")
+	var settled bool
+	if err := a.Store.QueryRow(ctx, `SELECT quota_settled FROM readings WHERE id=$1`, id).Scan(&settled); err != nil {
+		return nil, err
 	}
+	if !quotaConsumed && !rewardConsumed && !settled {
+		return nil, biz("额度未扣减，记录已保留，不继续生成")
+	}
+	_ = first
 	if cards == nil || *cards == "" {
 		return nil, biz("牌面尚未固定")
 	}

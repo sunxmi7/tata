@@ -377,12 +377,25 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
+	cost, configured, err := loadDiamondCost(r.Context(), a.Store)
+	if err != nil {
+		return err
+	}
+	var diamondCost any
+	if configured {
+		diamondCost = cost
+	}
 	writeOK(w, map[string]any{
-		"reset_at":         "北京时间 08:00",
-		"daily_free_count": 1,
-		"shared_scope":     "普通占卜与今日一牌二选一",
-		"failure_policy":   "已扣不退",
-		"editable":         false,
+		"reset_at":                "北京时间 08:00",
+		"daily_free_count":        1,
+		"shared_scope":            "全玩法共用：注册奖励，今日免费次数，然后钻石",
+		"failure_policy":          "已扣不退",
+		"editable":                false,
+		"diamond_cost":            diamondCost,
+		"diamond_cost_configured": configured,
+		"diamond_spend_order":     "pack_then_subscription",
+		"free_label":              "次数",
+		"paid_label":              "钻石",
 	})
 	return nil
 }

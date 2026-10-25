@@ -3,6 +3,7 @@ package tata
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -206,37 +207,26 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
 	var readingID int64
-	err := a.Store.QueryRow(r.Context(), `SELECT id FROM readings WHERE user_id=$1 AND deleted_at IS NULL AND reward_consumed=false AND quota_consumed=false ORDER BY id DESC LIMIT 1`, uid).Scan(&readingID)
+	err := a.Store.QueryRow(r.Context(), `SELECT id FROM readings WHERE user_id=$1 AND deleted_at IS NULL AND quota_settled=false AND reward_consumed=false AND quota_consumed=false ORDER BY id DESC LIMIT 1`, uid).Scan(&readingID)
 	if err != nil {
 		return false
 	}
-	ok, err := consumeRewardBalance(r.Context(), a.Store, uid)
-	if err == nil && ok {
-		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET reward_consumed=true, updated_at=now() WHERE id=$1`, readingID)
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'registration_reward',1,'开始提问即消耗注册奖励','consumed')`, uid, readingID)
-		return true
-	}
-	cycle := a.userCycle(r, uid)
-	handled, consumedDaily, derr := consumeMergedDaily(r.Context(), a.Store, uid, cycle)
-	if derr != nil {
+	tx, err := a.Store.Begin(r.Context())
+	if err != nil {
 		return false
 	}
-	if handled {
-		if !consumedDaily {
-			return false
+	defer tx.Rollback(r.Context())
+	decision, err := settleSharedQuota(r.Context(), tx, chargeOpts{
+		UserID: uid, ReadingID: readingID, ChargeKey: chargeKeyPlay, Cycle: a.userCycle(r, uid),
+		AllowTrial: true, ResumeAction: resumeHold,
+	})
+	if err != nil || !decision.Continue {
+		if err == nil {
+			_ = tx.Commit(r.Context())
 		}
-		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, readingID)
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'开始提问即消耗本次次数','consumed')`, uid, readingID)
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, readingID)
-		return true
-	}
-	tag, err := a.Store.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, readingID)
-	if err != nil || tag.RowsAffected() == 0 {
 		return false
 	}
-	_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, readingID)
-	_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'开始提问即消耗本次次数','consumed')`, uid, readingID)
-	return true
+	return tx.Commit(r.Context()) == nil
 }
 
 func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
@@ -379,6 +369,15 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
+	var subDiamonds, packDiamonds int
+	if uid > 0 {
+		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_diamonds, pack_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&subDiamonds, &packDiamonds)
+	}
+	cost, configured, _ := loadDiamondCost(r.Context(), a.Store)
+	var diamondCost any
+	if configured {
+		diamondCost = cost
+	}
 	writeOK(w, map[string]any{
 		"cycle": cycle, "reset_at": "北京时间 08:00",
 		"daily_free_used": used, "daily_free_count": 1,
@@ -386,6 +385,14 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		"reward_remaining":            rewardRemaining,
 		"paid_subscription_remaining": subRemaining, "paid_pack_remaining": packRemaining,
 		"subscription_prompt_required": subPrompt,
+		"free_label":                   "次数",
+		"paid_label":                   "钻石",
+		"priority":                     "注册奖励 → 今日免费次数 → 钻石 → 付费",
+		"diamond_spend_order":          "pack_then_subscription",
+		"diamond_cost":                 diamondCost,
+		"diamond_cost_configured":      configured,
+		"subscription_diamonds":        subDiamonds,
+		"pack_diamonds":                packDiamonds,
 	})
 	return nil
 }
@@ -408,8 +415,14 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 	if req.Type == "" {
 		req.Type = "normal"
 	}
-	if req.Type != "normal" && req.Type != "tarotist" {
+	if req.Source == "explore" && (req.Type == "normal" || req.Type == "explore") {
+		req.Type = "explore"
+	}
+	if req.Type != "normal" && req.Type != "tarotist" && req.Type != "explore" {
 		return biz("记录类型不正确")
+	}
+	if req.Type == "explore" {
+		req.SkipDetect = true
 	}
 	if len([]rune(req.Question)) > 200 {
 		return biz("问题超过 200 个码点，正式计数口径尚未确认")
@@ -492,77 +505,37 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 		return nil, err
 	}
 	cycle := cycleOf(time.Now())
+	if uid > 0 {
+		cycle = cycleFor(time.Now(), userTimezone(ctx, tx, uid))
+	}
+	if kind == "explore" {
+		skip = true
+	}
 	if _, err := tx.Exec(ctx, `UPDATE readings SET business_date=$1, skip_detect=$2 WHERE id=$3`, cycle, skip, id); err != nil {
 		return nil, err
 	}
-	if kind == "tarotist" && uid > 0 {
-		var used bool
-		if err := tx.QueryRow(ctx, `SELECT tarotist_trial_used FROM app_users WHERE id=$1`, uid).Scan(&used); err != nil {
-			return nil, err
-		}
-		if used {
-			return nil, biz("AI 塔罗师试用已用完，不扣每日额度")
-		}
-		if _, err := tx.Exec(ctx, `UPDATE app_users SET tarotist_trial_used=true WHERE id=$1`, uid); err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return a.loadReading(ctx, id)
-	}
+	// Logged-in ordinary / AI readings charge at step 1. Explore waits until the ritual gate.
+	// Anonymous readings are not pre-charged.
 	consumed := false
 	exhausted := false
 	rewardUsed := false
-	if uid > 0 {
-		rewardOK, err := consumeRewardBalance(ctx, tx, uid)
+	var decision quotaDecision
+	switch {
+	case uid > 0 && kind != "explore":
+		decision, err = settleSharedQuota(ctx, tx, chargeOpts{
+			UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
+			AllowTrial: true, ResumeAction: resumeHold,
+		})
 		if err != nil {
 			return nil, err
 		}
-		if rewardOK {
-			rewardUsed = true
-			if _, err := tx.Exec(ctx, `UPDATE readings SET reward_consumed=true, updated_at=now() WHERE id=$1`, id); err != nil {
-				return nil, err
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'registration_reward',1,'新用户登录后扣注册奖励','consumed')`, uid, id); err != nil {
-				return nil, err
-			}
-		} else {
-			handled, consumedDaily, err := consumeMergedDaily(ctx, tx, uid, cycle)
-			if err != nil {
-				return nil, err
-			}
-			if handled {
-				if consumedDaily {
-					consumed = true
-					if _, err := tx.Exec(ctx, `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, id); err != nil {
-						return nil, err
-					}
-					if _, err := tx.Exec(ctx, `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'开始提问即消耗本次次数','consumed')`, uid, id); err != nil {
-						return nil, err
-					}
-					_, _ = tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-				} else {
-					exhausted = true
-				}
-			} else {
-				tag, err := tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-				if err != nil {
-					return nil, err
-				}
-				if tag.RowsAffected() == 1 {
-					consumed = true
-					if _, err := tx.Exec(ctx, `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, id); err != nil {
-						return nil, err
-					}
-					if _, err := tx.Exec(ctx, `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'开始提问即消耗本次次数','consumed')`, uid, id); err != nil {
-						return nil, err
-					}
-				} else {
-					exhausted = true
-				}
-			}
-		}
+		rewardUsed = decision.Status == quotaCharged && decision.Entitlement == entReward
+		consumed = decision.Status == quotaCharged && decision.Entitlement == entDaily
+		exhausted = !decision.Continue
+	case uid == 0:
+		decision.Status = quotaAnon
+	default:
+		decision.Status = quotaDeferred
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -575,10 +548,25 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	item["quota_consumed"] = consumed || item["quota_consumed"] == true
 	item["reward_consumed"] = rewardUsed || item["reward_consumed"] == true
 	item["needs_confirm"] = false
-	if exhausted {
-		item["quota_prompt"] = "今日免费体验额度已用完，本次记录已保存到历史记录"
+	item["quota_outcome"] = decision.Status
+	item["entitlement"] = decision.Entitlement
+	item["paywall"] = decision.paywall()
+	item["diamond_cost_unconfigured"] = decision.unconfigured()
+	item["kept"] = true
+	item["generated"] = false
+	if exhausted && decision.Message != "" {
+		item["quota_prompt"] = decision.Message
 	}
 	return item, nil
+}
+
+func userTimezone(ctx context.Context, ex execer, uid int64) string {
+	tz := "Asia/Shanghai"
+	_ = ex.QueryRow(ctx, `SELECT timezone FROM app_users WHERE id=$1`, uid).Scan(&tz)
+	if tz == "" {
+		return "Asia/Shanghai"
+	}
+	return tz
 }
 
 func nullID(id int64) any {
@@ -633,6 +621,10 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
+	stop, err := a.gatePlay(w, r, resumeDraw)
+	if err != nil || stop {
+		return err
+	}
 	uid, anon, err := a.appActor(r)
 	if err != nil {
 		return err
@@ -705,6 +697,17 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	var kind, question string
+	if err := a.Store.QueryRow(r.Context(), `SELECT type, question FROM readings WHERE id=$1`, id).Scan(&kind, &question); err != nil {
+		return err
+	}
+	if kind == "explore" && strings.TrimSpace(question) == "" {
+		return biz("请先填写问题")
+	}
+	stop, err := a.gatePlay(w, r, resumeInterpret)
+	if err != nil || stop {
 		return err
 	}
 	item, err := a.generate(r.Context(), id, false)
@@ -785,74 +788,90 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能抽今日一牌")
 	}
-	cycle := cycleOf(time.Now())
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	cycle := a.userCycle(r, uid)
+	business := cycle
+	question := "今日一牌"
+	slotName := "今日"
+	meaning := "当日一牌"
+	switch req.Target {
+	case "", "today":
+	case "tomorrow":
+		business, err = nextBusinessDate(cycle)
+		if err != nil {
+			return err
+		}
+		question = "明日运势"
+		slotName = "明日"
+		meaning = "明日运势"
+	default:
+		return biz("目标日期不正确")
+	}
+	var existingID int64
+	err = a.Store.QueryRow(r.Context(), `SELECT id FROM readings
+		WHERE user_id=$1 AND type='daily' AND business_date=$2 AND deleted_at IS NULL
+		AND cards IS NOT NULL AND cards <> ''
+		ORDER BY id DESC LIMIT 1`, uid, business).Scan(&existingID)
+	if err == nil {
+		item, loadErr := a.loadReading(r.Context(), existingID)
+		if loadErr != nil {
+			return loadErr
+		}
+		msg := "当日今日一牌名额已占用"
+		if business != cycle {
+			msg = "该日已有结果，不重复扣次数或钻石"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"code": 1, "message": msg,
+			"data": map[string]any{"reused": true, "charged": false, "reading": item},
+		})
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	tx, err := a.Store.Begin(r.Context())
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(r.Context())
-	useBalance, remaining, slotRemaining, err := lockDailyBalance(r.Context(), tx, uid, cycle)
-	if err != nil {
-		return err
-	}
-	if useBalance {
-		if slotRemaining <= 0 {
-			return biz("当日今日一牌名额已占用")
-		}
-		if remaining <= 0 {
-			return biz("今日免费资格已用完")
-		}
-	} else {
-		taken, err := dailySlotTaken(r.Context(), tx, uid, cycle)
-		if err != nil {
-			return err
-		}
-		if taken {
-			return biz("当日今日一牌名额已占用")
-		}
-	}
-	cards, err := drawCards([]position{{Index: 1, Name: "今日", Meaning: "当日一牌"}})
-	if err != nil {
-		return err
-	}
 	var id int64
-	err = tx.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, status, cards, quota_cycle) VALUES ($1,'daily','今日一牌','CARDS_FIXED',$2,$3) RETURNING id`,
-		uid, mustJSON(cards), cycle).Scan(&id)
+	err = tx.QueryRow(r.Context(), `SELECT id FROM readings
+		WHERE user_id=$1 AND type='daily' AND business_date=$2 AND deleted_at IS NULL
+		AND (cards IS NULL OR cards='')
+		ORDER BY id DESC LIMIT 1 FOR UPDATE`, uid, business).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, quota_cycle)
+			VALUES ($1,'daily',$2,'QUESTION_CREATED',$3,$4) RETURNING id`, uid, question, business, cycle).Scan(&id)
+	}
 	if err != nil {
 		return err
 	}
-	if useBalance {
-		tag, err := tx.Exec(r.Context(), `UPDATE daily_free_balance
-			SET remaining=remaining-1, used_flags=used_flags+1, daily_slot_remaining=daily_slot_remaining-1, daily_slot_used=daily_slot_used+1
-			WHERE user_id=$1 AND cycle=$2 AND remaining>0 AND daily_slot_remaining>0`, uid, cycle)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return biz("今日免费资格已用完")
-		}
-		_, _ = tx.Exec(r.Context(), `INSERT INTO daily_slot(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-		_, _ = tx.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-	} else {
-		tag, err := tx.Exec(r.Context(), `INSERT INTO daily_slot(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return biz("当日今日一牌名额已占用")
-		}
-		tag, err = tx.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return biz("今日免费资格已用完")
-		}
-	}
-	if _, err := tx.Exec(r.Context(), `UPDATE readings SET quota_consumed=true, business_date=$2, updated_at=now() WHERE id=$1`, id, cycle); err != nil {
+	decision, err := settleSharedQuota(r.Context(), tx, chargeOpts{
+		UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
+		AllowTrial: false, ResumeAction: resumeDaily,
+	})
+	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'今日一牌提交','consumed')`, uid, id); err != nil {
+	if !decision.Continue {
+		if err := tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		writeQuotaBlock(w, decision, id)
+		return nil
+	}
+	cards, err := drawCards([]position{{Index: 1, Name: slotName, Meaning: meaning}})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(r.Context(), `UPDATE readings SET cards=$1, status='CARDS_FIXED', question=$2, business_date=$3, updated_at=now() WHERE id=$4`,
+		mustJSON(cards), question, business, id); err != nil {
 		return err
 	}
 	if err := tx.Commit(r.Context()); err != nil {

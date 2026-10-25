@@ -401,6 +401,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS diamond_ledger_order_bucket
   ON diamond_ledger(order_id, bucket) WHERE order_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS diamond_ledger_user_idx ON diamond_ledger(user_id, id DESC);
 `)
+	if err != nil {
+		return err
+	}
+	// Shared quota. diamond_cost stays NULL until configured — never seed a price or a per-play amount.
+	// Spend order is not stored here; quota.go always debits pack, then subscription.
+	_, err = s.Exec(ctx, `
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS quota_settled BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS quota_settings (
+  id INT PRIMARY KEY,
+  diamond_cost INT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT quota_settings_singleton CHECK (id = 1),
+  CONSTRAINT quota_settings_cost_chk CHECK (diamond_cost IS NULL OR diamond_cost > 0)
+);
+INSERT INTO quota_settings(id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS quota_charges (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  reading_id BIGINT NOT NULL,
+  charge_key TEXT NOT NULL,
+  entitlement TEXT NOT NULL,
+  amount INT NOT NULL,
+  bucket TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (reading_id, charge_key)
+);
+CREATE INDEX IF NOT EXISTS quota_charges_user_idx ON quota_charges(user_id, id DESC);
+CREATE TABLE IF NOT EXISTS quota_paywall (
+  reading_id BIGINT NOT NULL,
+  charge_key TEXT NOT NULL,
+  user_id BIGINT NOT NULL,
+  status TEXT NOT NULL,
+  resume_action TEXT NOT NULL,
+  resume_payload TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (reading_id, charge_key),
+  CONSTRAINT quota_paywall_status_chk CHECK (status IN ('pending','resumed','cancelled','unconfigured'))
+);
+`)
 	return err
 }
 

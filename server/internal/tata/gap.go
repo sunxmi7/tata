@@ -1,7 +1,10 @@
 package tata
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -80,7 +83,8 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access, _ := a.signAccess("app", id, "", "")
-	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_note": "扣减优先级未闭合，注册奖励不自动扣减"})
+	settled := a.settleQuestionStart(r, id)
+	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": wechatQuotaNote})
 }
 
 func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
@@ -215,16 +219,23 @@ func (a *App) appEditQuestion(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
+	var kind string
 	var skip bool
 	var status string
-	if err := a.Store.QueryRow(r.Context(), `SELECT skip_detect, status FROM readings WHERE id=$1`, id).Scan(&skip, &status); err != nil {
+	if err := a.Store.QueryRow(r.Context(), `SELECT type, skip_detect, status FROM readings WHERE id=$1`, id).Scan(&kind, &skip, &status); err != nil {
 		return err
 	}
-	if skip {
-		return biz("未进入问题检测，不能修改问题")
-	}
-	if status != "QUESTION_CREATED" && status != "SPREAD_SELECTED" {
-		return biz("抽牌后不能修改问题")
+	if kind == "explore" {
+		if status == "COMPLETED" || status == "INTERPRETING" {
+			return biz("抽牌后不能修改问题")
+		}
+	} else {
+		if skip {
+			return biz("未进入问题检测，不能修改问题")
+		}
+		if status != "QUESTION_CREATED" && status != "SPREAD_SELECTED" {
+			return biz("抽牌后不能修改问题")
+		}
 	}
 	var req struct {
 		Question string `json:"question"`
@@ -274,6 +285,10 @@ func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appShuffle(w http.ResponseWriter, r *http.Request) error {
+	stop, err := a.gatePlay(w, r, resumeShuffle)
+	if err != nil || stop {
+		return err
+	}
 	return a.moveRitual(w, r, "SPREAD_SELECTED", "SHUFFLING", "请先选择牌阵")
 }
 
@@ -320,49 +335,190 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
-	if replay, ok, err := a.beginIdem(r, "followup:"+fmtID(id), r.Header.Get("Idempotency-Key")); err != nil {
+	scope := "followup:" + fmtID(id)
+	idemKey := r.Header.Get("Idempotency-Key")
+	if replay, ok, err := a.beginIdem(r, scope, idemKey); err != nil {
 		return err
 	} else if ok {
 		writeJSON(w, http.StatusOK, json.RawMessage(replay))
 		return nil
 	}
-	var kind, status, question string
+	var req struct {
+		Text         string `json:"text"`
+		Continuation *bool  `json:"continuation"`
+	}
+	if err := decode(r, &req); err != nil || strings.TrimSpace(req.Text) == "" {
+		a.clearPendingIdem(r, scope, idemKey)
+		return biz("追问不能为空")
+	}
+	if req.Continuation == nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return biz("请标明是否延续原问题")
+	}
+	if !*req.Continuation {
+		if len([]rune(req.Text)) > 200 {
+			a.clearPendingIdem(r, scope, idemKey)
+			return biz("问题超过 200 个码点，正式计数口径尚未确认")
+		}
+		view, err := a.createNormal(r.Context(), uid, anon, strings.TrimSpace(req.Text), "normal", nil, false)
+		if err != nil {
+			a.clearPendingIdem(r, scope, idemKey)
+			return err
+		}
+		body := map[string]any{"new_reading": true, "reading": view, "charged_here": false}
+		a.finishIdem(r, scope, idemKey, body)
+		writeOK(w, body)
+		return nil
+	}
+	var kind, status string
 	var cards *string
-	var tarotistID *int64
-	err = a.Store.QueryRow(r.Context(), `SELECT type, status, question, cards, tarotist_id FROM readings WHERE id=$1`, id).Scan(&kind, &status, &question, &cards, &tarotistID)
+	err = a.Store.QueryRow(r.Context(), `SELECT type, status, cards FROM readings WHERE id=$1`, id).Scan(&kind, &status, &cards)
 	if err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
 		return err
 	}
-	if kind != "tarotist" {
-		return biz("只有 AI 塔罗师可以追问")
+	if kind != "normal" && kind != "explore" && kind != "daily" && kind != "tarotist" {
+		a.clearPendingIdem(r, scope, idemKey)
+		return biz("当前记录不能追问")
 	}
 	if status != "COMPLETED" && status != "FAILED_RETRYABLE" {
+		a.clearPendingIdem(r, scope, idemKey)
 		return biz("解读完成前不能追问")
 	}
 	if cards == nil || *cards == "" {
+		a.clearPendingIdem(r, scope, idemKey)
 		return biz("牌面尚未固定")
 	}
-	var req struct {
-		Text string `json:"text"`
-	}
-	if err := decode(r, &req); err != nil || strings.TrimSpace(req.Text) == "" {
-		return biz("追问不能为空")
+	if uid == 0 {
+		a.clearPendingIdem(r, scope, idemKey)
+		return biz("登录后才会扣次数或钻石")
 	}
 	if strings.Contains(req.Text, "别这样说") || strings.Contains(req.Text, "不舒服") {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE app_users SET tease_off=true WHERE id=$1`, uid)
 	}
-	var turn int64
-	_ = a.Store.QueryRow(r.Context(), `SELECT COALESCE(max(turn_id),0)+1 FROM reading_messages WHERE reading_id=$1`, id).Scan(&turn)
-	if _, err := a.Store.Exec(r.Context(), `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content) VALUES ($1,$2,0,'user',$3)`, id, turn, req.Text); err != nil {
+	tx, err := a.Store.Begin(r.Context())
+	if err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
 		return err
 	}
-	prompt := a.personaPrompt(r, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + req.Text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
-	step := a.runStep(r, "tarotist", prompt)
-	if step.Error != "" {
-		writeOK(w, map[string]any{"error": step.Error, "cards_unchanged": true})
+	defer tx.Rollback(r.Context())
+	var locked int64
+	if err := tx.QueryRow(r.Context(), `SELECT id FROM readings WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	turn, err := nextFollowupTurn(r.Context(), tx, id)
+	if err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	key := "followup:" + fmtID(turn)
+	decision, err := settleSharedQuota(r.Context(), tx, chargeOpts{
+		UserID: uid, ReadingID: id, ChargeKey: key, Cycle: a.userCycle(r, uid),
+		AllowTrial: true, ResumeAction: resumeFollowup,
+	})
+	if err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	if !decision.Continue {
+		_, _ = tx.Exec(r.Context(), `UPDATE quota_paywall SET resume_payload=$1, updated_at=now() WHERE reading_id=$2 AND charge_key=$3`,
+			strings.TrimSpace(req.Text), id, key)
+		if err := tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		a.clearPendingIdem(r, scope, idemKey)
+		writeQuotaBlock(w, decision, id)
 		return nil
 	}
-	parts := strings.Split(step.Output, "\n\n")
+	if err := ensureUserTurn(r.Context(), tx, id, turn, strings.TrimSpace(req.Text)); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	body, err := a.answerFollowup(r.Context(), id, uid, turn, strings.TrimSpace(req.Text))
+	if err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	body["quota_outcome"] = decision.Status
+	body["entitlement"] = decision.Entitlement
+	body["charged"] = decision.Status == quotaCharged && decision.Entitlement != entTrial
+	a.finishIdem(r, scope, idemKey, body)
+	writeOK(w, body)
+	return nil
+}
+
+func (a *App) clearPendingIdem(r *http.Request, scope, key string) {
+	if key == "" {
+		return
+	}
+	_, _ = a.Store.Exec(r.Context(), `DELETE FROM idempotency WHERE scope=$1 AND key=$2 AND status='pending'`, scope, key)
+}
+
+func (a *App) finishIdem(r *http.Request, scope, key string, data any) {
+	if key == "" {
+		return
+	}
+	raw, _ := json.Marshal(map[string]any{"code": 0, "data": data, "message": ""})
+	_, _ = a.Store.Exec(r.Context(), `UPDATE idempotency SET status='done', response=$1 WHERE scope=$2 AND key=$3`, string(raw), scope, key)
+}
+
+func nextFollowupTurn(ctx context.Context, ex execer, readingID int64) (int64, error) {
+	var open sql.NullInt64
+	err := ex.QueryRow(ctx, `SELECT turn_id FROM reading_messages
+		WHERE reading_id=$1 AND role='user'
+		AND NOT EXISTS (
+			SELECT 1 FROM reading_messages a
+			WHERE a.reading_id=$1 AND a.turn_id=reading_messages.turn_id AND a.role='assistant'
+		)
+		ORDER BY turn_id DESC LIMIT 1`, readingID).Scan(&open)
+	if err == nil && open.Valid {
+		return open.Int64, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	var turn int64
+	if err := ex.QueryRow(ctx, `SELECT COALESCE(max(turn_id),0)+1 FROM reading_messages WHERE reading_id=$1`, readingID).Scan(&turn); err != nil {
+		return 0, err
+	}
+	if turn <= 0 {
+		turn = 1
+	}
+	return turn, nil
+}
+
+func ensureUserTurn(ctx context.Context, ex execer, readingID, turn int64, text string) error {
+	var n int
+	if err := ex.QueryRow(ctx, `SELECT count(*) FROM reading_messages WHERE reading_id=$1 AND turn_id=$2 AND role='user'`, readingID, turn).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := ex.Exec(ctx, `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content) VALUES ($1,$2,0,'user',$3)`, readingID, turn, text)
+	return err
+}
+
+func (a *App) answerFollowup(ctx context.Context, readingID, uid, turn int64, text string) (map[string]any, error) {
+	var question string
+	var cards *string
+	var tarotistID *int64
+	if err := a.Store.QueryRow(ctx, `SELECT question, cards, tarotist_id FROM readings WHERE id=$1`, readingID).Scan(&question, &cards, &tarotistID); err != nil {
+		return nil, err
+	}
+	if cards == nil || *cards == "" {
+		return nil, biz("牌面尚未固定")
+	}
+	prompt := a.personaPrompt(ctx, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
+	_, _, output, err := a.runEino(ctx, "tarotist", prompt)
+	if err != nil {
+		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣次数或钻石", "cards_unchanged": true, "bubbles": []string{}}, nil
+	}
+	parts := strings.Split(output, "\n\n")
 	bubbles := []string{}
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
@@ -375,28 +531,29 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(bubbles) == 0 {
-		bubbles = []string{step.Output}
+		bubbles = []string{output}
 	}
-	for i, bubble := range bubbles {
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content) VALUES ($1,$2,$3,'assistant',$4)`, id, turn, i+1, bubble)
+	var existing int
+	_ = a.Store.QueryRow(ctx, `SELECT count(*) FROM reading_messages WHERE reading_id=$1 AND turn_id=$2 AND role='assistant'`, readingID, turn).Scan(&existing)
+	if existing == 0 {
+		for i, bubble := range bubbles {
+			if _, err := a.Store.Exec(ctx, `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content) VALUES ($1,$2,$3,'assistant',$4)`, readingID, turn, i+1, bubble); err != nil {
+				return nil, err
+			}
+		}
 	}
-	body := map[string]any{"turn_id": turn, "bubbles": bubbles, "cards_unchanged": true, "charged": false}
-	raw, _ := json.Marshal(map[string]any{"code": 0, "data": body, "message": ""})
-	if key := r.Header.Get("Idempotency-Key"); key != "" {
-		_, _ = a.Store.Exec(r.Context(), `UPDATE idempotency SET status='done', response=$1 WHERE scope=$2 AND key=$3`, string(raw), "followup:"+fmtID(id), key)
-	}
-	writeOK(w, body)
-	return nil
+	_, _ = a.Store.Exec(ctx, `UPDATE readings SET updated_at=now() WHERE id=$1`, readingID)
+	return map[string]any{"turn_id": turn, "bubbles": bubbles, "cards_unchanged": true}, nil
 }
 
-func (a *App) personaPrompt(r *http.Request, tarotistID *int64, uid int64) string {
+func (a *App) personaPrompt(ctx context.Context, tarotistID *int64, uid int64) string {
 	persona, voice, banned, ask, name := "", "", "", "", ""
 	if tarotistID != nil {
-		_ = a.Store.QueryRow(r.Context(), `SELECT name, persona, voice, banned, ask_style FROM tarotists WHERE id=$1`, *tarotistID).Scan(&name, &persona, &voice, &banned, &ask)
+		_ = a.Store.QueryRow(ctx, `SELECT name, persona, voice, banned, ask_style FROM tarotists WHERE id=$1`, *tarotistID).Scan(&name, &persona, &voice, &banned, &ask)
 	}
 	tease := false
 	if uid > 0 {
-		_ = a.Store.QueryRow(r.Context(), `SELECT tease_off FROM app_users WHERE id=$1`, uid).Scan(&tease)
+		_ = a.Store.QueryRow(ctx, `SELECT tease_off FROM app_users WHERE id=$1`, uid).Scan(&tease)
 	}
 	b := strings.Builder{}
 	b.WriteString("共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n")
@@ -494,12 +651,12 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
-	var consumed bool
-	if err := a.Store.QueryRow(r.Context(), `SELECT quota_consumed FROM readings WHERE id=$1`, id).Scan(&consumed); err != nil {
+	already, ent, err := playAlready(r.Context(), a.Store, id)
+	if err != nil {
 		return err
 	}
-	if consumed {
-		writeOK(w, map[string]any{"quota_consumed": true, "message": "已经扣过，不再扣"})
+	if already {
+		writeOK(w, map[string]any{"quota_consumed": true, "entitlement": ent, "message": "已经扣过，不再扣"})
 		return nil
 	}
 	var req struct {
@@ -510,33 +667,18 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 		writeOK(w, map[string]any{"quota_consumed": false, "message": "未确认，不扣额度，记录已保留"})
 		return nil
 	}
-	cycle := a.userCycle(r, uid)
-	handled, consumedDaily, err := consumeMergedDaily(r.Context(), a.Store, uid, cycle)
+	decision, err := a.chargeOwned(r, id, chargeKeyPlay, resumeHold)
 	if err != nil {
 		return err
 	}
-	if handled {
-		if !consumedDaily {
-			writeOK(w, map[string]any{"quota_consumed": false, "message": "今日免费体验额度已用完，本次记录已保存到历史记录"})
-			return nil
-		}
-		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, id)
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'用户确认消耗今日额度','consumed')`, uid, id)
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-		writeOK(w, map[string]any{"quota_consumed": true, "message": "已消耗今日免费额度"})
+	if !decision.Continue {
+		writeQuotaBlock(w, decision, id)
 		return nil
 	}
-	tag, err := a.Store.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		writeOK(w, map[string]any{"quota_consumed": false, "message": "今日免费体验额度已用完，本次记录已保存到历史记录"})
-		return nil
-	}
-	_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, id)
-	_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'用户确认消耗今日额度','consumed')`, uid, id)
-	writeOK(w, map[string]any{"quota_consumed": true, "message": "已消耗今日免费额度"})
+	writeOK(w, map[string]any{
+		"quota_consumed": true, "entitlement": decision.Entitlement, "quota_outcome": decision.Status,
+		"message": quotaClosedNote,
+	})
 	return nil
 }
 
@@ -552,19 +694,21 @@ func (a *App) appUseReward(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
-		return err
-	}
-	ok, err := consumeRewardBalance(r.Context(), a.Store, uid)
+	decision, err := a.chargeOwned(r, id, chargeKeyPlay, resumeHold)
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return biz("没有可用的注册奖励")
+	if !decision.Continue {
+		writeQuotaBlock(w, decision, id)
+		return nil
 	}
-	_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET reward_consumed=true, updated_at=now() WHERE id=$1`, id)
-	_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'registration_reward',1,'用户显式使用注册奖励','consumed')`, uid, id)
-	writeOK(w, map[string]any{"reward_consumed": true, "note": "与每日额度的自动优先级仍未闭合，只在用户点选时扣"})
+	writeOK(w, map[string]any{
+		"reward_consumed": decision.Entitlement == entReward,
+		"already":         decision.Status == quotaAlready,
+		"entitlement":     decision.Entitlement,
+		"quota_outcome":   decision.Status,
+		"note":            quotaClosedNote,
+	})
 	return nil
 }
 
