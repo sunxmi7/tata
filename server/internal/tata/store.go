@@ -300,6 +300,107 @@ CREATE TABLE IF NOT EXISTS retained_identities (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `)
+	if err != nil {
+		return err
+	}
+	// IAP diamond ledger. Price and diamond_grant stay NULL until configured.
+	// Subscription diamonds and consumable-pack diamonds are separate buckets.
+	// paid_pools remains the merge placeholder and is not an IAP credit target.
+	_, err = s.Exec(ctx, `
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS sku_id BIGINT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT '';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS store_original_transaction_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS auto_renew BOOLEAN;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_order_id BIGINT;
+CREATE INDEX IF NOT EXISTS subscriptions_store_txn_idx ON subscriptions(user_id, platform, store_original_transaction_id);
+CREATE TABLE IF NOT EXISTS iap_skus (
+  id BIGSERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  ledger_bucket TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  app_store_product_id TEXT,
+  play_product_id TEXT,
+  price_amount_minor BIGINT,
+  price_currency TEXT,
+  diamond_grant INT,
+  period_unit TEXT NOT NULL DEFAULT '',
+  period_count INT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT iap_skus_kind_chk CHECK (kind IN ('month_subscription','year_subscription','consumable_pack')),
+  CONSTRAINT iap_skus_bucket_chk CHECK (ledger_bucket IN ('subscription','consumable')),
+  CONSTRAINT iap_skus_bucket_kind_chk CHECK (
+    (kind IN ('month_subscription','year_subscription') AND ledger_bucket = 'subscription')
+    OR (kind = 'consumable_pack' AND ledger_bucket = 'consumable')
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS iap_skus_app_store_product_id
+  ON iap_skus(app_store_product_id) WHERE app_store_product_id IS NOT NULL AND app_store_product_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS iap_skus_play_product_id
+  ON iap_skus(play_product_id) WHERE play_product_id IS NOT NULL AND play_product_id <> '';
+CREATE TABLE IF NOT EXISTS iap_settings (
+  id INT PRIMARY KEY,
+  restore_hook_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  restore_required_first_pack BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT iap_settings_singleton CHECK (id = 1)
+);
+CREATE TABLE IF NOT EXISTS iap_orders (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  sku_id BIGINT,
+  sku_code TEXT NOT NULL DEFAULT '',
+  sku_kind TEXT NOT NULL DEFAULT '',
+  ledger_bucket TEXT NOT NULL DEFAULT '',
+  platform TEXT NOT NULL,
+  product_id TEXT NOT NULL DEFAULT '',
+  store_transaction_id TEXT NOT NULL,
+  original_transaction_id TEXT NOT NULL DEFAULT '',
+  verify_status TEXT NOT NULL,
+  credit_status TEXT NOT NULL,
+  credited_diamonds INT,
+  period_start TIMESTAMPTZ,
+  period_end TIMESTAMPTZ,
+  subscription_id BIGINT,
+  source TEXT NOT NULL,
+  verify_message TEXT NOT NULL DEFAULT '',
+  receipt_sha256 TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  verified_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT iap_orders_platform_chk CHECK (platform IN ('app_store','play')),
+  CONSTRAINT iap_orders_verify_chk CHECK (verify_status IN ('pending','verified','failed')),
+  CONSTRAINT iap_orders_credit_chk CHECK (credit_status IN ('none','credited','amount_unconfigured','skipped_expired')),
+  CONSTRAINT iap_orders_source_chk CHECK (source IN ('verify','restore'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS iap_orders_platform_txn ON iap_orders(platform, store_transaction_id);
+CREATE INDEX IF NOT EXISTS iap_orders_user_idx ON iap_orders(user_id, id DESC);
+CREATE TABLE IF NOT EXISTS diamond_balances (
+  user_id BIGINT PRIMARY KEY,
+  subscription_diamonds INT NOT NULL DEFAULT 0,
+  subscription_period_end TIMESTAMPTZ,
+  subscription_period_key TEXT NOT NULL DEFAULT '',
+  pack_diamonds INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS diamond_ledger (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  bucket TEXT NOT NULL,
+  delta INT NOT NULL,
+  balance_after INT NOT NULL,
+  order_id BIGINT,
+  store_transaction_id TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT diamond_ledger_bucket_chk CHECK (bucket IN ('subscription','consumable'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS diamond_ledger_order_bucket
+  ON diamond_ledger(order_id, bucket) WHERE order_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS diamond_ledger_user_idx ON diamond_ledger(user_id, id DESC);
+`)
 	return err
 }
 
@@ -345,7 +446,28 @@ func (s *Store) seed(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return s.seedIAP(ctx)
+}
+
+// seedIAP reserves month / year / consumable slots. Product ids, prices, and
+// diamond grants stay empty; callers configure them later without invented numbers.
+func (s *Store) seedIAP(ctx context.Context) error {
+	slots := []struct {
+		code, kind, bucket, name, period string
+	}{
+		{"sub_month", "month_subscription", "subscription", "月订阅", "month"},
+		{"sub_year", "year_subscription", "subscription", "年订阅", "year"},
+		{"pack_consumable", "consumable_pack", "consumable", "次卡 / 点数包", ""},
+	}
+	for _, slot := range slots {
+		if _, err := s.Exec(ctx, `INSERT INTO iap_skus(code, kind, ledger_bucket, display_name, period_unit)
+			VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT (code) DO NOTHING`, slot.code, slot.kind, slot.bucket, slot.name, slot.period); err != nil {
+			return err
+		}
+	}
+	_, err := s.Exec(ctx, `INSERT INTO iap_settings(id) VALUES (1) ON CONFLICT (id) DO NOTHING`)
+	return err
 }
 
 func (s *Store) ensureOperator(ctx context.Context, user, pass, role string) error {

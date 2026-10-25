@@ -70,6 +70,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/users", a.h(a.adminListUsers))
 	mux.HandleFunc("GET /api/admin/v1/audit", a.h(a.adminListAudit))
 	mux.HandleFunc("GET /api/admin/v1/account-merges", a.h(a.adminListAccountMerges))
+	mux.HandleFunc("GET /api/admin/v1/iap/orders", a.h(a.adminListIAPOrders))
+	mux.HandleFunc("GET /api/admin/v1/iap/skus", a.h(a.adminListIAPSKUs))
+	mux.HandleFunc("GET /api/admin/v1/iap/diamonds", a.h(a.adminIAPDiamonds))
+	mux.HandleFunc("GET /api/admin/v1/iap/config", a.h(a.adminIAPConfig))
 	mux.HandleFunc("GET /api/admin/v1/messages", a.h(a.adminListMessages))
 	mux.HandleFunc("GET /api/admin/v1/calendar", a.h(a.adminListCalendar))
 	mux.HandleFunc("POST /api/app/v1/auth/anonymous", a.appAnonymous)
@@ -107,6 +111,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/app/v1/readings/{id}", a.h(a.appDeleteReading))
 	mux.HandleFunc("POST /api/app/v1/daily", a.h(a.appDaily))
 	mux.HandleFunc("GET /api/app/v1/calendar", a.h(a.appCalendar))
+	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
+	mux.HandleFunc("POST /api/app/v1/iap/restore", a.h(a.appIAPRestore))
+	mux.HandleFunc("GET /api/app/v1/iap/entitlements", a.h(a.appIAPEntitlements))
+	mux.HandleFunc("GET /api/app/v1/iap/skus", a.h(a.appIAPSKUs))
+	mux.HandleFunc("GET /api/app/v1/iap/config", a.h(a.appIAPConfig))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

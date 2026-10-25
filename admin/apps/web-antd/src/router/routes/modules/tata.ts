@@ -88,6 +88,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/tata/audit/index.vue'),
         meta: { icon: 'lucide:scroll', title: '审计日志' },
       },
+      {
+        name: 'TataIAPOrders',
+        path: 'iap-orders',
+        component: () => import('#/views/tata/iap-order/index.vue'),
+        meta: { icon: 'lucide:receipt-text', title: 'IAP 订单' },
+      },
     ],
   },
 ];
