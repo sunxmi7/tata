@@ -138,6 +138,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{Name: "Calendar", Path: "/calendar", Meta: map[string]any{"title": "日历", "order": 10}},
 		{Name: "Messages", Path: "/messages", Meta: map[string]any{"title": "追问消息", "order": 11}},
 		{Name: "Audit", Path: "/audit", Meta: map[string]any{"title": "审计日志", "order": 12}},
+		{Name: "IAPOrders", Path: "/iap-orders", Meta: map[string]any{"title": "IAP 订单", "order": 13}},
 	}
 	writeOK(w, items)
 	return nil

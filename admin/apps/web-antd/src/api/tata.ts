@@ -109,3 +109,15 @@ export function listMessages() {
 export function listCalendar() {
   return requestClient.get<Record<string, unknown>[]>('/calendar');
 }
+export function listIAPOrders(userId?: string) {
+  const query = userId?.trim() ? `?user_id=${encodeURIComponent(userId.trim())}` : '';
+  return requestClient.get<Record<string, unknown>[]>(`/iap/orders${query}`);
+}
+export function listIAPSkus() {
+  return requestClient.get<Record<string, unknown>[]>('/iap/skus');
+}
+export function getIAPDiamonds(userId: string) {
+  return requestClient.get<Record<string, unknown>>(
+    `/iap/diamonds?user_id=${encodeURIComponent(userId)}`,
+  );
+}
