@@ -453,6 +453,9 @@ func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutc
 	if err != nil {
 		return mergeOutcome{}, err
 	}
+	if err := foldDiamonds(ctx, tx, primary, secondary); err != nil {
+		return mergeOutcome{}, err
+	}
 	decision, err := foldSubscriptions(ctx, tx, primary, secondary, now)
 	if err != nil {
 		return mergeOutcome{}, err
@@ -541,6 +544,15 @@ func rewardBalance(ctx context.Context, ex execer, uid int64, now time.Time) (in
 	return rem, exp, nil
 }
 
+func adminGrantRemaining(ctx context.Context, ex execer, uid int64) (int, error) {
+	var n int
+	err := ex.QueryRow(ctx, `SELECT admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
 func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.Time) (int, int, int, error) {
 	beforeP, expP, err := rewardBalance(ctx, tx, primary, now)
 	if err != nil {
@@ -550,16 +562,40 @@ func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.
 	if err != nil {
 		return 0, 0, 0, err
 	}
+	adminP, err := adminGrantRemaining(ctx, tx, primary)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	adminS, err := adminGrantRemaining(ctx, tx, secondary)
+	if err != nil {
+		return 0, 0, 0, err
+	}
 	after := beforeP + beforeS
+	adminAfter := adminP + adminS
 	if after > 0 {
 		exp := expP
 		if beforeP == 0 || (beforeS > 0 && expS.After(expP)) {
 			exp = expS
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, consumed_at)
-			VALUES ($1, now(), $2, $3, NULL)
-			ON CONFLICT (user_id) DO UPDATE SET remaining=EXCLUDED.remaining, expires_at=EXCLUDED.expires_at, consumed_at=NULL`,
-			primary, exp, after); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining, consumed_at)
+			VALUES ($1, now(), $2, $3, $4, NULL)
+			ON CONFLICT (user_id) DO UPDATE SET remaining=EXCLUDED.remaining, expires_at=EXCLUDED.expires_at, consumed_at=NULL, admin_grant_remaining=EXCLUDED.admin_grant_remaining`,
+			primary, exp, after, adminAfter); err != nil {
+			return 0, 0, 0, err
+		}
+	} else if adminAfter > 0 {
+		exp := now
+		var existing time.Time
+		err := tx.QueryRow(ctx, `SELECT expires_at FROM rewards WHERE user_id=$1`, primary).Scan(&existing)
+		if err == nil {
+			exp = existing
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, 0, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining, consumed_at)
+			VALUES ($1, now(), $2, 0, $3, now())
+			ON CONFLICT (user_id) DO UPDATE SET remaining=0, admin_grant_remaining=EXCLUDED.admin_grant_remaining`,
+			primary, exp, adminAfter); err != nil {
 			return 0, 0, 0, err
 		}
 	} else if _, err := tx.Exec(ctx, `UPDATE rewards SET remaining=0 WHERE user_id=$1`, primary); err != nil {
@@ -569,6 +605,66 @@ func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.
 		return 0, 0, 0, err
 	}
 	return beforeP, beforeS, after, nil
+}
+
+// foldDiamonds adds both diamond buckets onto the surviving account and moves
+// diamond_ledger rows with it. IAP order rows are left untouched.
+func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
+	type bal struct {
+		sub, pack int
+		end       sql.NullTime
+		key       string
+		ok        bool
+	}
+	load := func(uid int64) (bal, error) {
+		var b bal
+		err := tx.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key
+			FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&b.sub, &b.pack, &b.end, &b.key)
+		if errors.Is(err, sql.ErrNoRows) {
+			return bal{}, nil
+		}
+		if err != nil {
+			return bal{}, err
+		}
+		b.ok = true
+		return b, nil
+	}
+	left, err := load(primary)
+	if err != nil {
+		return err
+	}
+	right, err := load(secondary)
+	if err != nil {
+		return err
+	}
+	if !left.ok && !right.ok {
+		_, err = tx.Exec(ctx, `UPDATE diamond_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
+		return err
+	}
+	end, key := left.end, left.key
+	if right.end.Valid && (!end.Valid || right.end.Time.After(end.Time)) {
+		end, key = right.end, right.key
+	}
+	var endArg any
+	if end.Valid {
+		endArg = end.Time
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO diamond_balances(user_id, subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key, updated_at)
+		VALUES ($1,$2,$3,$4,$5,now())
+		ON CONFLICT (user_id) DO UPDATE SET
+			subscription_diamonds=EXCLUDED.subscription_diamonds,
+			pack_diamonds=EXCLUDED.pack_diamonds,
+			subscription_period_end=EXCLUDED.subscription_period_end,
+			subscription_period_key=EXCLUDED.subscription_period_key,
+			updated_at=now()`,
+		primary, left.sub+right.sub, left.pack+right.pack, endArg, key); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM diamond_balances WHERE user_id=$1`, secondary); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE diamond_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
+	return err
 }
 
 func foldPaid(ctx context.Context, tx Tx, primary, secondary int64) (subP, packP, subS, packS, subAfter, packAfter int, err error) {

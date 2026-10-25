@@ -121,3 +121,10 @@ export function getIAPDiamonds(userId: string) {
     `/iap/diamonds?user_id=${encodeURIComponent(userId)}`,
   );
 }
+export function listGrants(userId?: string) {
+  const query = userId?.trim() ? `?user_id=${encodeURIComponent(userId.trim())}` : '';
+  return requestClient.get<Record<string, unknown>>(`/grants${query}`);
+}
+export function createGrant(data: Record<string, unknown>) {
+  return requestClient.post<Record<string, unknown>>('/grants', data);
+}

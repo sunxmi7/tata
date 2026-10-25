@@ -14,7 +14,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="只读。不能手改余额。" title="额度流水">
+  <Page description="次数流水只读，不能手改。人工补发钻石或免费次数走「人工补发」。" title="额度流水">
     <Table
       :columns="[
         { title: '用户', dataIndex: 'user_id' },

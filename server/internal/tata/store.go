@@ -441,6 +441,40 @@ CREATE TABLE IF NOT EXISTS quota_paywall (
   CONSTRAINT quota_paywall_status_chk CHECK (status IN ('pending','resumed','cancelled','unconfigured'))
 );
 `)
+	if err != nil {
+		return err
+	}
+	// Controlled admin grant. This is a new credit, not an edit of ledger rows or IAP orders.
+	// Free counts land on rewards.admin_grant_remaining (still 次数). Diamonds add to
+	// pack_diamonds by default (ledger bucket consumable) or subscription_diamonds.
+	_, err = s.Exec(ctx, `
+ALTER TABLE rewards ADD COLUMN IF NOT EXISTS admin_grant_remaining INT NOT NULL DEFAULT 0;
+ALTER TABLE ledger ALTER COLUMN reading_id DROP NOT NULL;
+ALTER TABLE ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
+ALTER TABLE diamond_ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
+CREATE TABLE IF NOT EXISTS admin_grants (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  operator_id BIGINT NOT NULL,
+  kind TEXT NOT NULL,
+  amount INT NOT NULL,
+  bucket TEXT NOT NULL DEFAULT '',
+  ledger_bucket TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL,
+  note TEXT NOT NULL,
+  diamond_ledger_id BIGINT,
+  count_ledger_id BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT admin_grants_kind_chk CHECK (kind IN ('diamonds','free_count')),
+  CONSTRAINT admin_grants_bucket_chk CHECK (
+    (kind = 'diamonds' AND bucket IN ('pack','subscription'))
+    OR (kind = 'free_count' AND bucket = '')
+  ),
+  CONSTRAINT admin_grants_reason_chk CHECK (reason = 'admin_grant'),
+  CONSTRAINT admin_grants_amount_chk CHECK (amount > 0)
+);
+CREATE INDEX IF NOT EXISTS admin_grants_user_idx ON admin_grants(user_id, id DESC);
+`)
 	return err
 }
 

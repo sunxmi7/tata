@@ -63,6 +63,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/ledger", a.h(a.adminLedger))
 	mux.HandleFunc("POST /api/admin/v1/ledger", a.h(a.rejectLedgerWrite))
 	mux.HandleFunc("PUT /api/admin/v1/ledger/{id}", a.h(a.rejectLedgerWrite))
+	mux.HandleFunc("GET /api/admin/v1/grants", a.h(a.adminListGrants))
+	mux.HandleFunc("POST /api/admin/v1/grants", a.h(a.adminCreateGrant))
 
 	mux.HandleFunc("GET /api/admin/v1/operators", a.h(a.adminListOperators))
 	mux.HandleFunc("POST /api/admin/v1/operators", a.h(a.adminCreateOperator))
