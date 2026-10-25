@@ -1,0 +1,8 @@
+gfcli:
+  gen:
+    dao:
+      - link: "pgsql:tata:tata@tcp(127.0.0.1:54329)/tata?sslmode=disable"
+        descriptionTag: true
+        noModelComment: true
+        jsonCase: "snake"
+        path: "./internal"

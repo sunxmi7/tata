@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>塔塔接口演示</title>
+<style>
+body{font:14px/1.5 -apple-system,sans-serif;max-width:820px;margin:24px auto;padding:0 16px}
+button,input{font:inherit;margin:4px 4px 4px 0}
+pre{background:#f6f4ef;padding:12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h1>接口演示</h1>
+<p>这不是 App 客户端。用来走通匿名体验、注册、抽牌和解读。后台在 <a href="/admin">/admin</a>。</p>
+<button id="anon">匿名进入</button>
+<input id="email" placeholder="邮箱" value="demo@tata.local">
+<input id="pw" placeholder="密码" value="demo1234">
+<button id="reg">注册并认领</button>
+<button id="flow">抽时间流并解读</button>
+<pre id="out"></pre>
+<script>
+let token='', anon=''
+const out = document.querySelector('#out')
+function log(v){ out.textContent = typeof v==='string'? v : JSON.stringify(v,null,2) }
+async function api(path, opt={}){
+  const res = await fetch(path, {method:opt.method||'GET', headers:{'Content-Type':'application/json', Authorization: token?'Bearer '+token:''}, body: opt.body? JSON.stringify(opt.body): undefined})
+  const body = await res.json()
+  if(body.code!==0) throw new Error(body.message||'失败')
+  return body.data
+}
+document.querySelector('#anon').onclick = async () => {
+  const data = await api('/api/app/v1/auth/anonymous', {method:'POST', body:{}})
+  token = data.accessToken; anon = data.anonymous_id; log(data)
+}
+document.querySelector('#reg').onclick = async () => {
+  const email = document.querySelector('#email').value
+  const data = await api('/api/app/v1/auth/register', {method:'POST', body:{email, password:document.querySelector('#pw').value, anonymous_id: anon}})
+  token = data.accessToken; log(data)
+}
+document.querySelector('#flow').onclick = async () => {
+  try{
+    const spreads = await api('/api/app/v1/spreads')
+    const spread = spreads.find(s => s.name==='时间流') || spreads[0]
+    const created = await api('/api/app/v1/readings', {method:'POST', body:{question:'接下来三个月工作怎么选', type:'normal'}})
+    const selected = await api('/api/app/v1/readings/'+created.id+'/spread', {method:'POST', body:{spread_id: spread.id}})
+    const drawn = await api('/api/app/v1/readings/'+created.id+'/draw', {method:'POST', body:{mode:'normal'}})
+    let interpreted
+    try { interpreted = await api('/api/app/v1/readings/'+created.id+'/interpret', {method:'POST', body:{}}) }
+    catch(err){ interpreted = err.message }
+    log({spread: spread.name, created, selected_status: selected.status, cards: drawn.cards, interpreted})
+  }catch(err){ log(err.message) }
+}
+</script>
+</body>
+</html>

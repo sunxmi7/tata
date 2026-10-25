@@ -1,0 +1,14 @@
+server:
+  address: ":8080"
+  dumpRouterMap: false
+  openapiPath: ""
+
+database:
+  default:
+    link: "pgsql:tata:tata@tcp(127.0.0.1:54329)/tata?sslmode=disable"
+    debug: false
+
+redis:
+  default:
+    address: "127.0.0.1:63799"
+    db: 0

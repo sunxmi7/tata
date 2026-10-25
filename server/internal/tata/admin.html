@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>塔塔运营后台</title>
+<style>
+body{margin:0;font:14px/1.5 -apple-system,sans-serif;background:#f6f4ef;color:#1c1915}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:#1c1915;color:#f6f4ef}
+nav{display:flex;gap:8px;flex-wrap:wrap;padding:12px 20px}
+button,input,textarea,select{font:inherit}
+button{border:1px solid #1c1915;background:#fff;padding:6px 10px;cursor:pointer}
+button.on{background:#1c1915;color:#fff}
+main{padding:0 20px 40px}
+table{border-collapse:collapse;width:100%;background:#fff}
+td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}
+label{display:block;margin:8px 0}
+.err{color:#9b1c1c}
+.box{background:#fff;padding:12px;margin:12px 0}
+</style>
+</head>
+<body>
+<header><strong>塔塔运营后台</strong><span id="who"></span></header>
+<div id="login" class="box" style="max-width:360px;margin:40px auto">
+<p>演示账号 admin / admin123，只读 readonly / readonly123。协议与 Vben 5 相同：<code>{code,data,message}</code> + Bearer。</p>
+<label>用户名 <input id="user" value="admin"></label>
+<label>密码 <input id="pass" type="password" value="admin123"></label>
+<button id="go">登录</button>
+<p id="loginErr" class="err"></p>
+</div>
+<nav id="nav" hidden></nav>
+<main id="main" hidden></main>
+<script>
+let token='', codes=[]
+const $ = s => document.querySelector(s)
+async function api(path, opt={}){
+  const res = await fetch(path, {method:opt.method||'GET', headers:{'Content-Type':'application/json', Authorization: token? 'Bearer '+token:''}, body: opt.body? JSON.stringify(opt.body): undefined})
+  const body = await res.json()
+  if(res.status===401){ logout(); throw new Error(body.message||'未登录') }
+  if(body.code!==0) throw new Error(body.message||'失败')
+  return body.data
+}
+function logout(){ token=''; $('#nav').hidden=true; $('#main').hidden=true; $('#login').hidden=false }
+$('#go').onclick = async () => {
+  try{
+    const data = await api('/api/admin/v1/auth/login', {method:'POST', body:{username:$('#user').value, password:$('#pass').value}})
+    token = data.accessToken
+    codes = await api('/api/admin/v1/auth/codes')
+    const menu = await api('/api/admin/v1/menu/all')
+    $('#who').textContent = data.username+' / '+(codes.includes('write')?'管理员':'只读')
+    $('#login').hidden=true; $('#nav').hidden=false; $('#main').hidden=false
+    $('#nav').innerHTML = menu.map(m=>`<button data-p="${m.path}">${m.meta.title}</button>`).join('') + '<button id="out">退出</button>'
+    $('#nav').onclick = e => {
+      if(e.target.id==='out'){ logout(); return }
+      if(e.target.dataset.p) show(e.target.dataset.p)
+    }
+    show('/spread')
+  }catch(err){ $('#loginErr').textContent = err.message }
+}
+const can = () => codes.includes('write')
+async function show(path){
+  const root = $('#main')
+  if(path==='/spread'){
+    const rows = await api('/api/admin/v1/spreads')
+    root.innerHTML = table(rows, ['id','name','card_count','enabled','charged']) + (can()? `<div class="box"><b>新建牌阵</b>
+      <label>名称 <input id="n"></label><label>描述 <input id="d"></label><label>牌数 <input id="c" value="3"></label>
+      <label>牌位 JSON <textarea id="p">[{"index":1,"name":"过去","meaning":""},{"index":2,"name":"现在","meaning":""},{"index":3,"name":"未来","meaning":""}]</textarea></label>
+      <label><input id="en" type="checkbox" checked> 启用</label><label><input id="ch" type="checkbox"> 是否收费（无价格）</label>
+      <button id="save">保存</button><p class="err" id="e"></p></div>`:'')
+    if(can()) $('#save').onclick = async () => {
+      try{
+        await api('/api/admin/v1/spreads', {method:'POST', body:{name:$('#n').value, description:$('#d').value, card_count:+$('#c').value, positions:JSON.parse($('#p').value), enabled:$('#en').checked, charged:$('#ch').checked}})
+        show(path)
+      }catch(err){ $('#e').textContent=err.message }
+    }
+  }
+  if(path==='/tarotist'){
+    const rows = await api('/api/admin/v1/tarotists')
+    root.innerHTML = table(rows, ['id','name','enabled','persona']) + (can()? `<div class="box"><label>名称 <input id="n"></label><label>人设 <textarea id="p"></textarea></label><label>展示文案 <input id="d"></label><button id="save">保存</button><p class="err" id="e"></p></div>`:'')
+    if(can()) $('#save').onclick = async () => { try{ await api('/api/admin/v1/tarotists',{method:'POST', body:{name:$('#n').value, persona:$('#p').value, display_copy:$('#d').value, enabled:true}}); show(path) }catch(err){ $('#e').textContent=err.message } }
+  }
+  if(path==='/vendor'){
+    const rows = await api('/api/admin/v1/vendors')
+    const binds = await api('/api/admin/v1/bindings')
+    root.innerHTML = `<h3>供应商</h3>`+table(rows, ['id','name','base_url','api_key_set','enabled','models']) + `<h3>调用绑定</h3>`+table(binds, ['task','vendor_id','model'])
+    if(can()) root.innerHTML += `<div class="box"><b>新建供应商</b>
+      <label>名称 <input id="n" value="演示模型"></label><label>Base URL <input id="u" value="http://127.0.0.1:8080/demo/openai/v1"></label>
+      <label>密钥 <input id="k" value="demo"></label><label>模型，逗号分隔 <input id="m" value="demo"></label>
+      <label><input id="en" type="checkbox" checked> 启用</label><button id="save">保存</button>
+      <p>绑定：调用 <input id="task" value="interpret"> 供应商 ID <input id="vid"> 模型 <input id="model" value="demo"> <button id="bind">绑定</button></p>
+      <p class="err" id="e"></p></div>`
+    if(can()){
+      $('#save').onclick = async () => { try{ const data = await api('/api/admin/v1/vendors',{method:'POST', body:{name:$('#n').value, base_url:$('#u').value, api_key:$('#k').value, models:$('#m').value.split(',').map(s=>s.trim()), enabled:$('#en').checked}}); $('#vid').value=data.id; show(path) }catch(err){ $('#e').textContent=err.message } }
+      $('#bind').onclick = async () => { try{ await api('/api/admin/v1/bindings/'+$('#task').value, {method:'PUT', body:{vendor_id:+$('#vid').value, model:$('#model').value}}); show(path) }catch(err){ $('#e').textContent=err.message } }
+    }
+  }
+  if(path==='/quota'){
+    root.innerHTML = '<pre>'+JSON.stringify(await api('/api/admin/v1/quota-params'), null, 2)+'</pre><p>只读。没有时区下拉，没有价格。</p>'
+  }
+  if(path==='/banner'){
+    const rows = await api('/api/admin/v1/banners')
+    root.innerHTML = table(rows, ['id','copy','priority','start_at','end_at','target'])
+    if(can()) root.innerHTML += `<div class="box"><label>文案 <input id="c"></label><label>开始 <input id="s" value="2026-01-01T00:00:00+08:00"></label><label>结束 <input id="e2" value="2027-01-01T00:00:00+08:00"></label><label>优先级 <input id="p" value="10"></label><button id="save">保存</button><p class="err" id="e"></p></div>`
+    if(can()) $('#save').onclick = async () => { try{ await api('/api/admin/v1/banners',{method:'POST', body:{copy:$('#c').value, start_at:$('#s').value, end_at:$('#e2').value, priority:+$('#p').value, target:''}}); show(path) }catch(err){ $('#e').textContent=err.message } }
+  }
+  if(path==='/reading'){
+    const rows = await api('/api/admin/v1/readings')
+    root.innerHTML = table(rows, ['id','type','status','question','quota_consumed','vendor_name','model_name','fail_reason'])
+    if(can()) root.innerHTML += `<div class="box">重试 ID <input id="rid"> <button id="retry">重试</button><p class="err" id="e"></p></div>`
+    if(can()) $('#retry').onclick = async () => { try{ await api('/api/admin/v1/readings/'+$('#rid').value+'/retry',{method:'POST'}); show(path) }catch(err){ $('#e').textContent=err.message } }
+  }
+  if(path==='/ledger') root.innerHTML = table(await api('/api/admin/v1/ledger'), ['id','user_id','reading_id','entitlement','amount','reason','result','created_at'])
+  if(path==='/operator') root.innerHTML = table(await api('/api/admin/v1/operators'), ['id','username','role','disabled'])
+}
+function table(rows, cols){
+  if(!rows || !rows.length) return '<p>空</p>'
+  return '<table><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>'+rows.map(r=>'<tr>'+cols.map(c=>`<td>${esc(r[c])}</td>`).join('')+'</tr>').join('')+'</table>'
+}
+function esc(v){ if(v==null) return ''; const s=typeof v==='string'?v:JSON.stringify(v); return s.replace(/[&<>]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch])) }
+</script>
+</body>
+</html>
