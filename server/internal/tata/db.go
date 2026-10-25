@@ -42,6 +42,10 @@ func (t Tx) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
 	return t.Tx.QueryRowContext(ctx, query, args...)
 }
 
+func (t Tx) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return t.Tx.QueryContext(ctx, query, args...)
+}
+
 func (t Tx) Exec(ctx context.Context, query string, args ...any) (tagResult, error) {
 	res, err := t.Tx.ExecContext(ctx, query, args...)
 	return tagResult{res}, err

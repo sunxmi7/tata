@@ -225,6 +225,81 @@ CREATE TABLE IF NOT EXISTS reading_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `)
+	if err != nil {
+		return err
+	}
+	// Account merge (确认合并并账). Paid pools are balance placeholders only — no prices.
+	_, err = s.Exec(ctx, `
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS merged_into BIGINT;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS subscription_prompt_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS identity_prompt_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE rewards ADD COLUMN IF NOT EXISTS remaining INT;
+UPDATE rewards SET remaining = CASE WHEN consumed_at IS NULL AND expires_at > now() THEN 1 ELSE 0 END WHERE remaining IS NULL;
+ALTER TABLE rewards ALTER COLUMN remaining SET DEFAULT 1;
+ALTER TABLE rewards ALTER COLUMN remaining SET NOT NULL;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_kind TEXT NOT NULL DEFAULT 'operator';
+CREATE TABLE IF NOT EXISTS paid_pools (
+  user_id BIGINT PRIMARY KEY,
+  subscription_remaining INT NOT NULL DEFAULT 0,
+  pack_remaining INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  sku_kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  starts_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  merge_state TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS subscriptions_user_idx ON subscriptions(user_id);
+CREATE TABLE IF NOT EXISTS daily_free_balance (
+  user_id BIGINT NOT NULL,
+  cycle TEXT NOT NULL,
+  used_flags INT NOT NULL,
+  remaining INT NOT NULL,
+  daily_slot_used INT NOT NULL DEFAULT 0,
+  daily_slot_remaining INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, cycle)
+);
+CREATE TABLE IF NOT EXISTS daily_free_uses (
+  user_id BIGINT NOT NULL,
+  cycle TEXT NOT NULL,
+  reading_id BIGINT NOT NULL,
+  source_user_id BIGINT NOT NULL,
+  kind TEXT NOT NULL,
+  PRIMARY KEY (kind, cycle, reading_id)
+);
+CREATE TABLE IF NOT EXISTS account_merge_requests (
+  id BIGSERIAL PRIMARY KEY,
+  primary_user_id BIGINT NOT NULL,
+  secondary_user_id BIGINT NOT NULL,
+  identity_kind TEXT NOT NULL,
+  identity_value TEXT NOT NULL,
+  email_password_hash TEXT,
+  status TEXT NOT NULL,
+  subscription_resolution TEXT NOT NULL DEFAULT '',
+  confirm_at TIMESTAMPTZ,
+  result TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_merge_pending_pair
+  ON account_merge_requests(primary_user_id, secondary_user_id, identity_kind, identity_value)
+  WHERE status = 'pending_confirm';
+CREATE TABLE IF NOT EXISTS retained_identities (
+  id BIGSERIAL PRIMARY KEY,
+  merge_request_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  source_user_id BIGINT NOT NULL,
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`)
 	return err
 }
 
