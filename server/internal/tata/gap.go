@@ -2,7 +2,6 @@ package tata
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -117,130 +116,60 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) appBindApple(w http.ResponseWriter, r *http.Request) error {
-	return a.bindIdentity(w, r, "apple_sub", "sub", "苹果身份不能为空", "该苹果账号已绑定其他账号")
+	var req struct {
+		Sub string `json:"sub"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if req.Sub == "" {
+		return biz("苹果身份不能为空")
+	}
+	return a.bindWithConfirm(w, r, bindSpec{kind: "apple", value: req.Sub})
 }
 
 func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
-	if err != nil {
-		return err
-	}
-	if uid == 0 {
-		return biz("登录后才能绑定邮箱")
-	}
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := decode(r, &req); err != nil || req.Email == "" || req.Password == "" {
-		return biz("邮箱和密码必填")
+	if err := decode(r, &req); err != nil {
+		return err
 	}
-	var other int64
-	if err := a.Store.QueryRow(r.Context(), `SELECT id FROM app_users WHERE lower(email)=lower($1) AND id<>$2`, req.Email, uid).Scan(&other); err == nil {
-		return biz("该邮箱已绑定其他账号")
+	if req.Email == "" || req.Password == "" {
+		return biz("邮箱和密码必填")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE app_users SET email=$1, password_hash=$2 WHERE id=$3 AND cancelled_at IS NULL AND email IS NULL`, req.Email, string(hash), uid)
-	if err != nil {
-		return biz("该邮箱已绑定其他账号")
-	}
-	if tag.RowsAffected() == 0 {
-		return biz("邮箱已绑定或账号已注销")
-	}
-	writeOK(w, true)
-	return nil
-}
-
-func (a *App) bindIdentity(w http.ResponseWriter, r *http.Request, column, field, empty, taken string) error {
-	uid, _, err := a.appActor(r)
-	if err != nil {
-		return err
-	}
-	if uid == 0 {
-		return biz("登录后才能绑定")
-	}
-	var raw map[string]string
-	if err := decode(r, &raw); err != nil || raw[field] == "" {
-		return biz(empty)
-	}
-	value := raw[field]
-	var other int64
-	q := fmt.Sprintf(`SELECT id FROM app_users WHERE %s=$1 AND id<>$2`, column)
-	if err := a.Store.QueryRow(r.Context(), q, value, uid).Scan(&other); err == nil {
-		return biz(taken)
-	}
-	upd := fmt.Sprintf(`UPDATE app_users SET %s=$1 WHERE id=$2 AND cancelled_at IS NULL`, column)
-	tag, err := a.Store.Exec(r.Context(), upd, value, uid)
-	if err != nil {
-		return biz(taken)
-	}
-	if tag.RowsAffected() == 0 {
-		return biz("账号已注销")
-	}
-	writeOK(w, true)
-	return nil
+	return a.bindWithConfirm(w, r, bindSpec{kind: "email", value: req.Email, passwordHash: string(hash)})
 }
 
 func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
-	if err != nil {
-		return err
-	}
-	if uid == 0 {
-		return biz("登录后才能绑定微信")
-	}
 	var req struct {
 		OpenID string `json:"openid"`
 	}
-	if err := decode(r, &req); err != nil || req.OpenID == "" {
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if req.OpenID == "" {
 		return biz("微信身份不能为空")
 	}
-	var other int64
-	err = a.Store.QueryRow(r.Context(), `SELECT id FROM app_users WHERE wechat_openid=$1 AND id<>$2`, req.OpenID, uid).Scan(&other)
-	if err == nil {
-		return biz("该微信已绑定其他账号")
-	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE app_users SET wechat_openid=$1 WHERE id=$2 AND cancelled_at IS NULL`, req.OpenID, uid)
-	if err != nil {
-		return biz("该微信已绑定其他账号")
-	}
-	if tag.RowsAffected() == 0 {
-		return biz("账号已注销")
-	}
-	writeOK(w, true)
-	return nil
+	return a.bindWithConfirm(w, r, bindSpec{kind: "wechat", value: req.OpenID})
 }
 
 func (a *App) appBindPhone(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
-	if err != nil {
-		return err
-	}
-	if uid == 0 {
-		return biz("登录后才能绑定手机号")
-	}
 	var req struct {
 		Phone string `json:"phone"`
 	}
-	if err := decode(r, &req); err != nil || req.Phone == "" {
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if req.Phone == "" {
 		return biz("手机号不能为空")
 	}
-	var other int64
-	if err := a.Store.QueryRow(r.Context(), `SELECT id FROM app_users WHERE phone=$1 AND id<>$2`, req.Phone, uid).Scan(&other); err == nil {
-		return biz("该手机号已绑定其他账号")
-	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE app_users SET phone=$1 WHERE id=$2 AND cancelled_at IS NULL`, req.Phone, uid)
-	if err != nil {
-		return biz("该手机号已绑定其他账号")
-	}
-	if tag.RowsAffected() == 0 {
-		return biz("账号已注销")
-	}
-	writeOK(w, true)
-	return nil
+	return a.bindWithConfirm(w, r, bindSpec{kind: "phone", value: req.Phone})
 }
 
 func (a *App) appCancel(w http.ResponseWriter, r *http.Request) error {
@@ -582,6 +511,21 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	cycle := a.userCycle(r, uid)
+	handled, consumedDaily, err := consumeMergedDaily(r.Context(), a.Store, uid, cycle)
+	if err != nil {
+		return err
+	}
+	if handled {
+		if !consumedDaily {
+			writeOK(w, map[string]any{"quota_consumed": false, "message": "今日免费体验额度已用完，本次记录已保存到历史记录"})
+			return nil
+		}
+		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET quota_consumed=true, quota_cycle=$1, updated_at=now() WHERE id=$2`, cycle, id)
+		_, _ = a.Store.Exec(r.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'daily_free',1,'用户确认消耗今日额度','consumed')`, uid, id)
+		_, _ = a.Store.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
+		writeOK(w, map[string]any{"quota_consumed": true, "message": "已消耗今日免费额度"})
+		return nil
+	}
 	tag, err := a.Store.Exec(r.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, id)
 	if err != nil {
 		return err
@@ -611,11 +555,11 @@ func (a *App) appUseReward(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE rewards SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL AND expires_at>now()`, uid)
+	ok, err := consumeRewardBalance(r.Context(), a.Store, uid)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if !ok {
 		return biz("没有可用的注册奖励")
 	}
 	_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET reward_consumed=true, updated_at=now() WHERE id=$1`, id)
@@ -653,7 +597,7 @@ func (a *App) adminListAudit(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, operator_id, action, object_type, object_id, detail, created_at FROM audit_log ORDER BY id DESC LIMIT 200`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, operator_id, action, object_type, object_id, detail, created_at, actor_kind FROM audit_log ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		return err
 	}
@@ -661,12 +605,12 @@ func (a *App) adminListAudit(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id, op int64
-		var action, objectType, objectID, detail string
+		var action, objectType, objectID, detail, actorKind string
 		var created time.Time
-		if err := rows.Scan(&id, &op, &action, &objectType, &objectID, &detail, &created); err != nil {
+		if err := rows.Scan(&id, &op, &action, &objectType, &objectID, &detail, &created, &actorKind); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": id, "operator_id": op, "action": action, "object_type": objectType, "object_id": objectID, "detail": detail, "created_at": created})
+		list = append(list, map[string]any{"id": id, "operator_id": op, "action": action, "object_type": objectType, "object_id": objectID, "detail": detail, "actor_kind": actorKind, "created_at": created})
 	}
 	writeOK(w, list)
 	return nil

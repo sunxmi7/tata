@@ -2,6 +2,7 @@ package tata
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -68,6 +69,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/operators/{id}", a.h(a.adminUpdateOperator))
 	mux.HandleFunc("GET /api/admin/v1/users", a.h(a.adminListUsers))
 	mux.HandleFunc("GET /api/admin/v1/audit", a.h(a.adminListAudit))
+	mux.HandleFunc("GET /api/admin/v1/account-merges", a.h(a.adminListAccountMerges))
 	mux.HandleFunc("GET /api/admin/v1/messages", a.h(a.adminListMessages))
 	mux.HandleFunc("GET /api/admin/v1/calendar", a.h(a.adminListCalendar))
 	mux.HandleFunc("POST /api/app/v1/auth/anonymous", a.appAnonymous)
@@ -79,6 +81,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/auth/bind-apple", a.h(a.appBindApple))
 	mux.HandleFunc("POST /api/app/v1/auth/bind-email", a.h(a.appBindEmail))
 	mux.HandleFunc("POST /api/app/v1/auth/bind-phone", a.h(a.appBindPhone))
+	mux.HandleFunc("POST /api/app/v1/auth/merge-confirm", a.h(a.appMergeConfirm))
 	mux.HandleFunc("POST /api/app/v1/auth/cancel", a.h(a.appCancel))
 	mux.HandleFunc("GET /api/app/v1/profile", a.h(a.appGetProfile))
 	mux.HandleFunc("PUT /api/app/v1/profile", a.h(a.appPutProfile))
@@ -179,7 +182,21 @@ func (a *App) adminActor(r *http.Request, write bool) (actor, error) {
 
 func (a *App) appActor(r *http.Request) (userID int64, anon string, err error) {
 	userID, anon, _, err = a.parseAccess(r, "app")
-	return userID, anon, err
+	if err != nil || userID == 0 {
+		return userID, anon, err
+	}
+	var merged *int64
+	scanErr := a.Store.QueryRow(r.Context(), `SELECT merged_into FROM app_users WHERE id=$1`, userID).Scan(&merged)
+	if scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return 0, "", authFail{}
+		}
+		return 0, "", scanErr
+	}
+	if merged != nil {
+		return 0, "", authFail{}
+	}
+	return userID, anon, nil
 }
 
 func (a *App) lockGen(id int64) (func(), error) {
