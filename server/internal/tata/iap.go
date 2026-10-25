@@ -92,6 +92,15 @@ func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if out["credit_status"] == iapCreditCredited {
+		if tasks := a.resumeQuotaAfterCredit(r.Context(), uid); len(tasks) > 0 {
+			out["resumed_tasks"] = tasks
+			if view, viewErr := diamondView(r.Context(), a.Store, uid); viewErr == nil {
+				out["subscription_diamonds"] = view["subscription_diamonds"]
+				out["pack_diamonds"] = view["pack_diamonds"]
+			}
+		}
+	}
 	writeOK(w, out)
 	return nil
 }
@@ -153,11 +162,25 @@ func (a *App) appIAPRestore(w http.ResponseWriter, r *http.Request) error {
 		}
 		results = append(results, out)
 	}
-	writeOK(w, map[string]any{
+	body := map[string]any{
 		"restore_hook_enabled":        hook,
 		"restore_required_first_pack": required,
 		"results":                     results,
-	})
+	}
+	credited := false
+	for _, item := range results {
+		row, ok := item.(map[string]any)
+		if ok && row["credit_status"] == iapCreditCredited {
+			credited = true
+			break
+		}
+	}
+	if credited {
+		if tasks := a.resumeQuotaAfterCredit(r.Context(), uid); len(tasks) > 0 {
+			body["resumed_tasks"] = tasks
+		}
+	}
+	writeOK(w, body)
 	return nil
 }
 
