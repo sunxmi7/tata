@@ -630,9 +630,16 @@ func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		label, next := progressOf(status)
-		list = append(list, map[string]any{"id": id, "type": typ, "question": question, "status": status, "business_date": day, "progress": label, "continue": next, "updated_at": updated})
+		list = append(list, map[string]any{"id": id, "type": typ, "question": question, "status": status, "business_date": day, "has_result": status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE", "progress": label, "continue": next, "updated_at": updated})
 	}
-	writeOK(w, list)
+	cycle := a.userCycle(r, uid)
+	tomorrow, err := nextBusinessDate(cycle)
+	if err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{
+		"days": list, "cycle": cycle, "tomorrow_date": tomorrow,
+	})
 	return nil
 }
 

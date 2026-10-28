@@ -4,6 +4,8 @@
 
 路径、方法、请求体和响应形状来自 `server/internal/tata/routes.go` 及对应 handler，只收录已注册的接口。
 
+2026-10-28 起 App P0 壳层路径包括：`GET/PUT /api/app/v1/profile`（name/bio/avatar_url、account_display）、`GET /api/app/v1/explore/topics`、`POST /api/app/v1/redeem`、`GET /api/app/v1/wallet/ledger`、`POST /api/app/v1/uploads`、`POST /api/app/v1/wishlist`、`POST /api/app/v1/feedback`、`GET/PUT /api/app/v1/notification-preferences`。钻石账本的 UI 展示名为「塔塔币」（`display_label`）。
+
 ## 导入 Apifox
 
 在 Apifox 中选择 **导入 → OpenAPI**，选择本仓库的 `docs/openapi.yaml`。

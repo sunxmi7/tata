@@ -456,6 +456,9 @@ func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutc
 	if err := foldDiamonds(ctx, tx, primary, secondary); err != nil {
 		return mergeOutcome{}, err
 	}
+	if err := foldAppShell(ctx, tx, primary, secondary); err != nil {
+		return mergeOutcome{}, err
+	}
 	decision, err := foldSubscriptions(ctx, tx, primary, secondary, now)
 	if err != nil {
 		return mergeOutcome{}, err
@@ -965,6 +968,39 @@ func moveIdentities(ctx context.Context, tx Tx, requestID, primary, secondary in
 		return nil, err
 	}
 	return retained, nil
+}
+
+func foldAppShell(ctx context.Context, tx Tx, primary, secondary int64) error {
+	if _, err := tx.Exec(ctx, `UPDATE wishlists SET user_id=$1 WHERE user_id=$2`, primary, secondary); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE feedback SET user_id=$1 WHERE user_id=$2`, primary, secondary); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE redeem_redemptions r SET user_id=$1
+		WHERE user_id=$2 AND NOT EXISTS (
+			SELECT 1 FROM redeem_redemptions p WHERE p.user_id=$1 AND p.code_id=r.code_id
+		)`, primary, secondary); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM redeem_redemptions WHERE user_id=$1`, secondary); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO notification_preferences(user_id, daily_draw_enabled, daily_draw_time, tomorrow_draw_enabled, tomorrow_draw_time, messages_enabled, updated_at)
+		SELECT $1, daily_draw_enabled, daily_draw_time, tomorrow_draw_enabled, tomorrow_draw_time, messages_enabled, now()
+		FROM notification_preferences WHERE user_id=$2
+		ON CONFLICT (user_id) DO NOTHING`, primary, secondary); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM notification_preferences WHERE user_id=$1`, secondary); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE app_users AS p SET
+		name = CASE WHEN p.name = '' THEN s.name ELSE p.name END,
+		bio = CASE WHEN p.bio = '' THEN s.bio ELSE p.bio END,
+		avatar_url = CASE WHEN p.avatar_url = '' THEN s.avatar_url ELSE p.avatar_url END
+		FROM app_users AS s WHERE p.id=$1 AND s.id=$2`, primary, secondary)
+	return err
 }
 
 func (a *App) adminListAccountMerges(w http.ResponseWriter, r *http.Request) error {

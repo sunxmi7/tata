@@ -55,6 +55,14 @@ tags:
     description: App 内购验单、恢复、余额与 SKU。价格与发放数量未配置时保持 null。
   - name: Daily
     description: 今日 / 明日一牌与日历。
+  - name: Explore
+    description: 探索目录分组与主题条目。spread 映射可为空 stub。
+  - name: Wallet
+    description: 兑换码核销与钻石（展示名「塔塔币」）流水。不另开第二套账本。
+  - name: Feedback
+    description: 图片上传、功能心愿单与意见反馈。
+  - name: Settings
+    description: 通知偏好。系统推送授权只在客户端。
   - name: Admin Auth
     description: 管理端登录、刷新、菜单与权限码。
   - name: Admin Content
@@ -262,6 +270,29 @@ components:
         continue:
           type: string
           description: 建议的下一步动作名；完成时为空字符串。
+        card_name:
+          type: string
+          description: POST /daily 首页卡牌名。来自第一张牌，无牌时为空。
+        short_text:
+          type: string
+          description: POST /daily 首页短句。从 interpretation 截取，无解读时为空，不编造。
+        yi:
+          type: string
+          nullable: true
+          description: 「宜」尚未有数据源时为 null，不编造。
+        card_thumbnail:
+          type: string
+          nullable: true
+          description: 牌面缩略图未配置时为 null。
+        target:
+          type: string
+          description: today 或 tomorrow。仅 daily 响应。
+        business_date:
+          type: string
+          description: 业务日 YYYY-MM-DD。仅 daily 响应。
+        has_result:
+          type: boolean
+          description: 已有牌名时为 true。
     ReadingCreated:
       description: |
         创建占卜在 Reading 之上附加的额度结果。成功包络仍是 code=0。
@@ -496,6 +527,20 @@ components:
           type: string
         display_copy:
           type: string
+        title:
+          type: string
+          description: 首页列表标签文案，与 display_copy 相同。
+        tags:
+          type: array
+          items:
+            type: string
+        blurb:
+          type: string
+          description: 首页简介。缺省时回退 display_copy。不返回人设/禁止项正文。
+        avatar_url:
+          type: string
+          nullable: true
+          description: 未配置时为 null，不编造头像地址。
     Vendor:
       type: object
       description: 列表不返回密钥明文，只返回 api_key_set。
@@ -623,6 +668,13 @@ components:
           type: integer
         pack_diamonds:
           type: integer
+        display_label:
+          type: string
+          example: 塔塔币
+          description: UI 展示名。账本单位仍是钻石。
+        balance:
+          type: integer
+          description: pack_diamonds + subscription_diamonds。我的页余额用这个合计。
     AdminQuotaParams:
       type: object
       properties:
@@ -679,6 +731,20 @@ components:
           nullable: true
         timezone:
           type: string
+        name:
+          type: string
+          description: 姓名。未设置时为空字符串。
+        bio:
+          type: string
+          description: 简介。未设置时为空字符串。
+        avatar_url:
+          type: string
+          nullable: true
+        account_display:
+          type: string
+          description: |
+            账号页主展示。优先脱敏邮箱（本地第一部分字符 + *** + @域名）。
+            无邮箱时为「微信已绑定」或「Apple 已绑定」。不用手机号当主展示。
     ProfileBody:
       type: object
       additionalProperties: false
@@ -693,6 +759,15 @@ components:
         timezone:
           type: string
           description: 空字符串表示不修改。非空必须是 time.LoadLocation 可识别的 IANA 时区。
+        name:
+          type: string
+          description: 空字符串表示不修改。非空最多 32 个字。
+        bio:
+          type: string
+          description: 空字符串表示不修改。非空最多 200 个字。
+        avatar_url:
+          type: string
+          description: 空字符串表示不修改。非空须为 http(s) URL 或 /uploads/{name}。
     AppAuthSession:
       type: object
       properties:
@@ -968,6 +1043,21 @@ components:
         updated_at:
           type: string
           format: date-time
+        has_result:
+          type: boolean
+    CalendarView:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/CalendarItem"
+        cycle:
+          type: string
+          description: 当前业务日。
+        tomorrow_date:
+          type: string
+          description: 明日运势预览用的业务日。
     FlowStep:
       type: object
       properties:
@@ -1484,6 +1574,13 @@ components:
           nullable: true
         enabled:
           type: boolean
+        unit:
+          type: string
+          example: diamond
+        display_label:
+          type: string
+          example: 塔塔币
+          description: UI 展示名。档位数量来自 diamond_grant；价格未配置时保持 null，不把设计示例价写入契约。
     IAPConfig:
       type: object
       properties:
@@ -1499,6 +1596,12 @@ components:
         unit:
           type: string
           example: diamond
+        display_label:
+          type: string
+          example: 塔塔币
+        balance:
+          type: integer
+          description: pack_diamonds + subscription_diamonds。
         subscription_diamonds:
           type: integer
         pack_diamonds:
@@ -1909,6 +2012,217 @@ components:
             $ref: "#/components/schemas/FlowStep"
         app_call:
           type: string
+    ExploreTopics:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExploreGroup"
+    ExploreGroup:
+      type: object
+      properties:
+        group_key:
+          type: string
+          example: now_choice
+        title:
+          type: string
+          example: 此刻抉择
+        topics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExploreTopic"
+    ExploreTopic:
+      type: object
+      properties:
+        topic_id:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        illustration:
+          type: string
+          nullable: true
+        spread:
+          type: object
+          properties:
+            spread_id:
+              type: integer
+              format: int64
+              nullable: true
+            stub:
+              type: boolean
+              description: 无牌阵映射时为 true。
+    RedeemBody:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+    RedeemResult:
+      type: object
+      properties:
+        code:
+          type: string
+        benefit_name:
+          type: string
+        kind:
+          type: string
+          enum: [diamonds, free_count]
+        amount:
+          type: integer
+        unit:
+          type: string
+        display_label:
+          type: string
+          example: 塔塔币
+        pack_diamonds:
+          type: integer
+        subscription_diamonds:
+          type: integer
+        balance:
+          type: integer
+    WalletLedger:
+      type: object
+      properties:
+        items:
+          type: array
+          description: 无流水时为空数组，不编造收支。
+          items:
+            $ref: "#/components/schemas/WalletLedgerItem"
+        display_label:
+          type: string
+          example: 塔塔币
+        unit:
+          type: string
+          example: diamond
+        pack_diamonds:
+          type: integer
+        subscription_diamonds:
+          type: integer
+        balance:
+          type: integer
+    WalletLedgerItem:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+        type:
+          type: string
+          description: diamond_ledger.reason，例如 redeem、quota_spend、admin_grant。
+        amount:
+          type: integer
+          description: 该行 delta，带符号。
+        balance:
+          type: integer
+          description: 该桶当时的 balance_after，不是编造的总账快照。
+        note:
+          type: string
+        bucket:
+          type: string
+          enum: [subscription, consumable]
+    UploadBody:
+      type: object
+      additionalProperties: false
+      properties:
+        filename:
+          type: string
+        content_type:
+          type: string
+        content_base64:
+          type: string
+      description: 也可使用 multipart/form-data，字段名 file。
+    UploadResult:
+      type: object
+      properties:
+        url:
+          type: string
+          description: 可引用的图片 URL（本机为 /uploads/{name}）。
+    WishlistBody:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+          maxLength: 500
+        image_url:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+    WishlistResult:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        message:
+          type: string
+          example: 心愿已提交
+    FeedbackBody:
+      type: object
+      additionalProperties: false
+      required: [category, content]
+      properties:
+        category:
+          type: string
+          enum: [使用问题, 内容建议, 其他]
+        content:
+          type: string
+          maxLength: 500
+        image_url:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+        email:
+          type: string
+          description: 选填。非空时校验邮箱格式。
+    FeedbackResult:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        message:
+          type: string
+          example: 反馈已提交
+    NotificationPreferences:
+      type: object
+      properties:
+        daily_draw_enabled:
+          type: boolean
+        daily_draw_time:
+          type: string
+          example: "08:00"
+        tomorrow_draw_enabled:
+          type: boolean
+        tomorrow_draw_time:
+          type: string
+          example: "08:00"
+        messages_enabled:
+          type: boolean
+    NotificationPreferencesBody:
+      type: object
+      additionalProperties: false
+      properties:
+        daily_draw_enabled:
+          type: boolean
+        daily_draw_time:
+          type: string
+          description: HH:MM。空表示不改。
+        tomorrow_draw_enabled:
+          type: boolean
+        tomorrow_draw_time:
+          type: string
+        messages_enabled:
+          type: boolean
     HealthOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -2342,7 +2656,7 @@ paths:
       summary: 更新档案
       security:
         - AppBearer: []
-      description: 只更新 birth_date、gender、timezone 中的非空字段。
+      description: 更新非空的 birth_date、gender、timezone、name、bio、avatar_url。账号主展示见 GET 的 account_display（邮箱脱敏，不用手机号）。
       requestBody:
         required: true
         content:
@@ -2415,7 +2729,7 @@ paths:
       summary: 可用塔罗师
       security:
         - AppBearer: []
-      description: 只返回启用中的 id、name、display_copy。不返回人设正文。
+      description: 只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
       responses:
         "200":
           description: data 为塔罗师数组。
@@ -2442,6 +2756,7 @@ paths:
       description: |
         匿名用户仍返回结构，次数与钻石为 0，daily_free_used=false。
         diamond_cost 未配置时为 null，diamond_cost_configured=false。
+        display_label 为「塔塔币」（展示名）；paid_label 仍为「钻石」。balance 为两桶合计。
       responses:
         "200":
           description: data 为 QuotaView。
@@ -2939,6 +3254,7 @@ paths:
         必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
         否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置或钻石不足为 QuotaBlockEnvelope。
         扣费成功后抽一张牌并生成解读。生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
+        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（可空）、target、business_date、has_result。不编造宜忌文案。
       requestBody:
         required: true
         content:
@@ -2965,7 +3281,7 @@ paths:
       summary: 日历
       security:
         - AppBearer: []
-      description: 必须登录。只含未删除且 business_date 非空的记录。month 按前缀匹配，例如 2026-10。
+      description: 必须登录。data 为 {days, cycle, tomorrow_date}。days 只含未删除且 business_date 非空的记录。month 按前缀匹配，例如 2026-10。tomorrow_date 供首页明日运势预览。
       parameters:
         - name: month
           in: query
@@ -2984,9 +3300,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/CalendarItem"
+                        $ref: "#/components/schemas/CalendarView"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/app/v1/iap/verify:
@@ -3077,7 +3391,7 @@ paths:
       summary: 钻石余额
       security:
         - AppBearer: []
-      description: 必须登录。没有余额行时两个桶为 0。不返回价格。
+      description: 必须登录。没有余额行时两个桶为 0。不返回价格。display_label 为「塔塔币」，balance 为两桶合计。
       responses:
         "200":
           description: data 为 DiamondView，不含 ledger。
@@ -3101,7 +3415,7 @@ paths:
       summary: 已启用的 SKU
       security:
         - AppBearer: []
-      description: 只返回 enabled=true。种子商品的价格、货币、发放量和商店商品号为 null。
+      description: 只返回 enabled=true。种子商品的价格、货币、发放量和商店商品号为 null。每条含 display_label=塔塔币、unit=diamond。不把设计示例价写入 SKU。
       responses:
         "200":
           description: data 为 IAPSKU 数组。
@@ -3137,6 +3451,250 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/IAPConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/explore/topics:
+    get:
+      tags: [Explore]
+      operationId: appExploreTopics
+      summary: 探索目录
+      security:
+        - AppBearer: []
+      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。匿名令牌可读取。
+      responses:
+        "200":
+          description: data.groups 非空。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ExploreTopics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/redeem:
+    post:
+      tags: [Wallet]
+      operationId: appRedeem
+      summary: 兑换码核销
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。成功时按码的 kind 写入钻石账本（pack_diamonds）或免费次数，不另开塔塔币账本。
+        无效码 message=兑换码无效；已核销=兑换码已使用；过期=兑换码已过期。到账数量以账本为准。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemBody"
+      responses:
+        "200":
+          description: 成功或业务错误（无效码等）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/RedeemResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/wallet/ledger:
+    get:
+      tags: [Wallet]
+      operationId: appWalletLedger
+      summary: 钻石余额流水
+      security:
+        - AppBearer: []
+      description: 必须登录。items 无数据时为空数组，不编造收支。字段为 time/type/amount/balance/note。展示名 display_label=塔塔币。
+      responses:
+        "200":
+          description: data 为 WalletLedger。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/WalletLedger"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/uploads:
+    post:
+      tags: [Feedback]
+      operationId: appUploads
+      summary: 上传图片
+      security:
+        - AppBearer: []
+      description: 必须登录。JSON（filename/content_type/content_base64）或 multipart 字段 file。返回可引用 url。仅 jpg/png/webp/gif，最大 5MB。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadBody"
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: 成功返回 url。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/UploadResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /uploads/{name}:
+    get:
+      tags: [Feedback]
+      operationId: serveUpload
+      summary: 读取已上传图片
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 图片字节。
+        "404":
+          description: 文件不存在或文件名不合法。
+  /api/app/v1/wishlist:
+    post:
+      tags: [Feedback]
+      operationId: appWishlist
+      summary: 提交功能心愿
+      security:
+        - AppBearer: []
+      description: 必须登录。content 必填且不超过 500 字。图片 URL 选填。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WishlistBody"
+      responses:
+        "200":
+          description: 成功 message=心愿已提交。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/WishlistResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/feedback:
+    post:
+      tags: [Feedback]
+      operationId: appFeedback
+      summary: 提交反馈意见
+      security:
+        - AppBearer: []
+      description: 必须登录。category 为 使用问题/内容建议/其他。content 必填且不超过 500 字。email 选填并校验格式。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackBody"
+      responses:
+        "200":
+          description: 成功 message=反馈已提交。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/FeedbackResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/notification-preferences:
+    get:
+      tags: [Settings]
+      operationId: appGetNotificationPrefs
+      summary: 读取通知偏好
+      security:
+        - AppBearer: []
+      description: 必须登录。无记录时返回默认值（抽牌提醒关、消息开、时间 08:00）。系统授权不在此接口。
+      responses:
+        "200":
+          description: data 为 NotificationPreferences。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/NotificationPreferences"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Settings]
+      operationId: appPutNotificationPrefs
+      summary: 保存通知偏好
+      security:
+        - AppBearer: []
+      description: 省略的字段保持原值。时间须为 HH:MM。OS 未授权时仍可保存。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferencesBody"
+      responses:
+        "200":
+          description: 成功返回当前偏好。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/NotificationPreferences"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/auth/login:

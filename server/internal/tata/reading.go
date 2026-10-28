@@ -238,12 +238,17 @@ func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("匿名用户没有档案")
 	}
-	var email, tz string
+	var email, tz, name, bio, avatar string
 	var birth, gender, openid, apple, phone *string
-	if err := a.Store.QueryRow(r.Context(), `SELECT email, birth_date, gender, wechat_openid, apple_sub, phone, timezone FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &phone, &tz); err != nil {
+	if err := a.Store.QueryRow(r.Context(), `SELECT email, birth_date, gender, wechat_openid, apple_sub, phone, timezone, name, bio, avatar_url FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &phone, &tz, &name, &bio, &avatar); err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"id": uid, "email": email, "birth_date": birth, "gender": gender, "wechat_openid": openid, "apple_sub": apple, "phone": phone, "timezone": tz})
+	writeOK(w, map[string]any{
+		"id": uid, "email": email, "birth_date": birth, "gender": gender,
+		"wechat_openid": openid, "apple_sub": apple, "phone": phone, "timezone": tz,
+		"name": name, "bio": bio, "avatar_url": emptyAsNil(avatar),
+		"account_display": accountDisplay(email, openid, apple),
+	})
 	return nil
 }
 
@@ -259,6 +264,9 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 		BirthDate string `json:"birth_date"`
 		Gender    string `json:"gender"`
 		Timezone  string `json:"timezone"`
+		Name      string `json:"name"`
+		Bio       string `json:"bio"`
+		AvatarURL string `json:"avatar_url"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
@@ -271,7 +279,23 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 			return biz("时区不正确")
 		}
 	}
-	_, err = a.Store.Exec(r.Context(), `UPDATE app_users SET birth_date=COALESCE(NULLIF($1,''), birth_date), gender=COALESCE(NULLIF($2,''), gender), timezone=COALESCE(NULLIF($3,''), timezone) WHERE id=$4`, req.BirthDate, req.Gender, req.Timezone, uid)
+	if n := runeLen(strings.TrimSpace(req.Name)); n > 32 {
+		return biz("姓名过长")
+	}
+	if n := runeLen(strings.TrimSpace(req.Bio)); n > 200 {
+		return biz("简介过长")
+	}
+	if err := optionalAssetURL(strings.TrimSpace(req.AvatarURL)); err != nil {
+		return err
+	}
+	_, err = a.Store.Exec(r.Context(), `UPDATE app_users SET
+		birth_date=COALESCE(NULLIF($1,''), birth_date),
+		gender=COALESCE(NULLIF($2,''), gender),
+		timezone=COALESCE(NULLIF($3,''), timezone),
+		name=COALESCE(NULLIF($4,''), name),
+		bio=COALESCE(NULLIF($5,''), bio),
+		avatar_url=COALESCE(NULLIF($6,''), avatar_url)
+		WHERE id=$7`, req.BirthDate, req.Gender, req.Timezone, strings.TrimSpace(req.Name), strings.TrimSpace(req.Bio), strings.TrimSpace(req.AvatarURL), uid)
 	if err != nil {
 		return err
 	}
@@ -321,7 +345,7 @@ func (a *App) appTarotists(w http.ResponseWriter, r *http.Request) error {
 	if _, _, err := a.appActor(r); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, display_copy FROM tarotists WHERE enabled=true ORDER BY id`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, display_copy, avatar_url, tags, blurb FROM tarotists WHERE enabled=true ORDER BY id`)
 	if err != nil {
 		return err
 	}
@@ -329,11 +353,15 @@ func (a *App) appTarotists(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, copy string
-		if err := rows.Scan(&id, &name, &copy); err != nil {
+		var name, copy, avatar, tagsJSON, blurb string
+		if err := rows.Scan(&id, &name, &copy, &avatar, &tagsJSON, &blurb); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": id, "name": name, "display_copy": copy})
+		list = append(list, map[string]any{
+			"id": id, "name": name, "display_copy": copy,
+			"title": copy, "tags": tarotistTags(tagsJSON, copy),
+			"blurb": publicBlurb(blurb, copy), "avatar_url": emptyAsNil(avatar),
+		})
 	}
 	writeOK(w, list)
 	return nil
@@ -390,6 +418,8 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		"subscription_prompt_required": subPrompt,
 		"free_label":                   "次数",
 		"paid_label":                   "钻石",
+		"display_label":                displayLabelTataCoin,
+		"balance":                      subDiamonds + packDiamonds,
 		"priority":                     "注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费",
 		"diamond_spend_order":          "pack_then_subscription",
 		"diamond_cost":                 diamondCost,
@@ -829,6 +859,7 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 		if business != cycle {
 			msg = "该日已有结果，不重复扣次数或钻石"
 		}
+		attachDailyHome(item, req.Target, business)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"code": 1, "message": msg,
 			"data": map[string]any{"reused": true, "charged": false, "reading": item},
@@ -886,9 +917,11 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 		if loadErr != nil {
 			return err
 		}
+		attachDailyHome(failed, req.Target, business)
 		writeOK(w, failed)
 		return nil
 	}
+	attachDailyHome(item, req.Target, business)
 	writeOK(w, item)
 	return nil
 }
