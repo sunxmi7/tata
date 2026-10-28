@@ -475,6 +475,76 @@ CREATE TABLE IF NOT EXISTS admin_grants (
 );
 CREATE INDEX IF NOT EXISTS admin_grants_user_idx ON admin_grants(user_id, id DESC);
 `)
+	if err != nil {
+		return err
+	}
+	// App UI P0 shell. Diamonds stay the only currency ledger; 塔塔币 is display_label.
+	_, err = s.Exec(ctx, `
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS blurb TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS explore_topics (
+  topic_id TEXT PRIMARY KEY,
+  group_key TEXT NOT NULL,
+  group_title TEXT NOT NULL,
+  title TEXT NOT NULL,
+  subtitle TEXT NOT NULL DEFAULT '',
+  illustration TEXT,
+  spread_id BIGINT,
+  sort_order INT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS redeem_codes (
+  id BIGSERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  amount INT NOT NULL,
+  benefit_name TEXT NOT NULL,
+  max_redemptions INT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT redeem_codes_kind_chk CHECK (kind IN ('diamonds','free_count')),
+  CONSTRAINT redeem_codes_amount_chk CHECK (amount > 0)
+);
+CREATE TABLE IF NOT EXISTS redeem_redemptions (
+  id BIGSERIAL PRIMARY KEY,
+  code_id BIGINT NOT NULL REFERENCES redeem_codes(id),
+  user_id BIGINT NOT NULL,
+  diamond_ledger_id BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (code_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS redeem_redemptions_user_idx ON redeem_redemptions(user_id, id DESC);
+CREATE TABLE IF NOT EXISTS wishlists (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  content TEXT NOT NULL,
+  image_url TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS feedback (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  category TEXT NOT NULL,
+  content TEXT NOT NULL,
+  image_url TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT feedback_category_chk CHECK (category IN ('使用问题','内容建议','其他'))
+);
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  user_id BIGINT PRIMARY KEY,
+  daily_draw_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  daily_draw_time TEXT NOT NULL DEFAULT '08:00',
+  tomorrow_draw_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  tomorrow_draw_time TEXT NOT NULL DEFAULT '08:00',
+  messages_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`)
 	return err
 }
 
@@ -520,7 +590,88 @@ func (s *Store) seed(ctx context.Context) error {
 			return err
 		}
 	}
-	return s.seedIAP(ctx)
+	if err := s.seedIAP(ctx); err != nil {
+		return err
+	}
+	if err := s.seedExplore(ctx); err != nil {
+		return err
+	}
+	return s.seedTarotistPublic(ctx)
+}
+
+func (s *Store) seedExplore(ctx context.Context) error {
+	var spreadID sql.NullInt64
+	_ = s.QueryRow(ctx, `SELECT id FROM spreads WHERE name='时间流' LIMIT 1`).Scan(&spreadID)
+	topics := []struct {
+		id, groupKey, groupTitle, title, subtitle string
+		order                                     int
+	}{
+		{"yes_no", "now_choice", "此刻抉择", "是否", "一件事该不该做", 1},
+		{"either_or", "now_choice", "此刻抉择", "二选一", "两个选项怎么选", 2},
+		{"love", "theme", "主题占卜", "感情", "关系里正在发生的事", 10},
+		{"career", "theme", "主题占卜", "事业", "工作与方向", 11},
+		{"study", "theme", "主题占卜", "学业", "学习与考试", 12},
+		{"wealth", "theme", "主题占卜", "财富", "钱与资源流向", 13},
+		{"relation", "theme", "主题占卜", "人际", "沟通与边界", 14},
+		{"self", "theme", "主题占卜", "自我", "当下的自己", 15},
+		{"family", "theme", "主题占卜", "家庭", "家人与归属", 16},
+		{"health", "theme", "主题占卜", "身心", "节奏与恢复", 17},
+		{"general", "theme", "主题占卜", "综合", "最近一段时期", 18},
+	}
+	for _, t := range topics {
+		if _, err := s.Exec(ctx, `INSERT INTO explore_topics(topic_id, group_key, group_title, title, subtitle, illustration, spread_id, sort_order)
+			VALUES ($1,$2,$3,$4,$5,NULL,$6,$7)
+			ON CONFLICT (topic_id) DO NOTHING`,
+			t.id, t.groupKey, t.groupTitle, t.title, t.subtitle, spreadID, t.order); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) seedTarotistPublic(ctx context.Context) error {
+	rows, err := s.Query(ctx, `SELECT id, display_copy, tags, blurb FROM tarotists WHERE enabled=true`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type row struct {
+		id                int64
+		copy, tags, blurb string
+	}
+	list := []row{}
+	for rows.Next() {
+		var item row
+		if err := rows.Scan(&item.id, &item.copy, &item.tags, &item.blurb); err != nil {
+			return err
+		}
+		list = append(list, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range list {
+		tags := item.tags
+		if tags == "" || tags == "[]" {
+			parts := []string{}
+			for _, p := range strings.Split(item.copy, "、") {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					parts = append(parts, p)
+				}
+			}
+			raw, _ := json.Marshal(parts)
+			tags = string(raw)
+		}
+		blurb := item.blurb
+		if blurb == "" {
+			blurb = item.copy
+		}
+		if _, err := s.Exec(ctx, `UPDATE tarotists SET tags=$1, blurb=$2 WHERE id=$3`, tags, blurb, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // seedIAP reserves month / year / consumable slots. Product ids, prices, and

@@ -20,6 +20,9 @@ func (e *bizError) Error() string { return e.msg }
 
 func biz(msg string) error { return &bizError{msg: msg} }
 
+// displayLabelTataCoin is the UI name for diamonds. The ledger unit stays diamond.
+const displayLabelTataCoin = "塔塔币"
+
 type authFail struct{}
 
 func (authFail) Error() string { return "unauthorized" }
@@ -59,6 +62,7 @@ type App struct {
 	Store     *Store
 	JWTSecret []byte
 	Redis     redisLocker
+	UploadDir string
 }
 
 type redisLocker interface {
