@@ -128,6 +128,16 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/feedback", a.h(a.appFeedback))
 	mux.HandleFunc("GET /api/app/v1/notification-preferences", a.h(a.appGetNotificationPrefs))
 	mux.HandleFunc("PUT /api/app/v1/notification-preferences", a.h(a.appPutNotificationPrefs))
+	// POST /api/app/v1/push/register is deferred. 通知设置只有本地提醒开关，系统授权在客户端。
+	// 设计包没有推送 token 的通道或字段，本轮不编请求体。
+	mux.HandleFunc("GET /api/app/v1/redeem/records", a.h(a.appRedeemRecords))
+	mux.HandleFunc("GET /api/app/v1/campaigns", a.h(a.appCampaigns))
+	mux.HandleFunc("GET /api/app/v1/campaigns/participations", a.h(a.appCampaignParticipations))
+	mux.HandleFunc("GET /api/app/v1/campaigns/rewards", a.h(a.appCampaignRewards))
+	mux.HandleFunc("GET /api/app/v1/campaigns/{id}", a.h(a.appCampaign))
+	mux.HandleFunc("GET /api/app/v1/help/categories", a.h(a.appHelpCategories))
+	mux.HandleFunc("GET /api/app/v1/help/articles", a.h(a.appHelpArticles))
+	mux.HandleFunc("GET /api/app/v1/help/articles/{id}", a.h(a.appHelpArticle))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
