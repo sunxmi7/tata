@@ -767,6 +767,8 @@ func diamondView(ctx context.Context, q rowQuery, uid int64) (map[string]any, er
 	}
 	return map[string]any{
 		"unit":                    "diamond",
+		"display_label":           displayLabelTataCoin,
+		"balance":                 sub + pack,
 		"subscription_diamonds":   sub,
 		"pack_diamonds":           pack,
 		"subscription_period_end": nullTime(periodEnd),
@@ -802,7 +804,7 @@ func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool) ([]map[string]a
 			"app_store_product_id": nullString(appID), "play_product_id": nullString(playID),
 			"price_amount_minor": nullInt(price), "price_currency": nullString(currency),
 			"diamond_grant": nullInt(grant), "period_unit": periodUnit, "period_count": nullInt(periodCount),
-			"enabled": enabled,
+			"enabled": enabled, "unit": "diamond", "display_label": displayLabelTataCoin,
 		})
 	}
 	return list, rows.Err()

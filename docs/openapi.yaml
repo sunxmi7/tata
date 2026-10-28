@@ -1,0 +1,4907 @@
+# 导入 Apifox：项目 → 导入 → OpenAPI，选择本文件 docs/openapi.yaml。
+# 服务地址默认 http://127.0.0.1:8080。App 接口选 AppBearer，管理端选 AdminBearer。
+# 说明同时见 docs/README.md。
+openapi: "3.0.3"
+info:
+  title: 塔塔 HTTP API
+  version: "1.0.0"
+  description: |
+    由 `server/internal/tata/routes.go` 注册的 HTTP 接口。未在该文件出现的路径不在此契约中。
+
+    **导入 Apifox：** 导入 → OpenAPI，选择 `docs/openapi.yaml`。服务器默认 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 的 `server.address: ":8080"`）。
+
+    ## 包络
+    `writeOK` / `writeErr` 的 JSON 为 `{ "code": 0|1, "message": "", "data": ... }`。
+    - `code=0`：成功，HTTP 200，`message` 一般为空字符串。
+    - `code=1`：业务失败。经 `writeErr` 或 `h()` 时 HTTP 仍多为 200，`data` 多为 `null`，`message` 为中文原因。
+    - 例外：`writeQuotaBlock`、绑定冲突、今日一牌复用也是 HTTP 200 + `code=1`，但 `data` 为结构化对象。
+    - 鉴权失败（`h()` 捕获 `authFail`）为 HTTP 401，`message` 为「未登录或令牌无效」。
+    - `POST /api/admin/v1/auth/refresh` 在刷新令牌无效时为 HTTP 401。
+    - `POST /demo/openai/v1/chat/completions` 不使用该包络。
+
+    经 `decode` 的 JSON 会拒绝未知字段，失败文案为「请求字段不正确」。
+
+    ## 鉴权
+    Access token 为 HS256 JWT，`Authorization: Bearer <token>`，`typ=access`，约 2 小时过期。
+    - **AppBearer**：`aud=app`。登录用户 `sub` 为 `app_users.id`，`anon` 为空。匿名令牌 `sub=0`，`anon` 为 anonymous_id。`role` 为空。
+    - **AdminBearer**：`aud=admin`。`sub` 为 `operators.id`，`role` 为 `admin` 或 `readonly`。
+    两种令牌不能互换。已合并账号（`merged_into` 非空）、不存在的用户、已停用的操作员会被拒绝。
+    App 登录接口不签发 refresh token。管理端 refresh token 是库存的不透明字符串（约 7 天），不是 JWT。
+
+    写操作调用 `adminActor(write=true)`，`readonly` 得到「只读账号不能修改」。
+
+    全局 CORS 允许头：`Authorization`、`Content-Type`、`Idempotency-Key`。`OPTIONS` 返回 204，没有单独业务路径。
+
+    ## 未配置的价格、验单与占位
+    - 种子 SKU（`sub_month`、`sub_year`、`pack_consumable`）的 `price_amount_minor`、`price_currency`、`diamond_grant`、商店商品号、`period_count` 保持 null。接口不编造价格或钻石数。
+    - `POST /api/app/v1/iap/verify` 与 restore **不调用** App Store / Google Play。只保存票据的 SHA-256，按 `product_id` 映射 `iap_skus`。`diamond_grant` 为 null 时 `credit_status=amount_unconfigured`，不写钻石流水。
+    - `quota_settings.diamond_cost` 默认为 null。未配置时扣费走到钻石步会停住：`quota_outcome=diamond_cost_unconfigured`，不猜测单次消耗。
+    - `paid_pools` 只是合并用的次数占位，不是 IAP 入账目标，响应里不出现价格。
+    - 人工补发只加余额和审计，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
+    - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
+servers:
+  - url: http://127.0.0.1:8080
+    description: 本机默认（server.address = :8080）
+tags:
+  - name: Auth
+    description: App 登录、绑定、合并确认、注销。除绑定 / 合并 / 注销外不需要 Bearer。
+  - name: Profile
+    description: 登录用户档案。匿名令牌会得到「匿名用户没有档案」。
+  - name: Readings
+    description: 占卜记录与仪式流程（检测、牌阵、洗牌、切牌、抽牌、解读、追问、工作流）。
+  - name: Quota
+    description: 次数与钻石的查询、确认和付费等待。优先级见各接口说明。
+  - name: IAP
+    description: App 内购验单、恢复、余额与 SKU。价格与发放数量未配置时保持 null。
+  - name: Daily
+    description: 今日 / 明日一牌与日历。
+  - name: Explore
+    description: 探索目录分组与主题条目。spread 映射可为空 stub。
+  - name: Wallet
+    description: 兑换码核销与钻石（展示名「塔塔币」）流水。不另开第二套账本。
+  - name: Feedback
+    description: 图片上传、功能心愿单与意见反馈。
+  - name: Settings
+    description: 通知偏好。系统推送授权只在客户端。
+  - name: Admin Auth
+    description: 管理端登录、刷新、菜单与权限码。
+  - name: Admin Content
+    description: 牌阵、塔罗师、提示窗、占卜记录、消息、日历、工作流模拟。
+  - name: Admin Vendors
+    description: 模型供应商与任务绑定。
+  - name: Admin Grants
+    description: 额度参数（只读）、次数流水（只读）与人工补发。
+  - name: Admin IAP
+    description: 订单、SKU、钻石余额与 IAP 开关。管理端只读。
+  - name: Admin Audit
+    description: 操作员、用户、审计与账号合并记录。
+  - name: System
+    description: 健康检查、演示补全、管理端跳转页。不是 /api 业务契约的主体。
+components:
+  securitySchemes:
+    AppBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        App access JWT。Claims：`aud=app`，`typ=access`，`sub` 为用户 id（匿名为 0），`anon` 为匿名 id，`role` 为空，`exp` 约 2 小时，HS256。
+        不能把管理端令牌用于 App 接口。
+    AdminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Admin access JWT。Claims：`aud=admin`，`typ=access`，`sub` 为操作员 id，`role` 为 `admin` 或 `readonly`，`exp` 约 2 小时，HS256。
+        不能把 App 令牌用于管理端接口。写接口还要求 `role=admin`。
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      description: 正整数路径 id。无法解析或小于等于 0 时 HTTP 200、code=1、message 为「id 不正确」。
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        可选。空则不去重。同一 scope 下：首次插入 pending；完成后原样重放当时的 JSON 包络；仍为 pending 时 HTTP 200、code=1、「重复请求处理中」。
+        `POST /api/app/v1/readings` 的 scope 为 `user:{id}` 或 `anon:{anonymous_id}`。
+        `POST /api/app/v1/readings/{id}/followups` 的 scope 为 `followup:{readingId}`。
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: HTTP 401。令牌缺失、无效、aud 不匹配，或账号已停用 / 已合并 / 不存在。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 1
+            message: 未登录或令牌无效
+            data: null
+  schemas:
+    SuccessMeta:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          enum: [0]
+        message:
+          type: string
+          example: ""
+    ErrorEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          enum: [1]
+        message:
+          type: string
+        data:
+          nullable: true
+          description: 普通 writeErr 为 null。配额拦截、绑定冲突、今日一牌复用不用这个 schema。
+    BoolOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: boolean
+              example: true
+    IdOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+    Position:
+      type: object
+      additionalProperties: false
+      required: [index, name, meaning]
+      properties:
+        index:
+          type: integer
+        name:
+          type: string
+        meaning:
+          type: string
+    DrawnCard:
+      type: object
+      properties:
+        position:
+          type: integer
+        position_name:
+          type: string
+        card_id:
+          type: integer
+          description: 韦特牌序，力量为 VIII、正义为 XI。
+        name:
+          type: string
+        orientation:
+          type: string
+          enum: [upright, reversed]
+    Reading:
+      type: object
+      description: "scanReading / loadReading 的字段。时间是 RFC3339。"
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        anonymous_id:
+          type: string
+          description: 无匿名 id 时为空字符串，不是 null。
+        type:
+          type: string
+          description: normal、tarotist、explore、daily。
+        question:
+          type: string
+        spread_id:
+          type: integer
+          format: int64
+          nullable: true
+        tarotist_id:
+          type: integer
+          format: int64
+          nullable: true
+        status:
+          type: string
+          enum:
+            - QUESTION_CREATED
+            - SPREAD_SELECTED
+            - SHUFFLING
+            - CUTTING
+            - CARDS_FIXED
+            - INTERPRETING
+            - COMPLETED
+            - FAILED_RETRYABLE
+        cards:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/DrawnCard"
+        interpretation:
+          type: string
+          nullable: true
+        vendor_name:
+          type: string
+          nullable: true
+        model_name:
+          type: string
+          nullable: true
+        fail_reason:
+          type: string
+          nullable: true
+        quota_consumed:
+          type: boolean
+          description: 数据库标记，表示已扣今日免费次数。注册奖励走 reward_consumed，不在此列表字段中。
+        first_experience:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        progress:
+          type: string
+        continue:
+          type: string
+          description: 建议的下一步动作名；完成时为空字符串。
+        card_name:
+          type: string
+          description: POST /daily 首页卡牌名。来自第一张牌，无牌时为空。
+        short_text:
+          type: string
+          description: POST /daily 首页短句。从 interpretation 截取，无解读时为空，不编造。
+        yi:
+          type: string
+          nullable: true
+          description: 「宜」尚未有数据源时为 null，不编造。
+        card_thumbnail:
+          type: string
+          nullable: true
+          description: 牌面缩略图未配置时为 null。
+        target:
+          type: string
+          description: today 或 tomorrow。仅 daily 响应。
+        business_date:
+          type: string
+          description: 业务日 YYYY-MM-DD。仅 daily 响应。
+        has_result:
+          type: boolean
+          description: 已有牌名时为 true。
+    ReadingCreated:
+      description: |
+        创建占卜在 Reading 之上附加的额度结果。成功包络仍是 code=0。
+        登录用户的普通 / 塔罗师占卜在这一步就按共享优先级扣费；explore 推迟到仪式门槛；匿名不预扣。
+        额度用尽时记录仍保留（kept=true，generated=false），不会编造钻石单价。
+      allOf:
+        - $ref: "#/components/schemas/Reading"
+        - type: object
+          properties:
+            quota_exhausted:
+              type: boolean
+            quota_consumed:
+              type: boolean
+            reward_consumed:
+              type: boolean
+            needs_confirm:
+              type: boolean
+              description: 当前实现恒为 false。
+            quota_outcome:
+              type: string
+              enum: [charged, already, paywall, diamond_cost_unconfigured, anonymous, deferred]
+            entitlement:
+              type: string
+              description: |
+                可能为空。取值：registration_reward、daily_free、admin_grant_free、diamond_pack、diamond_subscription、ai_trial。
+            paywall:
+              type: boolean
+            diamond_cost_unconfigured:
+              type: boolean
+            kept:
+              type: boolean
+            generated:
+              type: boolean
+            quota_prompt:
+              type: string
+              description: 仅在额度用尽且决策带有文案时出现。
+    ReadingOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/Reading"
+    ReadingListOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Reading"
+    ReadingCreatedOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ReadingCreated"
+    QuotaBlock:
+      type: object
+      properties:
+        reading_id:
+          type: integer
+          format: int64
+        quota_outcome:
+          type: string
+          enum: [paywall, diamond_cost_unconfigured]
+        entitlement:
+          type: string
+        paywall:
+          type: boolean
+        diamond_cost_unconfigured:
+          type: boolean
+          description: diamond_cost 未配置时为 true，本次不扣钻石。
+        kept:
+          type: boolean
+          example: true
+        generated:
+          type: boolean
+          example: false
+    QuotaBlockEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          enum: [1]
+        message:
+          type: string
+          description: |
+            paywall：「今日免费次数已用完，钻石不足，请付费后自动继续；取消则保留记录且不继续生成」。
+            未配置：「今日免费次数已用完，钻石消耗未配置，本次未扣钻石，记录已保留」。
+        data:
+          $ref: "#/components/schemas/QuotaBlock"
+    Spread:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+        card_count:
+          type: integer
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+        enabled:
+          type: boolean
+        charged:
+          type: boolean
+    SpreadBody:
+      type: object
+      additionalProperties: false
+      required: [name, card_count, positions]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        card_count:
+          type: integer
+          minimum: 1
+        positions:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Position"
+          description: 长度必须等于 card_count。
+        enabled:
+          type: boolean
+          nullable: true
+          description: 省略视为 true。
+        charged:
+          type: boolean
+          nullable: true
+          description: 省略视为 false。
+    Banner:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        copy:
+          type: string
+        start_at:
+          type: string
+          format: date-time
+        end_at:
+          type: string
+          format: date-time
+        priority:
+          type: integer
+        target:
+          type: string
+    BannerBody:
+      type: object
+      additionalProperties: false
+      required: [copy, start_at, end_at, priority, target]
+      properties:
+        copy:
+          type: string
+        start_at:
+          type: string
+          format: date-time
+          description: RFC3339，且 end_at 必须晚于 start_at。
+        end_at:
+          type: string
+          format: date-time
+        priority:
+          type: integer
+        target:
+          type: string
+    TarotistAdmin:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        persona:
+          type: string
+        display_copy:
+          type: string
+        voice:
+          type: string
+        banned:
+          type: string
+        ask_style:
+          type: string
+        enabled:
+          type: boolean
+    TarotistBody:
+      type: object
+      additionalProperties: false
+      required: [name, persona, display_copy, voice, banned, ask_style]
+      properties:
+        name:
+          type: string
+        persona:
+          type: string
+        display_copy:
+          type: string
+        voice:
+          type: string
+          description: 更新时传空字符串会保留原值。
+        banned:
+          type: string
+          description: 更新时传空字符串会保留原值。
+        ask_style:
+          type: string
+          description: 更新时传空字符串会保留原值。
+        enabled:
+          type: boolean
+          nullable: true
+          description: 省略视为 true。
+    TarotistPublic:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        display_copy:
+          type: string
+        title:
+          type: string
+          description: 首页列表标签文案，与 display_copy 相同。
+        tags:
+          type: array
+          items:
+            type: string
+        blurb:
+          type: string
+          description: 首页简介。缺省时回退 display_copy。不返回人设/禁止项正文。
+        avatar_url:
+          type: string
+          nullable: true
+          description: 未配置时为 null，不编造头像地址。
+    Vendor:
+      type: object
+      description: 列表不返回密钥明文，只返回 api_key_set。
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        base_url:
+          type: string
+        api_key_set:
+          type: boolean
+        models:
+          type: array
+          items:
+            type: string
+        timeout_sec:
+          type: integer
+          nullable: true
+        enabled:
+          type: boolean
+    VendorBody:
+      type: object
+      additionalProperties: false
+      required: [name, base_url, api_key, models]
+      properties:
+        name:
+          type: string
+        base_url:
+          type: string
+          description: 只允许 https，或本机演示的 http://127.0.0.1、http://localhost。
+        api_key:
+          type: string
+          description: 写入用。更新时传空字符串表示不改已存密钥。响应不会回显。
+        models:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        timeout_sec:
+          type: integer
+          nullable: true
+        enabled:
+          type: boolean
+          nullable: true
+          description: 创建时省略视为 false。启用前必须已有密钥。
+    Binding:
+      type: object
+      properties:
+        task:
+          type: string
+          enum: [detect, rewrite, recommend, interpret, tarotist]
+        vendor_id:
+          type: integer
+          format: int64
+          nullable: true
+        model:
+          type: string
+    BindingBody:
+      type: object
+      additionalProperties: false
+      required: [vendor_id, model]
+      properties:
+        vendor_id:
+          type: integer
+          format: int64
+        model:
+          type: string
+          description: 必须属于该供应商的 models。
+    QuotaView:
+      type: object
+      description: |
+        用户可见「次数」与「钻石」分开。扣减顺序固定：注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费等待。
+        钻石先扣 pack（consumable），再扣 subscription，单次不拆桶。
+        diamond_cost 未配置时为 null，不会出现猜测出来的单价。
+      properties:
+        cycle:
+          type: string
+          description: 业务日，默认按用户时区、重置点为北京时间 08:00。
+          example: "2026-10-26"
+        reset_at:
+          type: string
+          example: 北京时间 08:00
+        daily_free_used:
+          type: boolean
+        daily_free_count:
+          type: integer
+          example: 1
+        daily_free_remaining:
+          type: integer
+        daily_used_flags:
+          type: integer
+        reward_remaining:
+          type: integer
+        admin_grant_free_remaining:
+          type: integer
+        paid_subscription_remaining:
+          type: integer
+          description: paid_pools 占位次数，不是钻石，也没有价格。
+        paid_pack_remaining:
+          type: integer
+          description: paid_pools 占位次数，不是钻石。
+        subscription_prompt_required:
+          type: boolean
+        free_label:
+          type: string
+          example: 次数
+        paid_label:
+          type: string
+          example: 钻石
+        priority:
+          type: string
+          example: 注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费
+        diamond_spend_order:
+          type: string
+          example: pack_then_subscription
+        diamond_cost:
+          type: integer
+          nullable: true
+          description: quota_settings.diamond_cost。未配置为 null。
+        diamond_cost_configured:
+          type: boolean
+        subscription_diamonds:
+          type: integer
+        pack_diamonds:
+          type: integer
+        display_label:
+          type: string
+          example: 塔塔币
+          description: UI 展示名。账本单位仍是钻石。
+        balance:
+          type: integer
+          description: pack_diamonds + subscription_diamonds。我的页余额用这个合计。
+    AdminQuotaParams:
+      type: object
+      properties:
+        reset_at:
+          type: string
+          example: 北京时间 08:00
+        daily_free_count:
+          type: integer
+          example: 1
+        shared_scope:
+          type: string
+        failure_policy:
+          type: string
+          example: 已扣不退
+        editable:
+          type: boolean
+          example: false
+        diamond_cost:
+          type: integer
+          nullable: true
+        diamond_cost_configured:
+          type: boolean
+        diamond_spend_order:
+          type: string
+          example: pack_then_subscription
+        free_label:
+          type: string
+          example: 次数
+        paid_label:
+          type: string
+          example: 钻石
+    Profile:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        birth_date:
+          type: string
+          nullable: true
+        gender:
+          type: string
+          nullable: true
+        wechat_openid:
+          type: string
+          nullable: true
+        apple_sub:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+        name:
+          type: string
+          description: 姓名。未设置时为空字符串。
+        bio:
+          type: string
+          description: 简介。未设置时为空字符串。
+        avatar_url:
+          type: string
+          nullable: true
+        account_display:
+          type: string
+          description: |
+            账号页主展示。优先脱敏邮箱（本地第一部分字符 + *** + @域名）。
+            无邮箱时为「微信已绑定」或「Apple 已绑定」。不用手机号当主展示。
+    ProfileBody:
+      type: object
+      additionalProperties: false
+      properties:
+        birth_date:
+          type: string
+          description: 空字符串表示不修改。服务端不校验日期格式。
+        gender:
+          type: string
+          description: 空字符串表示不修改。非空只允许「女性」「男性」「不愿透露」。
+          enum: ["", "女性", "男性", "不愿透露"]
+        timezone:
+          type: string
+          description: 空字符串表示不修改。非空必须是 time.LoadLocation 可识别的 IANA 时区。
+        name:
+          type: string
+          description: 空字符串表示不修改。非空最多 32 个字。
+        bio:
+          type: string
+          description: 空字符串表示不修改。非空最多 200 个字。
+        avatar_url:
+          type: string
+          description: 空字符串表示不修改。非空须为 http(s) URL 或 /uploads/{name}。
+    AppAuthSession:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        id:
+          type: integer
+          format: int64
+        reward_consumed:
+          type: boolean
+        needs_confirm:
+          type: boolean
+        quota_prompt:
+          type: string
+        reward_note:
+          type: string
+        registration_reward_expires_at:
+          type: string
+          format: date-time
+          description: 注册奖励到期时间。该身份已领过时为零值时间。
+        login:
+          type: string
+        anonymous_id:
+          type: string
+    AnonymousAuthOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [accessToken, anonymous_id]
+              properties:
+                accessToken:
+                  type: string
+                anonymous_id:
+                  type: string
+    AdminLoginOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [accessToken, refreshToken, id, username, realName, roles]
+              properties:
+                accessToken:
+                  type: string
+                refreshToken:
+                  type: string
+                  description: 不透明刷新令牌，audience=admin，约 7 天。
+                id:
+                  type: integer
+                  format: int64
+                username:
+                  type: string
+                realName:
+                  type: string
+                  description: role=admin 时为「管理员」，readonly 时为「只读」。
+                roles:
+                  type: array
+                  items:
+                    type: string
+                    enum: [admin, readonly]
+    AdminRefreshOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: string
+              description: 新的 admin access JWT 字符串，不是对象。
+    AdminInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        realName:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        homePath:
+          type: string
+          example: /tata/spread
+        desc:
+          type: string
+        token:
+          type: string
+          example: ""
+    AdminMenuItem:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        meta:
+          type: object
+          properties:
+            title:
+              type: string
+            order:
+              type: integer
+    Operator:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, readonly]
+        disabled:
+          type: boolean
+    OperatorCreate:
+      type: object
+      additionalProperties: false
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        role:
+          type: string
+          enum: [admin, readonly]
+    OperatorPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        disabled:
+          type: boolean
+          nullable: true
+          description: 省略或 null 会把账号重新启用（写成 false）。不能停用自己。
+    AppUserAdmin:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+          nullable: true
+        wechat_openid:
+          type: string
+          nullable: true
+        apple_sub:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        tarotist_trial_used:
+          type: boolean
+        tease_off:
+          type: boolean
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    LedgerRow:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        reading_id:
+          type: integer
+          format: int64
+          nullable: true
+        entitlement:
+          type: string
+        amount:
+          type: integer
+        reason:
+          type: string
+        result:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        grant_id:
+          type: integer
+          format: int64
+          nullable: true
+    AuditRow:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        operator_id:
+          type: integer
+          format: int64
+        action:
+          type: string
+        object_type:
+          type: string
+        object_id:
+          type: string
+        detail:
+          type: string
+        actor_kind:
+          type: string
+          description: operator 或 app_user。
+        created_at:
+          type: string
+          format: date-time
+    Message:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        reading_id:
+          type: integer
+          format: int64
+        turn_id:
+          type: integer
+          format: int64
+        seq:
+          type: integer
+        role:
+          type: string
+          description: user 或 assistant。
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CalendarItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        type:
+          type: string
+        question:
+          type: string
+        status:
+          type: string
+        business_date:
+          type: string
+          description: YYYY-MM-DD。
+        progress:
+          type: string
+        continue:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        has_result:
+          type: boolean
+    CalendarView:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/CalendarItem"
+        cycle:
+          type: string
+          description: 当前业务日。
+        tomorrow_date:
+          type: string
+          description: 明日运势预览用的业务日。
+    FlowStep:
+      type: object
+      properties:
+        task:
+          type: string
+        vendor:
+          type: string
+        model:
+          type: string
+        input:
+          type: string
+        output:
+          type: string
+        error:
+          type: string
+        persisted:
+          type: boolean
+    DetectResult:
+      type: object
+      properties:
+        text:
+          type: string
+        vendor:
+          type: string
+        model:
+          type: string
+        suggestions:
+          type: integer
+          description: 当前实现固定为 3，不是从模型输出解析的条数。
+          example: 3
+    CreateReadingBody:
+      type: object
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          description: 最长 200 个码点。超长文案为「问题超过 200 个码点，正式计数口径尚未确认」。
+        type:
+          type: string
+          description: 省略或空字符串时为 normal。只允许 normal、tarotist、explore。
+          enum: ["", normal, tarotist, explore]
+        source:
+          type: string
+          description: |
+            explore：把 normal/explore 记为 explore，并跳过检测。
+            preset：跳过检测。
+            其他字符串没有额外效果。
+        skip_detect:
+          type: boolean
+        tarotist_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: type=tarotist 时必填，且塔罗师必须启用。
+    QuestionBody:
+      type: object
+      additionalProperties: false
+      required: [question]
+      properties:
+        question:
+          type: string
+    SpreadSelectBody:
+      type: object
+      additionalProperties: false
+      required: [spread_id]
+      properties:
+        spread_id:
+          type: integer
+          format: int64
+    DrawBody:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          description: 只接受 normal。numerology 会拒绝且不生成牌面（「灵数映射未确认，本期不生成牌面」）。
+          enum: [normal]
+    ConfirmQuotaBody:
+      type: object
+      additionalProperties: false
+      properties:
+        consume:
+          type: boolean
+          description: 省略、非法 JSON 或 false：不扣额度，记录保留。true：按共享优先级扣一次 play。
+    PaywallBody:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [cancel, resume]
+          description: |
+            cancel：把 pending / unconfigured 的 paywall 标为 cancelled，不生成。
+            resume：再次尝试扣费并继续当时挂起的动作（洗牌、抽牌、解读、今日一牌、追问）。余额或单价仍不足时该任务不会出现在结果里。
+    FollowupBody:
+      type: object
+      additionalProperties: false
+      required: [text, continuation]
+      properties:
+        text:
+          type: string
+        continuation:
+          type: boolean
+          description: |
+            false：另开一条 normal 占卜，本接口不扣费（charged_here=false），新记录自己的创建逻辑会扣。
+            true：必须已经完成解读且牌面已固定，登录后按共享优先级扣 followup:{turn}。
+    WorkflowBody:
+      type: object
+      description: 正文可省略。解析失败时按「有没有牌面」选择默认步骤。未知字段不会被拒绝。
+      properties:
+        steps:
+          type: array
+          items:
+            type: string
+          description: |
+            已知步骤为 detect、rewrite、recommend、interpret、tarotist。
+            空数组时：还没有牌面则 detect、rewrite、recommend；已有牌面则 interpret。
+            interpret / tarotist 会调用 generate 并写库。其余已知步骤不落库。
+            未知字符串不会让整个请求失败，对应 step.error 为「未知步骤」。
+    DailyBody:
+      type: object
+      additionalProperties: false
+      properties:
+        target:
+          type: string
+          description: 省略或 today 为今日一牌；tomorrow 为明日运势。其他值拒绝。
+          enum: ["", today, tomorrow]
+    RegisterBody:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        anonymous_id:
+          type: string
+          description: 非空时把该匿名 id 下尚未归属的占卜记到新用户。
+    LoginBody:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        anonymous_id:
+          type: string
+    WechatBody:
+      type: object
+      additionalProperties: false
+      required: [openid]
+      properties:
+        openid:
+          type: string
+    AppleBody:
+      type: object
+      additionalProperties: false
+      required: [sub]
+      properties:
+        sub:
+          type: string
+    EmailBindBody:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+    PhoneBody:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          type: string
+    MergeConfirmBody:
+      type: object
+      additionalProperties: false
+      required: [merge_request_id, confirm]
+      properties:
+        merge_request_id:
+          type: integer
+          format: int64
+        confirm:
+          type: boolean
+          description: false 时直接拒绝，不合并。
+    BindConflict:
+      type: object
+      properties:
+        bound:
+          type: boolean
+          example: false
+        conflict:
+          type: boolean
+          example: true
+        merged:
+          type: boolean
+          example: false
+        confirm_required:
+          type: boolean
+          example: true
+        merge_request_id:
+          type: integer
+          format: int64
+        primary_user_id:
+          type: integer
+          format: int64
+          description: 当前登录用户，合并后的主账号。
+        secondary_user_id:
+          type: integer
+          format: int64
+        identity_kind:
+          type: string
+          enum: [wechat, apple, email, phone]
+    BindConflictEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          enum: [1]
+        message:
+          type: string
+          example: 身份已被其他账号占用，需要确认后才会合并
+        data:
+          $ref: "#/components/schemas/BindConflict"
+    MergeParties:
+      type: object
+      properties:
+        primary_user_id:
+          type: integer
+          format: int64
+        secondary_user_id:
+          type: integer
+          format: int64
+        surviving_user_id:
+          type: integer
+          format: int64
+          description: 仅 after 中出现，等于主账号。
+    MergeOutcome:
+      type: object
+      description: |
+        只在 confirm=true 且合并成功（或已经合并、重放保存结果）时作为 data。
+        paid_* 来自 paid_pools 占位次数，不是价格，也不是 IAP 钻石。
+        钻石余额会在库内加总到主账号并迁移 diamond_ledger，但本对象不返回钻石数量。iap_orders 不改写。
+        次账号的 App refresh（若有）会被吊销，之后次账号 access 也会因 merged_into 失效。
+      properties:
+        merged:
+          type: boolean
+        before:
+          $ref: "#/components/schemas/MergeParties"
+        after:
+          $ref: "#/components/schemas/MergeParties"
+        confirm_at:
+          type: string
+          format: date-time
+        reward_before_primary:
+          type: integer
+        reward_before_secondary:
+          type: integer
+        reward_remaining:
+          type: integer
+        daily_free_remaining:
+          type: integer
+        daily_used_flags:
+          type: integer
+        daily_slot_remaining:
+          type: integer
+        daily_slot_used:
+          type: integer
+        paid_subscription_before_primary:
+          type: integer
+        paid_subscription_before_secondary:
+          type: integer
+        paid_pack_before_primary:
+          type: integer
+        paid_pack_before_secondary:
+          type: integer
+        paid_subscription_remaining:
+          type: integer
+        paid_pack_remaining:
+          type: integer
+        readings_moved:
+          type: integer
+          format: int64
+        messages_kept:
+          type: integer
+          format: int64
+        subscription_resolution:
+          type: string
+          enum: [none, selected, prompt_required]
+        subscription_prompt_required:
+          type: boolean
+        subscription_winner_id:
+          type: integer
+          format: int64
+        identity_prompt_required:
+          type: boolean
+        retained_identities:
+          type: array
+          items:
+            type: string
+          description: 主账号该槽已占用时留下的身份，形如 wechat:openid。
+    AccountMergeRow:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        primary_user_id:
+          type: integer
+          format: int64
+        secondary_user_id:
+          type: integer
+          format: int64
+        identity_kind:
+          type: string
+        status:
+          type: string
+          description: pending_confirm 或 merged。
+        subscription_resolution:
+          type: string
+        confirm_at:
+          type: string
+          format: date-time
+          nullable: true
+        result:
+          type: string
+          description: 合并成功后保存的 MergeOutcome JSON 文本；未合并时为空字符串。
+        created_at:
+          type: string
+          format: date-time
+    IAPVerifyBody:
+      type: object
+      additionalProperties: false
+      required: [platform, product_id, transaction_id, receipt]
+      properties:
+        platform:
+          type: string
+          enum: [app_store, play]
+        product_id:
+          type: string
+          description: 必须能映射到 iap_skus 的商店商品号。种子 SKU 的商品号为 null，直接验单会得到「商品未映射」。
+        transaction_id:
+          type: string
+          maxLength: 128
+        original_transaction_id:
+          type: string
+          description: 可省略，省略时等于 transaction_id。
+        receipt:
+          type: string
+          maxLength: 8192
+          description: 非空即可进入本地映射。服务端不向商店验票，只存 SHA-256。
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 订阅桶必填，RFC3339。消耗型可省略。
+        purchased_at:
+          type: string
+          format: date-time
+          nullable: true
+    IAPRestoreBody:
+      type: object
+      additionalProperties: false
+      required: [purchases]
+      properties:
+        platform:
+          type: string
+          enum: [app_store, play]
+          description: 单笔 purchase 未写 platform 时继承这里。
+        purchases:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/IAPVerifyBody"
+    IAPSubscription:
+      type: object
+      nullable: true
+      properties:
+        status:
+          type: string
+        sku_kind:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        auto_renew:
+          type: boolean
+          nullable: true
+    IAPOrderSnapshot:
+      type: object
+      description: |
+        本地验单结果。verify_status=verified 只表示商品映射通过，不是商店回执。
+        credit_status=amount_unconfigured 表示 diamond_grant 未配置，credited_diamonds 为 null，余额不变。
+        同一 platform+transaction_id 再次提交且已 verified 时 idempotent=true，不重复入账。
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        idempotent:
+          type: boolean
+        unit:
+          type: string
+          example: diamond
+        sku_code:
+          type: string
+        sku_kind:
+          type: string
+        ledger_bucket:
+          type: string
+          description: subscription 或 consumable。订阅入账会把该桶余额替换为发放量；消耗型在原余额上累加。
+        platform:
+          type: string
+        product_id:
+          type: string
+        store_transaction_id:
+          type: string
+        original_transaction_id:
+          type: string
+        verify_status:
+          type: string
+          enum: [pending, verified, failed]
+        credit_status:
+          type: string
+          enum: [none, credited, amount_unconfigured, skipped_expired]
+        credited_diamonds:
+          type: integer
+          nullable: true
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        source:
+          type: string
+          enum: [verify, restore]
+        verify_message:
+          type: string
+        subscription_diamonds:
+          type: integer
+        pack_diamonds:
+          type: integer
+        subscription:
+          $ref: "#/components/schemas/IAPSubscription"
+        resumed_tasks:
+          type: array
+          description: 仅当本次 credit_status=credited 且存在可继续的 paywall 时出现。
+          items:
+            $ref: "#/components/schemas/ResumedTask"
+        transaction_id:
+          type: string
+          description: 单笔失败、尚未形成订单快照时，restore 结果里可能只有这个字段。
+        message:
+          type: string
+    IAPSKU:
+      type: object
+      description: |
+        种子三条不带价格：sub_month（月订阅 / subscription / period_unit=month）、
+        sub_year（年订阅 / subscription / period_unit=year）、
+        pack_consumable（次卡 / 点数包 / consumable / period_unit 为空）。
+        价格、货币、diamond_grant、商店商品号、period_count 在配置前为 null。
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        kind:
+          type: string
+          enum: [month_subscription, year_subscription, consumable_pack]
+        ledger_bucket:
+          type: string
+          enum: [subscription, consumable]
+        display_name:
+          type: string
+        app_store_product_id:
+          type: string
+          nullable: true
+        play_product_id:
+          type: string
+          nullable: true
+        price_amount_minor:
+          type: integer
+          format: int64
+          nullable: true
+          description: 未配置为 null。契约不提供示例金额。
+        price_currency:
+          type: string
+          nullable: true
+        diamond_grant:
+          type: integer
+          nullable: true
+          description: 未配置为 null。验单不会把 null 当成 0 颗钻石入账。
+        period_unit:
+          type: string
+        period_count:
+          type: integer
+          nullable: true
+        enabled:
+          type: boolean
+        unit:
+          type: string
+          example: diamond
+        display_label:
+          type: string
+          example: 塔塔币
+          description: UI 展示名。档位数量来自 diamond_grant；价格未配置时保持 null，不把设计示例价写入契约。
+    IAPConfig:
+      type: object
+      properties:
+        restore_hook_enabled:
+          type: boolean
+          description: 种子默认 true。false 时 restore 直接失败且不写订单；verify 不受影响。
+        restore_required_first_pack:
+          type: boolean
+          description: 种子默认 false。只回传，当前恢复逻辑不检查这个开关。
+    DiamondView:
+      type: object
+      properties:
+        unit:
+          type: string
+          example: diamond
+        display_label:
+          type: string
+          example: 塔塔币
+        balance:
+          type: integer
+          description: pack_diamonds + subscription_diamonds。
+        subscription_diamonds:
+          type: integer
+        pack_diamonds:
+          type: integer
+        subscription_period_end:
+          type: string
+          format: date-time
+          nullable: true
+        subscription:
+          $ref: "#/components/schemas/IAPSubscription"
+        user_id:
+          type: integer
+          format: int64
+          description: 仅管理端钻石查询附带。
+        ledger:
+          type: array
+          description: 仅管理端，最近 50 条。
+          items:
+            $ref: "#/components/schemas/DiamondLedgerRow"
+    DiamondLedgerRow:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        bucket:
+          type: string
+          enum: [subscription, consumable]
+        delta:
+          type: integer
+        balance_after:
+          type: integer
+        order_id:
+          type: integer
+          format: int64
+          nullable: true
+        store_transaction_id:
+          type: string
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AdminIAPOrder:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        sku_code:
+          type: string
+        sku_kind:
+          type: string
+        ledger_bucket:
+          type: string
+        platform:
+          type: string
+        product_id:
+          type: string
+        store_transaction_id:
+          type: string
+        original_transaction_id:
+          type: string
+        verify_status:
+          type: string
+          enum: [pending, verified, failed]
+        credit_status:
+          type: string
+        credited_diamonds:
+          type: integer
+          nullable: true
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        source:
+          type: string
+        verify_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        subscription_status:
+          type: string
+          nullable: true
+        subscription_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        subscription_sku_kind:
+          type: string
+          nullable: true
+        unit:
+          type: string
+          example: diamond
+    ResumedTask:
+      type: object
+      properties:
+        reading_id:
+          type: integer
+          format: int64
+        charge_key:
+          type: string
+        resume_action:
+          type: string
+          enum: [hold, shuffle, draw, interpret, daily_draw, followup]
+        entitlement:
+          type: string
+        quota_outcome:
+          type: string
+        status:
+          type: string
+        generated:
+          type: boolean
+    GrantMeta:
+      type: object
+      properties:
+        reason:
+          type: string
+          example: admin_grant
+        diamond_bucket_default:
+          type: string
+          example: pack
+        diamond_bucket_column:
+          type: string
+          example: pack_diamonds
+        diamond_ledger_bucket_for_pack:
+          type: string
+          example: consumable
+        writes_iap_orders:
+          type: boolean
+          example: false
+        resumes_paywall:
+          type: boolean
+          example: false
+        can_write:
+          type: boolean
+        write_role:
+          type: string
+          example: admin
+        permission_note:
+          type: string
+        user_id:
+          type: integer
+          format: int64
+        operator_id:
+          type: integer
+          format: int64
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrantRow"
+        resumed_tasks:
+          type: array
+          description: 创建补发时恒为空数组。补发不唤醒 paywall。
+          items:
+            type: object
+          maxItems: 0
+        pack_diamonds:
+          type: integer
+        subscription_diamonds:
+          type: integer
+        subscription_period_end:
+          type: string
+          format: date-time
+          nullable: true
+        free_count_remaining:
+          type: integer
+          description: rewards.admin_grant_remaining。
+        registration_reward_remaining:
+          type: integer
+    GrantRow:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        operator_id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [diamonds, free_count]
+        amount:
+          type: integer
+        bucket:
+          type: string
+          description: diamonds 为 pack 或 subscription；free_count 为空字符串。
+        ledger_bucket:
+          type: string
+          description: pack 对应 consumable；subscription 对应 subscription；免费次数为空。
+        reason:
+          type: string
+          example: admin_grant
+        note:
+          type: string
+        diamond_ledger_id:
+          type: integer
+          format: int64
+          nullable: true
+        count_ledger_id:
+          type: integer
+          format: int64
+          nullable: true
+        balance_after:
+          type: integer
+        free_count_after:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+    GrantCreate:
+      type: object
+      additionalProperties: false
+      required: [user_id, note]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        diamonds:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: 与 free_count 至少一个大于 0。默认进入 pack 桶（pack_diamonds / diamond_ledger.bucket=consumable）。
+        diamond_bucket:
+          type: string
+          enum: ["", pack, subscription]
+          description: 省略或空字符串等于 pack。subscription 只累加 subscription_diamonds，不改订阅周期。
+        free_count:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: 加到 rewards.admin_grant_remaining，不改注册奖励 remaining。
+        reason:
+          type: string
+          description: 省略或 admin_grant。其他值拒绝。
+          example: admin_grant
+        note:
+          type: string
+          maxLength: 500
+          description: 必填，按码点最多 500。
+    FollowupOKData:
+      type: object
+      properties:
+        turn_id:
+          type: integer
+          format: int64
+        bubbles:
+          type: array
+          maxItems: 4
+          items:
+            type: string
+        cards_unchanged:
+          type: boolean
+          example: true
+        error:
+          type: string
+          description: 模型失败时出现。文案说明未重新扣次数或钻石。
+        quota_outcome:
+          type: string
+        entitlement:
+          type: string
+        charged:
+          type: boolean
+          description: 试用（ai_trial）为 false。
+        new_reading:
+          type: boolean
+        reading:
+          $ref: "#/components/schemas/ReadingCreated"
+        charged_here:
+          type: boolean
+    DailyReuseEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          enum: [1]
+        message:
+          type: string
+          description: 当日名额已占用，或「该日已有结果，不重复扣次数或钻石」。
+        data:
+          type: object
+          properties:
+            reused:
+              type: boolean
+              example: true
+            charged:
+              type: boolean
+              example: false
+            reading:
+              $ref: "#/components/schemas/Reading"
+    ConfirmQuotaData:
+      type: object
+      properties:
+        quota_consumed:
+          type: boolean
+        entitlement:
+          type: string
+        quota_outcome:
+          type: string
+        message:
+          type: string
+    UseRewardData:
+      type: object
+      description: 尽管路径叫 use-reward，实际走共享优先级，不保证扣的是注册奖励。
+      properties:
+        reward_consumed:
+          type: boolean
+          description: 仅当本次 entitlement=registration_reward 时为 true。
+        already:
+          type: boolean
+        entitlement:
+          type: string
+        quota_outcome:
+          type: string
+        note:
+          type: string
+          example: 已按优先级处理：注册奖励，今日免费次数，人工补发免费次数，然后钻石
+    PaywallResult:
+      type: object
+      properties:
+        cancelled:
+          type: boolean
+        kept:
+          type: boolean
+        generated:
+          type: boolean
+        reading_id:
+          type: integer
+          format: int64
+        resumed_tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResumedTask"
+    SimulateFull:
+      type: object
+      properties:
+        engine:
+          type: string
+          example: eino
+        persisted:
+          type: boolean
+          example: false
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/DrawnCard"
+        app_call:
+          type: object
+          properties:
+            method:
+              type: string
+            path:
+              type: string
+            body:
+              type: object
+            note:
+              type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowStep"
+    SimulateOne:
+      type: object
+      properties:
+        step:
+          type: string
+        title:
+          type: string
+        text:
+          type: string
+        vendor:
+          type: string
+        model:
+          type: string
+        error:
+          type: string
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/DrawnCard"
+    AppWorkflowResult:
+      type: object
+      properties:
+        engine:
+          type: string
+          example: eino
+        reading:
+          $ref: "#/components/schemas/Reading"
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowStep"
+        app_call:
+          type: string
+    ExploreTopics:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExploreGroup"
+    ExploreGroup:
+      type: object
+      properties:
+        group_key:
+          type: string
+          example: now_choice
+        title:
+          type: string
+          example: 此刻抉择
+        topics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExploreTopic"
+    ExploreTopic:
+      type: object
+      properties:
+        topic_id:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        illustration:
+          type: string
+          nullable: true
+        spread:
+          type: object
+          properties:
+            spread_id:
+              type: integer
+              format: int64
+              nullable: true
+            stub:
+              type: boolean
+              description: 无牌阵映射时为 true。
+    RedeemBody:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+    RedeemResult:
+      type: object
+      properties:
+        code:
+          type: string
+        benefit_name:
+          type: string
+        kind:
+          type: string
+          enum: [diamonds, free_count]
+        amount:
+          type: integer
+        unit:
+          type: string
+        display_label:
+          type: string
+          example: 塔塔币
+        pack_diamonds:
+          type: integer
+        subscription_diamonds:
+          type: integer
+        balance:
+          type: integer
+    WalletLedger:
+      type: object
+      properties:
+        items:
+          type: array
+          description: 无流水时为空数组，不编造收支。
+          items:
+            $ref: "#/components/schemas/WalletLedgerItem"
+        display_label:
+          type: string
+          example: 塔塔币
+        unit:
+          type: string
+          example: diamond
+        pack_diamonds:
+          type: integer
+        subscription_diamonds:
+          type: integer
+        balance:
+          type: integer
+    WalletLedgerItem:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+        type:
+          type: string
+          description: diamond_ledger.reason，例如 redeem、quota_spend、admin_grant。
+        amount:
+          type: integer
+          description: 该行 delta，带符号。
+        balance:
+          type: integer
+          description: 该桶当时的 balance_after，不是编造的总账快照。
+        note:
+          type: string
+        bucket:
+          type: string
+          enum: [subscription, consumable]
+    UploadBody:
+      type: object
+      additionalProperties: false
+      properties:
+        filename:
+          type: string
+        content_type:
+          type: string
+        content_base64:
+          type: string
+      description: 也可使用 multipart/form-data，字段名 file。
+    UploadResult:
+      type: object
+      properties:
+        url:
+          type: string
+          description: 可引用的图片 URL（本机为 /uploads/{name}）。
+    WishlistBody:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+          maxLength: 500
+        image_url:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+    WishlistResult:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        message:
+          type: string
+          example: 心愿已提交
+    FeedbackBody:
+      type: object
+      additionalProperties: false
+      required: [category, content]
+      properties:
+        category:
+          type: string
+          enum: [使用问题, 内容建议, 其他]
+        content:
+          type: string
+          maxLength: 500
+        image_url:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+        email:
+          type: string
+          description: 选填。非空时校验邮箱格式。
+    FeedbackResult:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        message:
+          type: string
+          example: 反馈已提交
+    NotificationPreferences:
+      type: object
+      properties:
+        daily_draw_enabled:
+          type: boolean
+        daily_draw_time:
+          type: string
+          example: "08:00"
+        tomorrow_draw_enabled:
+          type: boolean
+        tomorrow_draw_time:
+          type: string
+          example: "08:00"
+        messages_enabled:
+          type: boolean
+    NotificationPreferencesBody:
+      type: object
+      additionalProperties: false
+      properties:
+        daily_draw_enabled:
+          type: boolean
+        daily_draw_time:
+          type: string
+          description: HH:MM。空表示不改。
+        tomorrow_draw_enabled:
+          type: boolean
+        tomorrow_draw_time:
+          type: string
+        messages_enabled:
+          type: boolean
+    HealthOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  example: ok
+paths:
+  /health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: 健康检查
+      responses:
+        "200":
+          description: code=0，data.status=ok。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthOK"
+  /demo/openai/v1/chat/completions:
+    post:
+      tags: [System]
+      operationId: demoOpenAI
+      summary: 本地演示用的对话补全
+      description: |
+        不走 `{code,message,data}`。供供应商探测和单飞测试使用。
+        若设置了进程内 DemoHold，会先等待再返回。回复前缀为「【演示解读】」。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      content:
+                        type: string
+      responses:
+        "200":
+          description: 类 OpenAI 的 choices 结构。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  choices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        message:
+                          type: object
+                          properties:
+                            role:
+                              type: string
+                              example: assistant
+                            content:
+                              type: string
+  /admin:
+    get:
+      tags: [System]
+      operationId: getAdminPage
+      summary: 管理端页面跳转
+      description: "307 到 http://127.0.0.1:5666/（vben）。不是 JSON API。"
+      responses:
+        "307":
+          description: Temporary Redirect。
+          headers:
+            Location:
+              schema:
+                type: string
+                example: http://127.0.0.1:5666/
+  /admin/:
+    get:
+      tags: [System]
+      operationId: getAdminPageSlash
+      summary: 管理端页面跳转（带斜杠）
+      description: 与 GET /admin 相同，跳到 vben。
+      responses:
+        "307":
+          description: Temporary Redirect。
+          headers:
+            Location:
+              schema:
+                type: string
+                example: http://127.0.0.1:5666/
+  /demo:
+    get:
+      tags: [System]
+      operationId: getDemoPage
+      summary: 演示 HTML
+      responses:
+        "200":
+          description: text/html 演示页。
+          content:
+            text/html:
+              schema:
+                type: string
+  /api/app/v1/auth/anonymous:
+    post:
+      tags: [Auth]
+      operationId: appAnonymous
+      summary: 匿名进入
+      description: 不需要令牌，也不读取请求体。签发 aud=app、sub=0 的 access JWT。不签发 refresh。
+      responses:
+        "200":
+          description: 成功为 AnonymousAuthOK。内部错误为 code=1、「内部错误」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AnonymousAuthOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: appRegister
+      summary: 邮箱注册
+      description: |
+        邮箱和密码必填。邮箱冲突返回「邮箱已注册」。
+        该邮箱未在 identity_claims 出现过时发放注册奖励，到期为下一个北京时间 08:00。
+        若带 anonymous_id，会把匿名占卜转给新用户。
+        若该用户已有未结算的占卜，会按共享优先级立刻扣一次（一开始提问就消耗）。
+        不签发 refresh。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterBody"
+      responses:
+        "200":
+          description: code=0 时 data 含 accessToken、id、registration_reward_expires_at、reward_consumed、reward_note。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/AppAuthSession"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: appLogin
+      summary: 邮箱登录
+      description: |
+        邮箱或密码错误、或账号已注销，均为 HTTP 200、code=1、「邮箱或密码错误」。
+        成功时 needs_confirm 恒为 false。若未在登录时扣掉未结算占卜，且本周期已用过免费次数，quota_prompt 为「今日免费体验额度已用完，本次记录已保存到历史记录」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: code=0 时 data 含 accessToken、id、reward_consumed、needs_confirm、quota_prompt。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/AppAuthSession"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/auth/wechat:
+    post:
+      tags: [Auth]
+      operationId: appWechat
+      summary: 微信身份登录
+      description: |
+        以 openid 查找或创建用户。已注销身份不能再次领取注册奖励。
+        新用户会发注册奖励。成功后会尝试结算未扣费的占卜。
+        data.reward_note 为「注册奖励优先于今日免费次数，提问时自动扣减」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WechatBody"
+      responses:
+        "200":
+          description: code=0 时 data 含 accessToken、id、reward_consumed、reward_note。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/AppAuthSession"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/auth/apple:
+    post:
+      tags: [Auth]
+      operationId: appApple
+      summary: 苹果身份登录
+      description: |
+        以 sub 查找或创建用户。已注销身份不能再次领取注册奖励。
+        与微信登录不同：成功响应不调用提问结算，data 只有 accessToken、id、login=apple。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppleBody"
+      responses:
+        "200":
+          description: code=0 时 data.login 为 apple。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/AppAuthSession"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/auth/bind-wechat:
+    post:
+      tags: [Auth]
+      operationId: appBindWechat
+      summary: 绑定微信
+      security:
+        - AppBearer: []
+      description: |
+        需要登录用户。身份空闲则直接绑定，data=true。
+        已被其他未注销、未合并账号占用时不搬迁数据，返回 BindConflictEnvelope，并留下 pending_confirm 合并请求。
+        换绑未开放。重复绑定同一个 openid 返回 true。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WechatBody"
+      responses:
+        "200":
+          description: 绑定成功 code=0；冲突 code=1 且 data 为 BindConflict；其他业务错误 data 为 null。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/BindConflictEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/auth/bind-apple:
+    post:
+      tags: [Auth]
+      operationId: appBindApple
+      summary: 绑定苹果
+      security:
+        - AppBearer: []
+      description: 规则同绑定微信，身份种类为 apple。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppleBody"
+      responses:
+        "200":
+          description: 绑定成功、冲突或业务错误。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/BindConflictEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/auth/bind-email:
+    post:
+      tags: [Auth]
+      operationId: appBindEmail
+      summary: 绑定邮箱
+      security:
+        - AppBearer: []
+      description: |
+        邮箱按小写比较。空闲则写入邮箱和密码哈希。
+        冲突时同样只创建待确认合并，不立刻并账。已绑定过邮箱不能换绑。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailBindBody"
+      responses:
+        "200":
+          description: 绑定成功、冲突或业务错误。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/BindConflictEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/auth/bind-phone:
+    post:
+      tags: [Auth]
+      operationId: appBindPhone
+      summary: 绑定手机号
+      security:
+        - AppBearer: []
+      description: 规则同绑定微信，身份种类为 phone。服务端不校验号码格式。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhoneBody"
+      responses:
+        "200":
+          description: 绑定成功、冲突或业务错误。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/BindConflictEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/auth/merge-confirm:
+    post:
+      tags: [Auth]
+      operationId: appMergeConfirm
+      summary: 确认账号合并
+      security:
+        - AppBearer: []
+      description: |
+        只有发起绑定的主账号可以确认。confirm=false 不会合并。
+        成功后次账号标记 merged_into，占卜、消息、注册奖励、人工补发次数、今日免费、paid_pools 占位次数和钻石余额并入主账号。
+        钻石加总不在响应里返回数字；paid_* 仍是占位次数，没有价格。订阅到期相同且多于一条时 subscription_resolution=prompt_required。
+        已经合并的请求会重放当时保存的结果。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeConfirmBody"
+      responses:
+        "200":
+          description: code=0 时 data 为 MergeOutcome。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/MergeOutcome"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/auth/cancel:
+    post:
+      tags: [Auth]
+      operationId: appCancel
+      summary: 注销账号
+      security:
+        - AppBearer: []
+      description: |
+        登录用户把邮箱、微信、苹果、手机号写入 identity_claims（小写），再清空这些身份与密码并设置 cancelled_at。
+        会吊销 audience=app 的 refresh。当前 App 登录并不签发 refresh。已注销再调用返回「账号已注销」。
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/profile:
+    get:
+      tags: [Profile]
+      operationId: appGetProfile
+      summary: 读取档案
+      security:
+        - AppBearer: []
+      responses:
+        "200":
+          description: 匿名用户为业务错误「匿名用户没有档案」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/Profile"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Profile]
+      operationId: appPutProfile
+      summary: 更新档案
+      security:
+        - AppBearer: []
+      description: 更新非空的 birth_date、gender、timezone、name、bio、avatar_url。账号主展示见 GET 的 account_display（邮箱脱敏，不用手机号）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/spreads:
+    get:
+      tags: [Readings]
+      operationId: appListSpreads
+      summary: 可用牌阵
+      security:
+        - AppBearer: []
+      description: 只返回 enabled=true，按 id 升序。匿名令牌也可以读。
+      responses:
+        "200":
+          description: data 为牌阵数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Spread"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/banners:
+    get:
+      tags: [Readings]
+      operationId: appListBanners
+      summary: 当前首页提示窗
+      security:
+        - AppBearer: []
+      description: 只返回 start_at <= now < end_at，按 priority、id 降序。
+      responses:
+        "200":
+          description: data 为提示窗数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Banner"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/tarotists:
+    get:
+      tags: [Readings]
+      operationId: appListTarotists
+      summary: 可用塔罗师
+      security:
+        - AppBearer: []
+      description: 只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
+      responses:
+        "200":
+          description: data 为塔罗师数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TarotistPublic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/quota:
+    get:
+      tags: [Quota]
+      operationId: appQuota
+      summary: 当前额度
+      security:
+        - AppBearer: []
+      description: |
+        匿名用户仍返回结构，次数与钻石为 0，daily_free_used=false。
+        diamond_cost 未配置时为 null，diamond_cost_configured=false。
+        display_label 为「塔塔币」（展示名）；paid_label 仍为「钻石」。balance 为两桶合计。
+      responses:
+        "200":
+          description: data 为 QuotaView。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QuotaView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings:
+    get:
+      tags: [Readings]
+      operationId: appListReadings
+      summary: 我的占卜列表
+      security:
+        - AppBearer: []
+      description: 登录用户按 user_id，匿名按 anonymous_id。不含已删除。按 updated_at 降序，无分页参数。
+      responses:
+        "200":
+          description: data 为 Reading 数组。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadingListOK"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Readings]
+      operationId: appCreateReading
+      summary: 创建占卜
+      security:
+        - AppBearer: []
+      description: |
+        状态从 QUESTION_CREATED 开始。问题最长 200 个码点。
+        登录用户的 normal / tarotist 在此按共享优先级扣 play；塔罗师首次可走 ai_trial。
+        explore 不在此扣费（quota_outcome=deferred）。匿名不预扣（quota_outcome=anonymous）。
+        额度不足时仍 code=0，记录保留，paywall 或 diamond_cost_unconfigured 在 data 里，不编造单价。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReadingBody"
+      responses:
+        "200":
+          description: code=0 时 data 为 ReadingCreated。幂等重放会原样返回首次包络。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingCreatedOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}:
+    get:
+      tags: [Readings]
+      operationId: appGetReading
+      summary: 占卜详情
+      security:
+        - AppBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 不属于当前用户、已删除或不存在时为业务错误。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Readings]
+      operationId: appDeleteReading
+      summary: 删除占卜
+      security:
+        - AppBearer: []
+      description: 软删除。匿名用户返回「登录后才能删除」。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/question:
+    put:
+      tags: [Readings]
+      operationId: appEditQuestion
+      summary: 修改问题
+      security:
+        - AppBearer: []
+      description: |
+        普通占卜只能在 QUESTION_CREATED 或 SPREAD_SELECTED，且没有跳过检测。
+        explore 在 COMPLETED / INTERPRETING 之前可改。抽牌后不能改。最长 200 个码点。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuestionBody"
+      responses:
+        "200":
+          description: 成功 data 为更新后的 Reading。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/detect:
+    post:
+      tags: [Readings]
+      operationId: appDetect
+      summary: 问题检测
+      security:
+        - AppBearer: []
+      description: |
+        用绑定的 detect 任务跑模型。无请求体。
+        成功后把 skip_detect 置为 false。suggestions 固定为 3。
+        模型错误以业务错误返回 step.Error，不写解读正文。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: code=0 时 data 为检测文本。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/DetectResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/spread:
+    post:
+      tags: [Readings]
+      operationId: appSelectSpread
+      summary: 选择牌阵
+      security:
+        - AppBearer: []
+      description: 仅 QUESTION_CREATED 可进入 SPREAD_SELECTED。牌阵必须启用。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpreadSelectBody"
+      responses:
+        "200":
+          description: 成功 data 为 Reading。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/shuffle:
+    post:
+      tags: [Readings]
+      operationId: appShuffle
+      summary: 洗牌
+      security:
+        - AppBearer: []
+      description: |
+        登录用户先过 play 额度门槛，不够则返回 QuotaBlockEnvelope（code=1），状态不变。
+        匿名不预扣。成功把 SPREAD_SELECTED 改为 SHUFFLING。无请求体。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功为 Reading；额度拦截为 QuotaBlockEnvelope。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/cut:
+    post:
+      tags: [Readings]
+      operationId: appCut
+      summary: 切牌
+      security:
+        - AppBearer: []
+      description: 仅 SHUFFLING 可进入 CUTTING。不再次扣费。无请求体。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data 为 Reading。状态不对时「请先洗牌」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/draw:
+    post:
+      tags: [Readings]
+      operationId: appDraw
+      summary: 抽牌
+      security:
+        - AppBearer: []
+      description: |
+        登录用户先过 play 额度门槛。状态须为 SPREAD_SELECTED 或 CUTTING。
+        SHUFFLING 会提示先切牌。mode 只接受 normal。牌面由服务端固定，客户端不能指定牌。
+        成功后状态 CARDS_FIXED。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DrawBody"
+      responses:
+        "200":
+          description: 成功为 Reading；额度拦截为 QuotaBlockEnvelope。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/interpret:
+    post:
+      tags: [Readings]
+      operationId: appInterpret
+      summary: 生成解读
+      security:
+        - AppBearer: []
+      description: |
+        explore 且问题为空会拒绝。登录用户先过 play 门槛。
+        生成前必须已登录、牌面已固定、额度已结算。未绑定供应商会把状态写成 FAILED_RETRYABLE。
+        失败文案「解读失败，可重试，未重新扣费」。无请求体。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data 为完成后的 Reading。额度拦截为 QuotaBlockEnvelope。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/confirm-quota:
+    post:
+      tags: [Quota]
+      operationId: appConfirmQuota
+      summary: 确认是否扣额度
+      security:
+        - AppBearer: []
+      description: |
+        匿名用户拒绝。已经扣过则 code=0，message「已经扣过，不再扣」，不再扣。
+        consume 不为 true 时不扣，记录保留。
+        consume=true 时按共享优先级扣 play；不够则 QuotaBlockEnvelope。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmQuotaBody"
+      responses:
+        "200":
+          description: 确认结果或额度拦截。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/ConfirmQuotaData"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/use-reward:
+    post:
+      tags: [Quota]
+      operationId: appUseReward
+      summary: 按共享优先级扣一次
+      security:
+        - AppBearer: []
+      description: |
+        无请求体。名字是 use-reward，实现是 chargeOwned(play)，顺序仍是注册奖励、今日免费、人工补发、钻石。
+        不保证扣到注册奖励。reward_consumed 仅在 entitlement=registration_reward 时为 true。
+        钻石单价未配置或余额不足时返回 QuotaBlockEnvelope，不编造消耗数量。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 扣费结果或额度拦截。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/UseRewardData"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/paywall:
+    post:
+      tags: [Quota]
+      operationId: appPaywall
+      summary: 取消或继续付费等待
+      security:
+        - AppBearer: []
+      description: |
+        cancel：保留记录，不生成。没有 pending/unconfigured 行时「没有可取消的付费等待」。
+        resume：对当前用户所有挂起的 paywall 再试一次扣费。单价未配置或钻石仍不足的任务被跳过，不会伪造支付成功。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaywallBody"
+      responses:
+        "200":
+          description: code=0 时 data 为取消结果或 resumed_tasks。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/PaywallResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/followups:
+    post:
+      tags: [Readings]
+      operationId: appFollowup
+      summary: 追问
+      security:
+        - AppBearer: []
+      description: |
+        continuation 必填。false 时新建 normal 占卜。
+        true 时记录类型须为 normal、explore、daily、tarotist，且解读已完成、牌面已固定。
+        匿名用户在延续追问时被拒绝。登录后按 followup:{turn} 扣费，不够则 QuotaBlockEnvelope，并把追问文本记在 resume_payload。
+        含「别这样说」或「不舒服」会关掉照野调侃。模型失败不重复扣费。气泡最多 4 条。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FollowupBody"
+      responses:
+        "200":
+          description: 延续追问、新建占卜，或额度拦截。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/FollowupOKData"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/messages:
+    get:
+      tags: [Readings]
+      operationId: appMessages
+      summary: 追问消息
+      security:
+        - AppBearer: []
+      description: 按 turn_id、seq 升序。须拥有该占卜。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: data 为消息数组。App 列表不含 reading_id。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Message"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/readings/{id}/workflow:
+    post:
+      tags: [Readings]
+      operationId: appWorkflow
+      summary: 按步骤跑工作流
+      security:
+        - AppBearer: []
+      description: |
+        请求体可空。detect / rewrite / recommend 不落库。
+        interpret / tarotist 在牌面已固定时调用 generate，会写解读并扣已有额度规则。
+        未知步骤记在 step.error，不让整个请求失败。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowBody"
+      responses:
+        "200":
+          description: code=0 时 data 含 reading 与 steps。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/AppWorkflowResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/daily:
+    post:
+      tags: [Daily]
+      operationId: appDaily
+      summary: 今日或明日一牌
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
+        否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置或钻石不足为 QuotaBlockEnvelope。
+        扣费成功后抽一张牌并生成解读。生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
+        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（可空）、target、business_date、has_result。不编造宜忌文案。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DailyBody"
+      responses:
+        "200":
+          description: 新结果、复用或额度拦截。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/DailyReuseEnvelope"
+                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/calendar:
+    get:
+      tags: [Daily]
+      operationId: appCalendar
+      summary: 日历
+      security:
+        - AppBearer: []
+      description: 必须登录。data 为 {days, cycle, tomorrow_date}。days 只含未删除且 business_date 非空的记录。month 按前缀匹配，例如 2026-10。tomorrow_date 供首页明日运势预览。
+      parameters:
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "2026-10"
+      responses:
+        "200":
+          description: data 为日历条目，含 progress 与 continue。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CalendarView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/iap/verify:
+    post:
+      tags: [IAP]
+      operationId: appIAPVerify
+      summary: 验单并入账钻石
+      security:
+        - AppBearer: []
+      description: |
+        必须登录，且账号未注销、未合并。
+        不调用 App Store 或 Google Play。票据非空且商品映射到启用的 SKU 时 verify_status=verified。
+        diamond_grant 为 null：credit_status=amount_unconfigured，不写钻石，不把 null 当成 0。
+        订阅缺少 expires_at、商品未映射、商品未启用、交易号已被别人使用，都会失败。
+        订阅钻石按周期刷新（替换该桶余额）；消耗型累加 pack。免费次数不会被这次入账改动。
+        本次若真正入账（credited），会尝试继续该用户挂起的 paywall。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IAPVerifyBody"
+      responses:
+        "200":
+          description: code=0 时 data 为订单快照。业务拒绝仍是 code=1、data=null，例如「票据为空」「平台不正确」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/IAPOrderSnapshot"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/iap/restore:
+    post:
+      tags: [IAP]
+      operationId: appIAPRestore
+      summary: 恢复购买
+      security:
+        - AppBearer: []
+      description: |
+        restore_hook_enabled=false 时直接「恢复购买钩子已关闭」，不写订单。verify 不受此开关影响。
+        最多 20 笔。单笔失败记在 results 里，不让整批变成 code=1。
+        验单规则与 /iap/verify 相同：不访问商店，价格与发放量未配置则不入账。
+        restore_required_first_pack 只出现在响应里，不作为拦截条件。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IAPRestoreBody"
+      responses:
+        "200":
+          description: code=0 时 data 含开关和 results。钩子关闭时为普通业务错误。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            allOf:
+                              - $ref: "#/components/schemas/IAPConfig"
+                              - type: object
+                                properties:
+                                  results:
+                                    type: array
+                                    items:
+                                      $ref: "#/components/schemas/IAPOrderSnapshot"
+                                  resumed_tasks:
+                                    type: array
+                                    items:
+                                      $ref: "#/components/schemas/ResumedTask"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/iap/entitlements:
+    get:
+      tags: [IAP]
+      operationId: appIAPEntitlements
+      summary: 钻石余额
+      security:
+        - AppBearer: []
+      description: 必须登录。没有余额行时两个桶为 0。不返回价格。display_label 为「塔塔币」，balance 为两桶合计。
+      responses:
+        "200":
+          description: data 为 DiamondView，不含 ledger。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/DiamondView"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/iap/skus:
+    get:
+      tags: [IAP]
+      operationId: appIAPSKUs
+      summary: 已启用的 SKU
+      security:
+        - AppBearer: []
+      description: 只返回 enabled=true。种子商品的价格、货币、发放量和商店商品号为 null。每条含 display_label=塔塔币、unit=diamond。不把设计示例价写入 SKU。
+      responses:
+        "200":
+          description: data 为 IAPSKU 数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/IAPSKU"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/iap/config:
+    get:
+      tags: [IAP]
+      operationId: appIAPConfig
+      summary: 恢复购买开关
+      security:
+        - AppBearer: []
+      responses:
+        "200":
+          description: data 为 IAPConfig。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/IAPConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/explore/topics:
+    get:
+      tags: [Explore]
+      operationId: appExploreTopics
+      summary: 探索目录
+      security:
+        - AppBearer: []
+      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。匿名令牌可读取。
+      responses:
+        "200":
+          description: data.groups 非空。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ExploreTopics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/redeem:
+    post:
+      tags: [Wallet]
+      operationId: appRedeem
+      summary: 兑换码核销
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。成功时按码的 kind 写入钻石账本（pack_diamonds）或免费次数，不另开塔塔币账本。
+        无效码 message=兑换码无效；已核销=兑换码已使用；过期=兑换码已过期。到账数量以账本为准。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemBody"
+      responses:
+        "200":
+          description: 成功或业务错误（无效码等）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/RedeemResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/wallet/ledger:
+    get:
+      tags: [Wallet]
+      operationId: appWalletLedger
+      summary: 钻石余额流水
+      security:
+        - AppBearer: []
+      description: 必须登录。items 无数据时为空数组，不编造收支。字段为 time/type/amount/balance/note。展示名 display_label=塔塔币。
+      responses:
+        "200":
+          description: data 为 WalletLedger。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/WalletLedger"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/uploads:
+    post:
+      tags: [Feedback]
+      operationId: appUploads
+      summary: 上传图片
+      security:
+        - AppBearer: []
+      description: 必须登录。JSON（filename/content_type/content_base64）或 multipart 字段 file。返回可引用 url。仅 jpg/png/webp/gif，最大 5MB。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadBody"
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: 成功返回 url。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/UploadResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /uploads/{name}:
+    get:
+      tags: [Feedback]
+      operationId: serveUpload
+      summary: 读取已上传图片
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 图片字节。
+        "404":
+          description: 文件不存在或文件名不合法。
+  /api/app/v1/wishlist:
+    post:
+      tags: [Feedback]
+      operationId: appWishlist
+      summary: 提交功能心愿
+      security:
+        - AppBearer: []
+      description: 必须登录。content 必填且不超过 500 字。图片 URL 选填。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WishlistBody"
+      responses:
+        "200":
+          description: 成功 message=心愿已提交。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/WishlistResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/feedback:
+    post:
+      tags: [Feedback]
+      operationId: appFeedback
+      summary: 提交反馈意见
+      security:
+        - AppBearer: []
+      description: 必须登录。category 为 使用问题/内容建议/其他。content 必填且不超过 500 字。email 选填并校验格式。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackBody"
+      responses:
+        "200":
+          description: 成功 message=反馈已提交。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/FeedbackResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/notification-preferences:
+    get:
+      tags: [Settings]
+      operationId: appGetNotificationPrefs
+      summary: 读取通知偏好
+      security:
+        - AppBearer: []
+      description: 必须登录。无记录时返回默认值（抽牌提醒关、消息开、时间 08:00）。系统授权不在此接口。
+      responses:
+        "200":
+          description: data 为 NotificationPreferences。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/NotificationPreferences"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Settings]
+      operationId: appPutNotificationPrefs
+      summary: 保存通知偏好
+      security:
+        - AppBearer: []
+      description: 省略的字段保持原值。时间须为 HH:MM。OS 未授权时仍可保存。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferencesBody"
+      responses:
+        "200":
+          description: 成功返回当前偏好。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/NotificationPreferences"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/auth/login:
+    post:
+      tags: [Admin Auth]
+      operationId: adminLogin
+      summary: 管理端登录
+      description: |
+        不使用 decode 的未知字段限制。用户名空或密码错误、账号停用，均为 HTTP 200、code=1、「用户名或密码错误」。
+        本地种子：admin/admin123（admin）、readonly/readonly123（readonly）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: 成功含 accessToken 与 refreshToken。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AdminLoginOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/admin/v1/auth/logout:
+    post:
+      tags: [Admin Auth]
+      operationId: adminLogout
+      summary: 管理端登出
+      description: 不要求 Bearer。body 可省略。提供 refreshToken 时吊销该行。响应恒为 data=true。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: data=true。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BoolOK"
+  /api/admin/v1/auth/refresh:
+    post:
+      tags: [Admin Auth]
+      operationId: adminRefresh
+      summary: 刷新管理端 access token
+      description: |
+        刷新令牌必须属于 admin、未吊销、未过期，且操作员未停用。
+        无效时 HTTP 401、「刷新令牌无效」。停用为 HTTP 401、「账号已停用」。
+        成功时 data 是 JWT 字符串，不是对象。不轮换 refresh token。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: code=0，data 为 access JWT。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AdminRefreshOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: 刷新令牌无效或账号已停用。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/admin/v1/user/info:
+    get:
+      tags: [Admin Auth]
+      operationId: adminInfo
+      summary: 当前操作员
+      security:
+        - AdminBearer: []
+      responses:
+        "200":
+          description: homePath 固定为 /tata/spread。token 字段为空字符串。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/auth/codes:
+    get:
+      tags: [Admin Auth]
+      operationId: adminCodes
+      summary: 权限码
+      security:
+        - AdminBearer: []
+      description: role=admin 时 data 为 ["write"]，否则为空数组。
+      responses:
+        "200":
+          description: data 为字符串数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/menu/all:
+    get:
+      tags: [Admin Auth]
+      operationId: adminMenu
+      summary: 后台菜单
+      security:
+        - AdminBearer: []
+      description: 固定菜单，含牌阵、塔罗师、供应商、额度、提示窗、占卜、流水、操作员、用户、日历、追问、审计、IAP 订单、人工补发。
+      responses:
+        "200":
+          description: data 为菜单项数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AdminMenuItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/spreads:
+    get:
+      tags: [Admin Content]
+      operationId: adminListSpreads
+      summary: 牌阵列表
+      security:
+        - AdminBearer: []
+      description: 含停用牌阵。只读角色可访问。
+      responses:
+        "200":
+          description: data 为 Spread 数组，含 enabled 与 charged。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Spread"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Content]
+      operationId: adminCreateSpread
+      summary: 新建牌阵
+      security:
+        - AdminBearer: []
+      description: 需要 role=admin。名称非空，card_count>=1，positions 长度必须等于牌数。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpreadBody"
+      responses:
+        "200":
+          description: 成功 data.id 为新 id。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IdOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/spreads/{id}:
+    put:
+      tags: [Admin Content]
+      operationId: adminUpdateSpread
+      summary: 更新牌阵
+      security:
+        - AdminBearer: []
+      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、启用和是否计费。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpreadBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Admin Content]
+      operationId: adminDeleteSpread
+      summary: 删除牌阵
+      security:
+        - AdminBearer: []
+      description: 已被占卜引用时只能停用，不能删除。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/tarotists:
+    get:
+      tags: [Admin Content]
+      operationId: adminListTarotists
+      summary: 塔罗师列表
+      security:
+        - AdminBearer: []
+      responses:
+        "200":
+          description: 含人设字段与 enabled。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TarotistAdmin"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Content]
+      operationId: adminCreateTarotist
+      summary: 新建塔罗师
+      security:
+        - AdminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TarotistBody"
+      responses:
+        "200":
+          description: 成功返回 id。名称必填。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IdOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/tarotists/{id}:
+    put:
+      tags: [Admin Content]
+      operationId: adminUpdateTarotist
+      summary: 更新塔罗师
+      security:
+        - AdminBearer: []
+      description: 没有删除接口。voice、banned、ask_style 传空则保留原值。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TarotistBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/vendors:
+    get:
+      tags: [Admin Vendors]
+      operationId: adminListVendors
+      summary: 供应商列表
+      security:
+        - AdminBearer: []
+      description: 不返回密钥，只返回 api_key_set。
+      responses:
+        "200":
+          description: data 为 Vendor 数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Vendor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Vendors]
+      operationId: adminCreateVendor
+      summary: 新建供应商
+      security:
+        - AdminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendorBody"
+      responses:
+        "200":
+          description: 成功返回 id。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IdOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/vendors/{id}:
+    put:
+      tags: [Admin Vendors]
+      operationId: adminUpdateVendor
+      summary: 更新供应商
+      security:
+        - AdminBearer: []
+      description: 仍被绑定引用时不能停用。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendorBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Admin Vendors]
+      operationId: adminDeleteVendor
+      summary: 删除供应商
+      security:
+        - AdminBearer: []
+      description: 仍被绑定引用时只能停用，不能删除。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/vendors/{id}/probe:
+    post:
+      tags: [Admin Vendors]
+      operationId: adminProbeVendor
+      summary: 探测供应商连通性
+      security:
+        - AdminBearer: []
+      description: 供应商必须启用且能解密密钥。向其第一个模型发送「ping」。无请求体。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data.ok=true。失败为「连通性探测失败」等业务错误。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            type: object
+                            properties:
+                              ok:
+                                type: boolean
+                                example: true
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/bindings:
+    get:
+      tags: [Admin Vendors]
+      operationId: adminListBindings
+      summary: 任务绑定
+      security:
+        - AdminBearer: []
+      description: 固定返回 detect、rewrite、recommend、interpret、tarotist。未绑定的 vendor_id 为 null，model 为空字符串。
+      responses:
+        "200":
+          description: data 为 5 条 Binding。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Binding"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/bindings/{task}:
+    put:
+      tags: [Admin Vendors]
+      operationId: adminPutBinding
+      summary: 设置任务绑定
+      security:
+        - AdminBearer: []
+      description: task 只允许 detect、rewrite、recommend、interpret、tarotist。供应商必须启用，模型必须属于该供应商。
+      parameters:
+        - name: task
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [detect, rewrite, recommend, interpret, tarotist]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindingBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/quota-params:
+    get:
+      tags: [Admin Grants]
+      operationId: adminGetQuotaParams
+      summary: 读取额度参数
+      security:
+        - AdminBearer: []
+      description: |
+        只读。重置时刻和每日免费次数当前不可改（editable=false）。
+        diamond_cost 未配置时为 null。响应不含价格。
+      responses:
+        "200":
+          description: data 为 AdminQuotaParams。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminQuotaParams"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Admin Grants]
+      operationId: adminPutQuotaParams
+      summary: 拒绝修改额度参数
+      security:
+        - AdminBearer: []
+      description: 需要 role=admin。请求体被忽略。恒为「本期不可修改重置时刻或每日次数」。
+      responses:
+        "200":
+          description: code=1。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                code: 1
+                message: 本期不可修改重置时刻或每日次数
+                data: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Grants]
+      operationId: adminPostQuotaParams
+      summary: 拒绝新增额度参数
+      security:
+        - AdminBearer: []
+      description: 与 PUT 相同，写接口恒拒绝。请求体被忽略。
+      responses:
+        "200":
+          description: code=1。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/banners:
+    get:
+      tags: [Admin Content]
+      operationId: adminListBanners
+      summary: 提示窗列表
+      security:
+        - AdminBearer: []
+      description: 全部记录，按 priority、id 降序，不按当前时间过滤。
+      responses:
+        "200":
+          description: data 为 Banner 数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Banner"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Content]
+      operationId: adminCreateBanner
+      summary: 新建提示窗
+      security:
+        - AdminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BannerBody"
+      responses:
+        "200":
+          description: 成功返回 id。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IdOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/banners/{id}:
+    put:
+      tags: [Admin Content]
+      operationId: adminUpdateBanner
+      summary: 更新提示窗
+      security:
+        - AdminBearer: []
+      description: 没有删除接口。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BannerBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/readings:
+    get:
+      tags: [Admin Content]
+      operationId: adminListReadings
+      summary: 占卜记录
+      security:
+        - AdminBearer: []
+      description: 含已删除。最多 100 条，按 updated_at 降序。无分页参数。
+      parameters:
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: created_at 下限，传给数据库比较。
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: created_at 上限。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: data 为 Reading 数组。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadingListOK"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/readings/{id}:
+    get:
+      tags: [Admin Content]
+      operationId: adminGetReading
+      summary: 占卜详情
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 不存在时「记录不存在」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/readings/{id}/retry:
+    post:
+      tags: [Admin Content]
+      operationId: adminRetryReading
+      summary: 重试失败解读
+      security:
+        - AdminBearer: []
+      description: 需要 role=admin。只有 FAILED_RETRYABLE 能重试。不重新扣费。无请求体。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 成功 data 为 Reading。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/workflow/simulate:
+    post:
+      tags: [Admin Content]
+      operationId: adminSimulateWorkflow
+      summary: 模拟工作流
+      security:
+        - AdminBearer: []
+      description: |
+        需要 role=admin。不写占卜记录，不扣费。
+        step 为空时跑 detect、rewrite、recommend、interpret；有 tarotist_id 时再加 tarotist。
+        step 为单步时只跑那一步。draw 只排牌面文字。未知步骤拒绝。
+        问题省略时使用内置示例问题，不是价格或商品。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                question:
+                  type: string
+                spread_id:
+                  type: integer
+                  format: int64
+                cards:
+                  type: array
+                  nullable: true
+                  items:
+                    $ref: "#/components/schemas/DrawnCard"
+                tarotist_id:
+                  type: integer
+                  format: int64
+                step:
+                  type: string
+                  enum: ["", detect, rewrite, recommend, draw, interpret, tarotist]
+      responses:
+        "200":
+          description: 全流程为 SimulateFull；单步为 SimulateOne。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            oneOf:
+                              - $ref: "#/components/schemas/SimulateFull"
+                              - $ref: "#/components/schemas/SimulateOne"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/ledger:
+    get:
+      tags: [Admin Grants]
+      operationId: adminListLedger
+      summary: 次数流水
+      security:
+        - AdminBearer: []
+      description: 只读，最多 200 条，按 id 降序。这是次数流水，不是钻石流水。
+      responses:
+        "200":
+          description: data 为 LedgerRow 数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/LedgerRow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Grants]
+      operationId: adminPostLedger
+      summary: 拒绝新增流水
+      security:
+        - AdminBearer: []
+      description: 需要 role=admin。请求体被忽略。恒为「流水不能新增或修改」。
+      responses:
+        "200":
+          description: code=1。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                code: 1
+                message: 流水不能新增或修改
+                data: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/ledger/{id}:
+    put:
+      tags: [Admin Grants]
+      operationId: adminPutLedger
+      summary: 拒绝修改流水
+      security:
+        - AdminBearer: []
+      description: 需要 role=admin。路径 id 不参与校验，请求体被忽略。恒拒绝。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: code=1，「流水不能新增或修改」。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/grants:
+    get:
+      tags: [Admin Grants]
+      operationId: adminListGrants
+      summary: 人工补发记录
+      security:
+        - AdminBearer: []
+      description: |
+        只读角色可查。最多 200 条。
+        带 user_id 时附带该用户的钻石桶、订阅周期结束时间、人工补发剩余次数和注册奖励剩余次数。
+        响应声明 writes_iap_orders=false、resumes_paywall=false。
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: data 为 GrantMeta。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/GrantMeta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Grants]
+      operationId: adminCreateGrant
+      summary: 人工补发钻石或免费次数
+      security:
+        - AdminBearer: []
+      description: |
+        需要 role=admin。note 必填。reason 只能是 admin_grant。
+        钻石默认进 pack。不改 iap_orders，不唤醒 paywall，resumed_tasks 恒为 []。
+        不接受价格字段。注销或已合并账号拒绝；已合并请补发到主账号。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrantCreate"
+      responses:
+        "200":
+          description: code=0 时 data 含新建 grants 与补发后的余额。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/GrantMeta"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/operators:
+    get:
+      tags: [Admin Audit]
+      operationId: adminListOperators
+      summary: 操作员列表
+      security:
+        - AdminBearer: []
+      description: 不返回密码哈希。
+      responses:
+        "200":
+          description: data 为 Operator 数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Operator"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Admin Audit]
+      operationId: adminCreateOperator
+      summary: 新建操作员
+      security:
+        - AdminBearer: []
+      description: role 只允许 admin 或 readonly。用户名冲突为「用户名已存在」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorCreate"
+      responses:
+        "200":
+          description: 成功返回 id。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IdOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/operators/{id}:
+    put:
+      tags: [Admin Audit]
+      operationId: adminUpdateOperator
+      summary: 停用或启用操作员
+      security:
+        - AdminBearer: []
+      description: 只能改 disabled。停用时吊销该操作员的 admin refresh。不能停用自己。省略 disabled 会启用账号。
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorPatch"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/users:
+    get:
+      tags: [Admin Audit]
+      operationId: adminListUsers
+      summary: App 用户
+      security:
+        - AdminBearer: []
+      description: 最多 200 条，按 id 降序。不含密码。
+      responses:
+        "200":
+          description: data 为用户数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AppUserAdmin"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/audit:
+    get:
+      tags: [Admin Audit]
+      operationId: adminListAudit
+      summary: 审计日志
+      security:
+        - AdminBearer: []
+      description: 最多 200 条，按 id 降序。detail 是文本，可能是 JSON 字符串。
+      responses:
+        "200":
+          description: data 为审计数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AuditRow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/account-merges:
+    get:
+      tags: [Admin Audit]
+      operationId: adminListAccountMerges
+      summary: 账号合并请求
+      security:
+        - AdminBearer: []
+      description: 最多 200 条。result 在合并完成后是保存的 JSON 文本，不是展开对象。不含价格。
+      responses:
+        "200":
+          description: data 为合并请求数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccountMergeRow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/iap/orders:
+    get:
+      tags: [Admin IAP]
+      operationId: adminListIAPOrders
+      summary: IAP 订单
+      security:
+        - AdminBearer: []
+      description: |
+        只读，最多 200 条。verify_status 只允许空、pending、verified、failed。
+        credited_diamonds 在发放量未配置时为 null。
+      parameters:
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: verify_status
+          in: query
+          schema:
+            type: string
+            enum: ["", pending, verified, failed]
+      responses:
+        "200":
+          description: data 为订单数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AdminIAPOrder"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/iap/skus:
+    get:
+      tags: [Admin IAP]
+      operationId: adminListIAPSKUs
+      summary: 全部 SKU
+      security:
+        - AdminBearer: []
+      description: 含未启用。种子三条的价格、货币、diamond_grant 和商店商品号为 null。没有写接口。
+      responses:
+        "200":
+          description: data 为 IAPSKU 数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/IAPSKU"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/iap/diamonds:
+    get:
+      tags: [Admin IAP]
+      operationId: adminIAPDiamonds
+      summary: 用户钻石余额与流水
+      security:
+        - AdminBearer: []
+      description: user_id 必填。流水最多 50 条。不返回价格。
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: data 为 DiamondView，并含 user_id 与 ledger。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/DiamondView"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/iap/config:
+    get:
+      tags: [Admin IAP]
+      operationId: adminIAPConfig
+      summary: IAP 开关
+      security:
+        - AdminBearer: []
+      description: 与 App 的 config 相同。没有更新接口。
+      responses:
+        "200":
+          description: data 为 IAPConfig。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/IAPConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/messages:
+    get:
+      tags: [Admin Content]
+      operationId: adminListMessages
+      summary: 追问消息
+      security:
+        - AdminBearer: []
+      description: 全库最近 200 条，按 id 降序。含 reading_id。
+      responses:
+        "200":
+          description: data 为消息数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Message"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/calendar:
+    get:
+      tags: [Admin Content]
+      operationId: adminListCalendar
+      summary: 日历记录
+      security:
+        - AdminBearer: []
+      description: 未删除且 business_date 非空，最多 200 条。含 user_id 与 progress。
+      responses:
+        "200":
+          description: data 为日历条目，无 continue 字段。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CalendarItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"

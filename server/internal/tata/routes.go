@@ -119,6 +119,15 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/iap/entitlements", a.h(a.appIAPEntitlements))
 	mux.HandleFunc("GET /api/app/v1/iap/skus", a.h(a.appIAPSKUs))
 	mux.HandleFunc("GET /api/app/v1/iap/config", a.h(a.appIAPConfig))
+	mux.HandleFunc("GET /api/app/v1/explore/topics", a.h(a.appExploreTopics))
+	mux.HandleFunc("POST /api/app/v1/redeem", a.h(a.appRedeem))
+	mux.HandleFunc("GET /api/app/v1/wallet/ledger", a.h(a.appWalletLedger))
+	mux.HandleFunc("POST /api/app/v1/uploads", a.h(a.appUploads))
+	mux.HandleFunc("GET /uploads/{name}", a.serveUpload)
+	mux.HandleFunc("POST /api/app/v1/wishlist", a.h(a.appWishlist))
+	mux.HandleFunc("POST /api/app/v1/feedback", a.h(a.appFeedback))
+	mux.HandleFunc("GET /api/app/v1/notification-preferences", a.h(a.appGetNotificationPrefs))
+	mux.HandleFunc("PUT /api/app/v1/notification-preferences", a.h(a.appPutNotificationPrefs))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
