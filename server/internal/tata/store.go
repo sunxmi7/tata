@@ -545,6 +545,45 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `)
+	if err != nil {
+		return err
+	}
+	// App UI P1. Campaign detail and FAQ bodies stay pending; row fields for
+	// participations and rewards are not created until the placeholder screens confirm them.
+	_, err = s.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS campaigns (
+  campaign_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  subtitle TEXT NOT NULL DEFAULT '',
+  badge TEXT NOT NULL DEFAULT '',
+  detail_title TEXT NOT NULL,
+  detail_body TEXT NOT NULL,
+  detail_status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'ongoing',
+  sort_order INT NOT NULL DEFAULT 0,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT campaigns_status_chk CHECK (status IN ('ongoing','ended')),
+  CONSTRAINT campaigns_detail_status_chk CHECK (detail_status IN ('pending','ready'))
+);
+CREATE TABLE IF NOT EXISTS help_categories (
+  category_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  articles_status TEXT NOT NULL DEFAULT 'ready',
+  empty_note TEXT NOT NULL DEFAULT '',
+  sort_order INT NOT NULL DEFAULT 0,
+  CONSTRAINT help_categories_status_chk CHECK (articles_status IN ('ready','pending'))
+);
+CREATE TABLE IF NOT EXISTS help_articles (
+  article_id TEXT PRIMARY KEY,
+  category_id TEXT NOT NULL REFERENCES help_categories(category_id),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '待确认',
+  body_status TEXT NOT NULL DEFAULT 'pending',
+  sort_order INT NOT NULL DEFAULT 0,
+  CONSTRAINT help_articles_body_status_chk CHECK (body_status IN ('pending','ready'))
+);
+CREATE INDEX IF NOT EXISTS help_articles_category_idx ON help_articles(category_id, sort_order);
+`)
 	return err
 }
 
@@ -596,6 +635,12 @@ func (s *Store) seed(ctx context.Context) error {
 	if err := s.seedExplore(ctx); err != nil {
 		return err
 	}
+	if err := s.seedCampaigns(ctx); err != nil {
+		return err
+	}
+	if err := s.seedHelp(ctx); err != nil {
+		return err
+	}
 	return s.seedTarotistPublic(ctx)
 }
 
@@ -623,6 +668,80 @@ func (s *Store) seedExplore(ctx context.Context) error {
 			VALUES ($1,$2,$3,$4,$5,NULL,$6,$7)
 			ON CONFLICT (topic_id) DO NOTHING`,
 			t.id, t.groupKey, t.groupTitle, t.title, t.subtitle, spreadID, t.order); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) seedCampaigns(ctx context.Context) error {
+	campaigns := []struct {
+		id, title, subtitle, badge, detailTitle, detailBody string
+		order                                               int
+	}{
+		{
+			"friend_invite",
+			"邀请好友，一起探索",
+			"分享塔塔，查看邀请进度与奖励",
+			"好友邀请",
+			"好友邀请",
+			"详情页不在本次交付范围。奖励、条件与有效期以活动配置为准。",
+			1,
+		},
+		{
+			"membership_benefit",
+			"参与活动，领取会员体验",
+			"查看活动要求与对应权益",
+			"",
+			"会员福利",
+			"详情页不在本次交付范围。不预写未确认的会员时长或领取门槛。",
+			2,
+		},
+	}
+	for _, c := range campaigns {
+		if _, err := s.Exec(ctx, `INSERT INTO campaigns(campaign_id, title, subtitle, badge, detail_title, detail_body, detail_status, status, sort_order, enabled)
+			VALUES ($1,$2,$3,$4,$5,$6,'pending','ongoing',$7,true)
+			ON CONFLICT (campaign_id) DO NOTHING`,
+			c.id, c.title, c.subtitle, c.badge, c.detailTitle, c.detailBody, c.order); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) seedHelp(ctx context.Context) error {
+	categories := []struct {
+		id, title, status, note string
+		order                   int
+	}{
+		{"reading", "使用与占卜", "ready", "", 1},
+		{"membership_pay", "会员与支付", "pending", "这一类的问题还在整理，条目待确认。", 2},
+		{"account", "账号与设置", "ready", "", 3},
+	}
+	for _, c := range categories {
+		if _, err := s.Exec(ctx, `INSERT INTO help_categories(category_id, title, articles_status, empty_note, sort_order)
+			VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT (category_id) DO NOTHING`,
+			c.id, c.title, c.status, c.note, c.order); err != nil {
+			return err
+		}
+	}
+	articles := []struct {
+		id, category, title string
+		order               int
+	}{
+		{"how_to_start", "reading", "如何开始一次塔罗占卜？", 1},
+		{"where_records", "reading", "在哪里查看占卜记录？", 2},
+		{"change_deck", "reading", "如何更换使用的牌组？", 3},
+		{"draw_failed", "reading", "抽牌或解读失败怎么办？", 4},
+		{"annual_entry", "reading", "年度运势在哪里开启？", 5},
+		{"language_theme", "account", "如何切换语言和主题？", 1},
+	}
+	for _, a := range articles {
+		if _, err := s.Exec(ctx, `INSERT INTO help_articles(article_id, category_id, title, body, body_status, sort_order)
+			VALUES ($1,$2,$3,'待确认','pending',$4)
+			ON CONFLICT (article_id) DO NOTHING`,
+			a.id, a.category, a.title, a.order); err != nil {
 			return err
 		}
 	}

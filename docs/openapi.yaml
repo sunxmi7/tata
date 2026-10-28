@@ -39,6 +39,8 @@ info:
     - `paid_pools` 只是合并用的次数占位，不是 IAP 入账目标，响应里不出现价格。
     - 人工补发只加余额和审计，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
+    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心正文固定为「待确认」。`POST /api/app/v1/push/register` 未注册：通知设置没有推送 token 字段。
+    - 活动列表与帮助中心的「加载失败，请重试」是客户端在请求失败后的状态，重试同一 GET。服务端沿用现有 `code=1` 包络，不另开错误体。
 servers:
   - url: http://127.0.0.1:8080
     description: 本机默认（server.address = :8080）
@@ -58,11 +60,15 @@ tags:
   - name: Explore
     description: 探索目录分组与主题条目。spread 映射可为空 stub。
   - name: Wallet
-    description: 兑换码核销与钻石（展示名「塔塔币」）流水。不另开第二套账本。
+    description: 兑换码核销、兑换记录与钻石（展示名「塔塔币」）流水。不另开第二套账本。兑换记录行字段仍待确认。
+  - name: Campaigns
+    description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
+  - name: Help
+    description: 帮助中心分类、搜索与问题详情。正文为「待确认」，不编写额度、退款或会员规则。
   - name: Feedback
     description: 图片上传、功能心愿单与意见反馈。
   - name: Settings
-    description: 通知偏好。系统推送授权只在客户端。
+    description: 通知偏好。系统推送授权只在客户端。推送 token 注册未做。
   - name: Admin Auth
     description: 管理端登录、刷新、菜单与权限码。
   - name: Admin Content
@@ -2223,6 +2229,188 @@ components:
           type: string
         messages_enabled:
           type: boolean
+    RedeemRecordList:
+      type: object
+      description: 兑换记录占位。items 来自真实核销，不编造行。行字段未定稿，fields_confirmed 恒为 false。
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RedeemRecord"
+        empty_title:
+          type: string
+          example: 暂无兑换记录
+        placeholder_note:
+          type: string
+          example: 记录字段待产品确认。成功权益以实际到账结果为准。
+        fields_confirmed:
+          type: boolean
+          enum: [false]
+    RedeemRecord:
+      type: object
+      description: 与 POST /redeem 的到账结果对齐，不是已确认的列表排版。
+      properties:
+        id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        code:
+          type: string
+        benefit_name:
+          type: string
+        kind:
+          type: string
+          enum: [diamonds, free_count]
+        amount:
+          type: integer
+        unit:
+          type: string
+          enum: [diamond, count]
+        display_label:
+          type: string
+          nullable: true
+          description: kind=diamonds 时为「塔塔币」。免费次数不是塔塔币，为 null。
+    CampaignList:
+      type: object
+      properties:
+        items:
+          type: array
+          description: 无启用活动时为空数组。已结束的活动仍在列表中，用 status=ended 区分。
+          items:
+            $ref: "#/components/schemas/CampaignCard"
+        empty_title:
+          type: string
+          example: 暂时没有可参与的活动
+        empty_hint:
+          type: string
+          example: 稍后再来看看
+        footnote:
+          type: string
+          example: 活动规则与奖励以活动详情页为准
+    CampaignCard:
+      type: object
+      properties:
+        id:
+          type: string
+          example: friend_invite
+        title:
+          type: string
+        subtitle:
+          type: string
+        status:
+          type: string
+          enum: [ongoing, ended]
+        badge:
+          type: string
+          description: 进行中用活动角标，可为空。已结束固定为「已结束」。
+        entry_label:
+          type: string
+          description: 进行中为「查看活动」，已结束为「活动已结束」。
+        entry_enabled:
+          type: boolean
+    CampaignDetail:
+      type: object
+      description: 详情屏仍是占位。body 只复述占位文案，不含奖励数额、会员时长或领取门槛。
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          description: 详情卡标题，例如「好友邀请」「会员福利」。
+        list_title:
+          type: string
+        subtitle:
+          type: string
+        status:
+          type: string
+          enum: [ongoing, ended]
+        body:
+          type: string
+        body_status:
+          type: string
+          enum: [pending, ready]
+        detail_delivered:
+          type: boolean
+          description: 详情未交付时为 false。
+    PlaceholderList:
+      type: object
+      description: 参与记录 / 奖励记录。字段未确认，items 恒为空数组。
+      properties:
+        items:
+          type: array
+          maxItems: 0
+          items:
+            type: object
+        empty_title:
+          type: string
+        placeholder_note:
+          type: string
+        fields_confirmed:
+          type: boolean
+          enum: [false]
+    HelpCategoryList:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/HelpCategory"
+    HelpCategory:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        articles_status:
+          type: string
+          enum: [ready, pending]
+        empty_note:
+          type: string
+          description: 会员与支付为「这一类的问题还在整理，条目待确认。」其余为空字符串。
+    HelpArticleList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/HelpArticleSummary"
+        query:
+          type: string
+        empty_title:
+          type: string
+          description: 仅搜索无结果时为「暂时没有找到相关问题」，否则为空字符串。
+        empty_hint:
+          type: string
+          description: 仅搜索无结果时为「换个关键词，或向我们反馈」。
+        category_note:
+          type: string
+          description: 未搜索且该分类没有条目时，返回分类的 empty_note。
+    HelpArticleSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        category_id:
+          type: string
+        category_title:
+          type: string
+    HelpArticle:
+      allOf:
+        - $ref: "#/components/schemas/HelpArticleSummary"
+        - type: object
+          properties:
+            body:
+              type: string
+              description: 占位正文，种子为「待确认」。不写额度、退款或会员规则。
+              example: 待确认
+            body_status:
+              type: string
+              enum: [pending, ready]
     HealthOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -3694,6 +3882,241 @@ paths:
                         properties:
                           data:
                             $ref: "#/components/schemas/NotificationPreferences"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/redeem/records:
+    get:
+      tags: [Wallet]
+      operationId: appRedeemRecords
+      summary: 兑换记录
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。无核销时 items 为空数组，空态文案「暂无兑换记录」。
+        有核销时每行只回传到账事实（时间、兑换码、权益名、kind、数量）。fields_confirmed=false，行排版未定稿。
+        不编造记录。加载失败沿用 code=1，客户端重试本接口。
+      responses:
+        "200":
+          description: data 为 RedeemRecordList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/RedeemRecordList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/campaigns:
+    get:
+      tags: [Campaigns]
+      operationId: appCampaigns
+      summary: 参与活动列表
+      security:
+        - AppBearer: []
+      description: |
+        匿名令牌可读。条目含标题、副文、状态、角标和入口。
+        status=ongoing 时 entry_label=查看活动；status=ended 时角标为「已结束」、entry_label=活动已结束、entry_enabled=false。
+        无启用活动时 items 为空，empty_title=暂时没有可参与的活动。不返回奖励数额。
+        加载失败沿用 code=1，客户端展示「加载失败，请重试」并重试本接口。
+      responses:
+        "200":
+          description: data 为 CampaignList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CampaignList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/campaigns/participations:
+    get:
+      tags: [Campaigns]
+      operationId: appCampaignParticipations
+      summary: 参与记录
+      security:
+        - AppBearer: []
+      description: 必须登录。占位屏。items 恒为空数组，fields_confirmed=false。不展示伪造记录。
+      responses:
+        "200":
+          description: data 为 PlaceholderList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/PlaceholderList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/campaigns/rewards:
+    get:
+      tags: [Campaigns]
+      operationId: appCampaignRewards
+      summary: 奖励记录
+      security:
+        - AppBearer: []
+      description: 必须登录。占位屏。items 恒为空数组。不写未确认的奖励承诺。
+      responses:
+        "200":
+          description: data 为 PlaceholderList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/PlaceholderList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/campaigns/{id}:
+    get:
+      tags: [Campaigns]
+      operationId: appCampaign
+      summary: 活动详情
+      security:
+        - AppBearer: []
+      description: |
+        匿名令牌可读。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
+        不预写奖励、条件、有效期数字、会员时长或领取门槛。未知 id 的 message=活动不存在。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: friend_invite
+      responses:
+        "200":
+          description: 成功为 CampaignDetail；不存在为 ErrorEnvelope。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CampaignDetail"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/help/categories:
+    get:
+      tags: [Help]
+      operationId: appHelpCategories
+      summary: 帮助中心分类
+      security:
+        - AppBearer: []
+      description: |
+        匿名令牌可读。固定三类：使用与占卜、会员与支付、账号与设置。
+        会员与支付 articles_status=pending，empty_note 为「这一类的问题还在整理，条目待确认。」
+      responses:
+        "200":
+          description: data 为 HelpCategoryList。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HelpCategoryList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/help/articles:
+    get:
+      tags: [Help]
+      operationId: appHelpArticles
+      summary: 帮助文章列表与搜索
+      security:
+        - AppBearer: []
+      description: |
+        匿名令牌可读。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
+        搜索无结果时 empty_title=暂时没有找到相关问题，empty_hint=换个关键词，或向我们反馈。
+        未搜索且分类没有条目时，category_note 使用该分类 empty_note（会员与支付为条目待确认）。
+        列表不含正文。未知分类 message=问题分类不正确。
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+          description: reading、membership_pay、account。
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 标题关键词。最长 64 字。
+      responses:
+        "200":
+          description: data 为 HelpArticleList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/HelpArticleList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/help/articles/{id}:
+    get:
+      tags: [Help]
+      operationId: appHelpArticle
+      summary: 帮助文章详情
+      security:
+        - AppBearer: []
+      description: |
+        匿名令牌可读。返回标题与正文。种子正文为「待确认」，body_status=pending。
+        不编写额度、退款或会员规则。反馈入口走已有 POST /api/app/v1/feedback，不在本文返回规则。
+        未知 id 的 message=问题不存在。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: how_to_start
+      responses:
+        "200":
+          description: 成功为 HelpArticle；不存在为 ErrorEnvelope。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/HelpArticle"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
