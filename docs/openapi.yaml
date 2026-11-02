@@ -30,7 +30,10 @@ info:
 
     写操作调用 `adminActor(write=true)`，`readonly` 得到「只读账号不能修改」。
 
-    全局 CORS 允许头：`Authorization`、`Content-Type`、`Idempotency-Key`。`OPTIONS` 返回 204，没有单独业务路径。
+    全局 CORS 允许头：`Authorization`、`Content-Type`、`Idempotency-Key`、`Accept-Language`、`X-Language`。`OPTIONS` 返回 204，没有单独业务路径。
+
+    ## App 语言（Accept-Language）
+    语言偏好**不上云**（无 `profile.locale`）。客户端本地保存；需要服务端本地化文案的 App 接口应携带 **`Accept-Language`**（推荐 `zh-Hans`、`zh-Hant`、`en`、`ja`、`ko`），亦可传项目约定的 **`X-Language`**（同名语义）。未带头或无法识别时按 **`zh-Hans`**。服务端在请求上下文中解析该头（`AppLanguageFromContext`），**本轮不改变**既有业务响应文案；后续 help/campaign 等多语言再读该值。
 
     ## 未配置的价格、验单与占位
     - 种子 SKU（`sub_month`、`sub_year`、`pack_consumable`）的 `price_amount_minor`、`price_currency`、`diamond_grant`、商店商品号、`period_count` 保持 null。接口不编造价格或钻石数。
@@ -39,7 +42,7 @@ info:
     - `paid_pools` 只是合并用的次数占位，不是 IAP 入账目标，响应里不出现价格。
     - 人工补发只加余额和审计，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
-    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心正文固定为「待确认」。`POST /api/app/v1/push/register` 未注册：通知设置没有推送 token 字段。
+    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心正文固定为「待确认」。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
     - 活动列表与帮助中心的「加载失败，请重试」是客户端在请求失败后的状态，重试同一 GET。服务端沿用现有 `code=1` 包络，不另开错误体。
 servers:
   - url: http://127.0.0.1:8080
@@ -119,6 +122,18 @@ components:
         `POST /api/app/v1/readings/{id}/followups` 的 scope 为 `followup:{readingId}`。
       schema:
         type: string
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      description: |
+        可选。App 端语言偏好（客户端本地存储，不上云 profile）。
+        帮助、活动等需本地化文案的接口可读此头；未识别或未传时服务端按 `zh-Hans`。
+        推荐 BCP47：`zh-Hans`（缺省）、`zh-Hant`、`en`、`ja`、`ko`。
+        若项目已约定，亦可传 `X-Language`（同名语义，优先于本头）。
+      schema:
+        type: string
+        example: zh-Hans
   responses:
     Unauthorized:
       description: HTTP 401。令牌缺失、无效、aud 不匹配，或账号已停用 / 已合并 / 不存在。
