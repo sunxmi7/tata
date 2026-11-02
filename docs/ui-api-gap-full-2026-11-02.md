@@ -4,7 +4,7 @@
 **依据：** 设计包 `design-pack/`（**170** PNG，本 PR 盘点路径）+ main `docs/openapi.yaml` + `server/internal/tata/routes.go`（PR #6 P0 shell、PR #7 P1）。  
 **权威 A/B/C：** 与 Quin 功能结论官稿一致；疑问明细见 [`ui-api-questions-2026-11-02.md`](./ui-api-questions-2026-11-02.md)。
 
-**OpenAPI 核验（2026-11-02）：** `routes.go` 注册的 **56** 条 App HTTP 路由（method+path）均在 `openapi.yaml` 有对应 operation；描述中的 P0/P1 占位策略（空列表、help「待确认」、无 push/register）与代码一致。**本轮无新增后端 path** — 剩余缺口均属 B/C 疑问或 V1.3 延后。
+**OpenAPI 核验（2026-11-02）：** `routes.go` 注册的 **56** 条 App HTTP 路由（method+path）均在 `openapi.yaml` 有对应 operation；描述中的 P0/P1 占位策略（空列表、help「待确认」、**Q-B1 不注册 push/register**）与代码一致。**本轮** 同步 Q-B1/Q-B2/Q-B7 决策文档，并增加 App `Accept-Language` 解析（不改业务响应文案）。
 
 ---
 
@@ -17,9 +17,9 @@
 | 占位 / 占位屏 | 10 |
 | 组件碎片 / 资源（矩形、图标等） | 19 |
 | **A · 已定稿且 main 已有 API** | **壳层已齐**（见 §2） |
-| **B · 有图待补 / 待拍** | 14 条疑问（Q-B1～Q-B14） |
+| **B · 有图待补 / 待拍** | 14 条疑问（Q-B1～Q-B14）；**Q-B1 已拍砍**（无 push/register）；**Q-B2 已拍**（Header 传语言）；**Q-B7 搁置**（删号稍后确认） |
 | **C · 包外主流程** | 7 条疑问（Q-C1～Q-C7） |
-| **本轮代码变更** | **0**（仅文档） |
+| **本轮代码变更** | Accept-Language 请求解析 + CORS 允许头；**无** push/register、**无**删号 UI |
 
 ---
 
@@ -220,13 +220,13 @@
 | 上传（心愿/反馈上传中） | `POST /uploads` | 有 | P0 |
 | 功能心愿单 | `POST /wishlist` | 有 | P0 |
 | 反馈意见 | `POST /feedback` | 有 | P0 |
-| 通知设置 | `GET/PUT /notification-preferences` | 部分 | 无 push token；Q-B1 |
+| 通知设置 | `GET/PUT /notification-preferences` | 部分 | **Q-B1 已拍砍** — 无 push token；本地/OS 提醒 |
 | 参与活动 / 列表 | `GET /campaigns` `{id}` `participations` `rewards` | 部分 | P1；详情/记录占位 Q-B6 |
 | 帮助中心 | `GET /help/categories` `articles` `{id}` | 部分 | body「待确认」Q-B6 |
 | 账号资料（账号 浅色* 编辑态） | `GET/PUT /profile` | 部分 | name/bio/avatar；展示邮箱非手机 Q-B11；字数 Q-B9 |
-| 删号占位 | `POST /auth/cancel` | 部分 | 钩子有；规则 Q-B7 |
+| 删号占位 | `POST /auth/cancel` | 部分 | 钩子保留；**Q-B7 搁置〔2026-11-02〕** — 本轮不接 UI，规则稍后确认 |
 | 首页壳 / 我的长页（聚合入口） | `banners` `tarotists` `spreads` `quota` 等 | 部分 | 开始抽牌/AI/一牌在 **C** |
-| 语言屏 | — | 无 | Q-B2 |
+| 语言屏 | — | 无 profile.locale | **Q-B2 已拍** — 本地存偏好；请求 Header（`Accept-Language` 等）传语言 |
 | 月度报告屏 | — | 无 | V1.3 Q-B3 |
 | 年度运势屏 | — | 无 | V1.3 Q-B4 |
 | 我的塔罗牌入口 | — | 无 | Q-B5 |
@@ -240,13 +240,13 @@
 
 | ID | UI | API 现状 | 矩阵 | 疑问 |
 |----|-----|----------|:----:|------|
-| Q-B1 | 通知设置 | 无 push/register | 无 | 是否服务端推 |
-| Q-B2 | 语言 10 屏 | 无 locale | 无 | 客户端 vs 上云 |
+| Q-B1 | 通知设置 | 无 push/register | 无 | **已拍砍** — 不要服务端推 |
+| Q-B2 | 语言 10 屏 | 无 locale | 无* | **已拍** — Header 传语言；不上云 |
 | Q-B3 | 月度报告 9+ 屏 | 无月报 path | 无 | **V1.3 延后** |
 | Q-B4 | 年度运势 4 屏 | 无年运 path | 无 | **V1.3 延后** |
 | Q-B5 | 首页我的塔罗牌 | 无 deck API | 无 | 无设置屏 |
 | Q-B6 | 多种 **占位** 正文页 | help/campaign 占位 | 部分 | CMS vs 静态 |
-| Q-B7 | 删号 **占位** | cancel 有 | 部分 | 规则未拍 |
+| Q-B7 | 删号 **占位** | cancel 有 | 部分 | **搁置** — 规则 TBD；本轮不接 UI |
 | Q-B8 | 明细/兑换记录 **占位** | ledger/records 有 | 部分 | 列字段未拍 |
 | Q-B9 | 姓名/简介编辑 | profile 有 | 部分 | 字数未拍 |
 | Q-B10 | 通知时间 | preferences 有 | 部分 | 时区策略 |
@@ -294,17 +294,17 @@
 | 上传 | `/uploads` | 有 | |
 | 心愿单 | `/wishlist` | 有 | |
 | 反馈 | `/feedback` | 有 | |
-| 通知偏好 | `/notification-preferences` | 部分 | Q-B1 |
-| 语言 | — | 无 | Q-B2 |
+| 通知偏好 | `/notification-preferences` | 部分 | Q-B1 已砍 |
+| 语言 | — | 无 profile.locale | **Q-B2 已拍** — Header |
 | 活动 | `/campaigns*` | 部分 | Q-B6 |
 | 帮助 | `/help/*` | 部分 | Q-B6 |
 | 账号资料 | `/profile` | 部分 | Q-B9/B11 |
-| 删号 | `/auth/cancel` | 部分 | Q-B7 |
+| 删号 | `/auth/cancel` | 部分 | **Q-B7 搁置** |
 | 退出 | — | 无* | Q-B12 客户端 |
 | 月报 | — | 无 | Q-B3 V1.3 |
 | 年运 | — | 无 | Q-B4 V1.3 |
 | 我的塔罗牌 | — | 无 | Q-B5 |
-| 推送 token | — | 无 | Q-B1 |
+| 推送 token | — | 无 | **Q-B1 已拍砍** |
 | 主题浅/深 | — | 不必 | 本地 |
 | 关于/分享/检查更新 | — | 不必 | 客户端 |
 
@@ -316,9 +316,19 @@
 
 ---
 
-## 7. 修订
+## 7. 建议落地顺序（文档同步）
+
+1. **已拍 / 搁置 / 已砍：** Q-B1（**不**做服务端推）；Q-B2（Header 传语言）；**Q-B7 搁置**（删号稍后确认，本轮不接）  
+2. **仍待拍：** Q-B5、Q-B6、Q-B8、Q-B9 等  
+3. **本 PR：** Q-B2 — OpenAPI `Accept-Language` + 服务端读 Header（缺省 `zh-Hans`）；**不**补 push/register  
+4. **本轮不做：** 删号 UI 对接 `auth/cancel`；月报/年运（V1.3）
+
+---
+
+## 8. 修订
 
 | 日期 | 说明 |
 |------|------|
-| 2026-11-02 | 170 屏清单 + A/B/C + 矩阵；routes/openapi 核验；本轮仅文档、无代码。 |
+| 2026-11-02 | 170 屏清单 + A/B/C + 矩阵；routes/openapi 核验；首轮仅文档。 |
+| 2026-11-02 | Q-B2 已拍、Q-B7 搁置、Q-B1 已拍砍；Accept-Language 文档 + 服务端解析。 |
 
