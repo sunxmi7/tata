@@ -2,6 +2,8 @@
 
 **结论：** 对照 2026-11-03 定稿画板（浅色/深色 20 模块，v01–v04 切片）与 main `docs/openapi.yaml` + `server/internal/tata/routes.go` 后，**首版范围内没有缺失的 App HTTP API**。本轮 **不新增** 任何 path、不写占位路由、不编造请求/响应字段。
 
+并行结论（PR#13）：[`ui-api-missing-paths-2026-11-03.md`](./ui-api-missing-paths-2026-11-03.md)。本文补 living gap 回填（疑问清单 / PR#12 报告 / README）。
+
 **核验：** App `method + /api/app/v1/…` **57** 条，OpenAPI operation 与 `routes.go` **1:1**（含 `DELETE /readings/{id}`）。另有公开读文件 `GET /uploads/{name}`（非 App Bearer API）。**无** `push/register`、**无** `profile.locale`、**无** 月报/年运/deck/widget 专用 path。
 
 **不做：** 不把原生 P0 UI 字段验收标成 Done（抽牌/牌阵/历史/日历仍是钩子齐、逐屏字段另表）。Admin 仍走 Vben，不对 App 定稿。行为/状态机仍以**原本流程图**为准。
