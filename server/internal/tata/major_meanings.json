@@ -1,0 +1,67 @@
+[
+  {"card_id": 0, "orientation": "upright", "keywords": ["新开始", "自由", "信任", "探索"], "meaning_short": "象征愿意迈出一步，以开放心态尝试新可能。鼓励轻装上阵，但提醒留一点分寸，别完全忽略现实。"},
+  {"card_id": 0, "orientation": "reversed", "keywords": ["鲁莽", "逃避", "犹豫", "莽撞"], "meaning_short": "可能因冲动或逃避而行动失序，或在起点反复拖延。适合先厘清动机，再决定要不要出发。"},
+
+  {"card_id": 1, "orientation": "upright", "keywords": ["行动力", "资源", "专注", "表达"], "meaning_short": "手边工具与能力已齐备，关键是集中意图并付诸行动。适合主动沟通、推进计划。"},
+  {"card_id": 1, "orientation": "reversed", "keywords": ["分散", "技巧空转", "误导", "拖延"], "meaning_short": "才能或资源可能没用对地方，或承诺多于执行。先校准目标，再谈发挥。"},
+
+  {"card_id": 2, "orientation": "upright", "keywords": ["直觉", "内省", "耐心", "潜意识"], "meaning_short": "答案多在静观与感受里，不必急于下结论。适合倾听内在声音，也留意尚未说出的信息。"},
+  {"card_id": 2, "orientation": "reversed", "keywords": ["情绪干扰", "秘密", "误解", "封闭"], "meaning_short": "直觉可能被焦虑或隐瞒扰乱，或与自己失联。试着把模糊感具体化，再作判断。"},
+
+  {"card_id": 3, "orientation": "upright", "keywords": ["滋养", "丰盛", "创造", "关系"], "meaning_short": "强调生长、照顾与感官上的满足，环境相对支持发展。适合培育项目或关系，享受成果。"},
+  {"card_id": 3, "orientation": "reversed", "keywords": ["过度依赖", "停滞", "空耗", "失衡"], "meaning_short": "滋养可能变成依赖或过度付出，创造性能量受阻。检查边界与自我价值感。"},
+
+  {"card_id": 4, "orientation": "upright", "keywords": ["结构", "责任", "边界", "稳定"], "meaning_short": "需要清晰规则与担当来稳住局面。适合制定计划、明确权责，以理性框架推进。"},
+  {"card_id": 4, "orientation": "reversed", "keywords": ["控制", "僵化", "专断", "失序"], "meaning_short": "控制欲或僵化可能压制弹性，或权威感不足导致散乱。在秩序与变通之间找平衡。"},
+
+  {"card_id": 5, "orientation": "upright", "keywords": ["传统", "指引", "学习", "信念"], "meaning_short": "可借助经验、制度或可信的导师获得方向。适合系统学习、遵循已验证的路径。"},
+  {"card_id": 5, "orientation": "reversed", "keywords": ["教条", "形式化", "叛逆", "迷失"], "meaning_short": "外在规范可能不再适用，或盲目跟从而失去主见。辨别哪些规则真正服务于你。"},
+
+  {"card_id": 6, "orientation": "upright", "keywords": ["选择", "价值一致", "连接", "吸引"], "meaning_short": "凸显关系或选择中的价值对齐与吸引。适合坦诚沟通，在重要选项里听从内心取向。"},
+  {"card_id": 6, "orientation": "reversed", "keywords": ["失衡", "犹豫", "分歧", "诱惑"], "meaning_short": "选择可能拖延，或价值观、关系出现裂缝。先厘清真正在意什么，再作决定。"},
+
+  {"card_id": 7, "orientation": "upright", "keywords": ["前进", "意志", "胜利", "掌控"], "meaning_short": "以决心驱动向前，适合克服阻力、朝目标推进。提醒在冲刺时也顾全团队或身心负荷。"},
+  {"card_id": 7, "orientation": "reversed", "keywords": ["失控", "攻击性", "方向不明", "受阻"], "meaning_short": "冲劲可能变成硬碰硬，或失去方向感。放慢一步，校准路线与节奏。"},
+
+  {"card_id": 8, "orientation": "upright", "keywords": ["勇气", "耐心", "内在力量", "温和"], "meaning_short": "真正的力量来自沉稳与自信，用耐心驯服冲动。适合以柔克刚、长期积累。"},
+  {"card_id": 8, "orientation": "reversed", "keywords": ["自我怀疑", "软弱感", "失衡", "急躁"], "meaning_short": "可能低估自己或用力过猛。重建自我信任，从小处恢复掌控感。"},
+
+  {"card_id": 9, "orientation": "upright", "keywords": ["独处", "求索", "智慧", "节制"], "meaning_short": "适合退后一步审视，在安静中寻找答案。不必急于对外证明，先弄清内心所求。"},
+  {"card_id": 9, "orientation": "reversed", "keywords": ["孤立", "躲藏", "偏执", "迷路"], "meaning_short": "独处可能滑向封闭或过度怀疑他人。适度求助，避免把逃避当成修行。"},
+
+  {"card_id": 10, "orientation": "upright", "keywords": ["周期", "转机", "机遇", "变化"], "meaning_short": "局势处在流转中，外境可能带来新窗口。顺势调整，抓住当下能影响的环节。"},
+  {"card_id": 10, "orientation": "reversed", "keywords": ["阻滞", "重复", "坏运气感", "抗拒变化"], "meaning_short": "可能感到循环卡顿或抗拒改变。承认周期存在，从小改变打破惯性。"},
+
+  {"card_id": 11, "orientation": "upright", "keywords": ["公平", "因果", "清晰", "决定"], "meaning_short": "强调客观、问责与因果平衡。适合基于事实做决定，承担相应后果。"},
+  {"card_id": 11, "orientation": "reversed", "keywords": ["偏见", "不公", "逃避责任", "模糊"], "meaning_short": "判断可能受偏见影响，或不愿面对后果。回到事实与原则，修正偏差。"},
+
+  {"card_id": 12, "orientation": "upright", "keywords": ["视角转换", "等待", "牺牲", "放下"], "meaning_short": "暂停行动、换角度看问题，可能带来新领悟。自愿的让步有时是为更长远的收获。"},
+  {"card_id": 12, "orientation": "reversed", "keywords": ["徒劳牺牲", "停滞", "抗拒", "僵局"], "meaning_short": "可能在不值得处耗费，或拒绝必要的视角转变。评估暂停是否仍有益。"},
+
+  {"card_id": 13, "orientation": "upright", "keywords": ["结束", "转化", "割舍", "新生"], "meaning_short": "某阶段自然收尾，为转化腾出空间。接受结束本身也是成长的一部分。"},
+  {"card_id": 13, "orientation": "reversed", "keywords": ["拖延告别", "恐惧改变", "半吊子", "执着"], "meaning_short": "可能迟迟不肯放手，导致新旧纠缠。识别该结束什么，才能轻装继续。"},
+
+  {"card_id": 14, "orientation": "upright", "keywords": ["平衡", "调和", "耐心", "疗愈"], "meaning_short": "寻求适度与融合，避免极端。适合循序渐进、照顾身心节奏。"},
+  {"card_id": 14, "orientation": "reversed", "keywords": ["失衡", "极端", "急躁", "失调"], "meaning_short": "节奏可能过快或过慢，调和失效。重新分配精力，恢复可持续的状态。"},
+
+  {"card_id": 15, "orientation": "upright", "keywords": ["欲望", "依附", "诱惑", "阴影"], "meaning_short": "照见被欲望或习惯绑定的部分，并非宣判失败。觉察束缚从哪来，才有松动可能。"},
+  {"card_id": 15, "orientation": "reversed", "keywords": ["解脱", "觉醒", "打破依赖", "自主"], "meaning_short": "有机会认清并松动不健康的依附。主动选择边界，比被动挣扎更有效。"},
+
+  {"card_id": 16, "orientation": "upright", "keywords": ["突变", "真相", "结构崩塌", "觉醒"], "meaning_short": "旧有结构可能突然动摇，逼你面对真相。震荡过后，反而能建在更诚实的基础上。"},
+  {"card_id": 16, "orientation": "reversed", "keywords": ["延迟爆发", "恐惧改变", "余震", "回避"], "meaning_short": "危机可能被推迟而非消失，或仍在消化余波。主动处理隐患，比硬撑更省力。"},
+
+  {"card_id": 17, "orientation": "upright", "keywords": ["希望", "疗愈", "灵感", "远期"], "meaning_short": "带来修复感与对未来的信心，适合设定温和可行的愿景。保持真实，不必夸大承诺。"},
+  {"card_id": 17, "orientation": "reversed", "keywords": ["失望", "信心不足", "脱离现实", "迟滞"], "meaning_short": "希望可能暂时黯淡，或目标过于理想化。缩小一步可见的目标，重建信任感。"},
+
+  {"card_id": 18, "orientation": "upright", "keywords": ["不确定", "梦境", "直觉", "隐藏"], "meaning_short": "事情未必如表面所见，情绪与潜意识影响判断。慢做决定，核对信息与感受。"},
+  {"card_id": 18, "orientation": "reversed", "keywords": ["迷雾散去", "恐惧减轻", "误解", "自欺"], "meaning_short": "混乱可能逐渐澄清，或需警惕自我欺骗。用可验证的事实补直觉的不足。"},
+
+  {"card_id": 19, "orientation": "upright", "keywords": ["清晰", "活力", "成功", "坦诚"], "meaning_short": "能量顺畅外显，适合展示成果、表达真实自我。享受被看见，也保持谦逊。"},
+  {"card_id": 19, "orientation": "reversed", "keywords": ["阴郁", "延迟满足", "自我否定", "过度曝光"], "meaning_short": "快乐或认可可能暂时打折，或用力表演而空乏。回到内在价值，而非只看外界反应。"},
+
+  {"card_id": 20, "orientation": "upright", "keywords": ["觉醒", "召唤", "总结", "重启"], "meaning_short": "呼应内在召唤，对过去作清算并准备新阶段。回应这个声音，不必等待完美时机。"},
+  {"card_id": 20, "orientation": "reversed", "keywords": ["自我批判", "拒绝召唤", "未完成", "拖延"], "meaning_short": "可能回避必要的自我审视或二次机会。温和面对过往，才接得上新的可能。"},
+
+  {"card_id": 21, "orientation": "upright", "keywords": ["完成", "整合", "成就", "闭环"], "meaning_short": "一个周期圆满收尾，各要素趋于合一。适合庆祝进展，并思考下一圈的起点。"},
+  {"card_id": 21, "orientation": "reversed", "keywords": ["未完成", "差一步", "延迟收尾", "割裂"], "meaning_short": "接近完成却仍有缺口，或各部分尚未整合。补齐最后环节，别在终点前散开。"}
+]
