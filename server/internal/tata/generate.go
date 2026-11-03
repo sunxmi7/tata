@@ -106,6 +106,9 @@ func buildPrompt(kind, question, cards string) string {
 		b.WriteString("不要套用塔罗师人设。逐张解释后给总评。\n")
 	}
 	fmt.Fprintf(&b, "问题：%s\n牌面：%s\n", question, cards)
+	if block := formatMajorMeaningsBlock(cards); block != "" {
+		b.WriteString(block)
+	}
 	return b.String()
 }
 
