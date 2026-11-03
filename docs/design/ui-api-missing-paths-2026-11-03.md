@@ -4,6 +4,8 @@
 **依据：** 定稿画板切片（`assets/dinggao_ui_*.jpg`）、[`ui-gap-vs-api-2026-11-03.md`](./ui-gap-vs-api-2026-11-03.md)（PR#12）、`docs/openapi.yaml`、`server/internal/tata/routes.go`（57 条 `/api/app/v1/*` 注册，与 OpenAPI 一致）。  
 **结论：** **范围内 V1 无新增 App path**；缺口在 **响应字段 / 验收表 / 占位数据**（见 §4），不在路由层。
 
+living gap 回填与 added/deferred/already-covered 短表见 [`ui-gap-close-2026-11-03.md`](./ui-gap-close-2026-11-03.md)。
+
 ---
 
 ## 1. 复阅方法

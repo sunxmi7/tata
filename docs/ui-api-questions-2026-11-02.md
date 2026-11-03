@@ -2,7 +2,7 @@
 
 **用途：** 仅收录需产品/运营拍板后再改后端或接客户端的项。  
 **依据：** Quin 功能结论官 [`ui-api-gap-full-2026-11-02.md`](./ui-api-gap-full-2026-11-02.md) A/B/C 划分 + main `docs/openapi.yaml` / `server/internal/tata/routes.go`（PR #6 P0 shell、PR #7 P1 campaigns/help/redeem 已合）。  
-**本轮：** Cloud Agent **不实现**下列 B 档与 C 档疑问；拍板后再开补码 PR。
+**本轮：** Cloud Agent **不实现**下列 B 档与 C 档疑问；拍板后再开补码 PR。HTTP 结案见 [`design/ui-gap-close-2026-11-03.md`](./design/ui-gap-close-2026-11-03.md)（**0 条新 path**）。
 
 ### 拍板状态（2026-11-02 · Quin 调研室）
 
@@ -11,6 +11,8 @@
 | **Q-B1** | **已拍砍** — 不做服务端推；**不补** `push/register` |
 | **Q-B2** | **已拍** — 语言不上云；Header 传语言（见下） |
 | **Q-B7** | **搁置** — 本轮不接删号 UI；细则稍后确认 |
+| **Q-B3 / Q-B4** | **已拍〔2026-11-03〕首版不做** — 月报/年运有图、无 path、不补 |
+| **Q-N1** | **已拍〔2026-11-03〕后置** — 登录/绑定多步 UI 不挡本轮 HTTP |
 
 ---
 
@@ -46,23 +48,25 @@
 | **OpenAPI / 实现** | `openapi.yaml` 公共 Header（`Accept-Language`）；服务端请求上下文解析（缺省 `zh-Hans`），**本轮不改** help/campaign 等业务响应文案。 |
 | **挡住** | ~~profile.locale~~ — **已关闭**；CMS 多语言仍依赖 Q-B6 与运营配置。 |
 
-### Q-B3 · 月度报告（V1.3 延后）
+### Q-B3 · 月度报告 — **已拍首版不做〔2026-11-03〕**
 
 | 项 | 内容 |
 |---|---|
 | **UI 表现** | 月度报告全套：月份选择、统计、尚未生成/加载/保存/无数据等（9 张定稿 + 月份选择屏）。 |
 | **代码 / OpenAPI** | **无** `/monthly-reports` 类 path。 |
 | **选项** | (1) V1.3 再做服务端聚合；(2) 首版客户端本地拼（若数据来源未定则仅展示空态)。 |
+| **决策** | **首版不做**：不增 `/monthly-reports` 或任何月报 path；图保留。 |
 | **建议默认** | **已确认 V1.3 延后** — 首版不补后端业务。 |
 | **挡住** | 任意正式 `GET/POST` 月报接口与统计口径。 |
 
-### Q-B4 · 年度运势独立流程（V1.3 延后）
+### Q-B4 · 年度运势独立流程 — **已拍首版不做〔2026-11-03〕**
 
 | 项 | 内容 |
 |---|---|
 | **UI 表现** | 四步流程、密函、报告内容、解锁价示例（设计标示例价）。 |
 | **代码 / OpenAPI** | readings / iap 钩子存在；**无** 独立 annual unlock/progress/content path。 |
 | **选项** | (1) V1.3 独立域 + SKU；(2) 暂不开放入口。 |
+| **决策** | **首版不做**：无独立年运 unlock/progress/content path；不可硬套 readings。 |
 | **建议默认** | **已确认 V1.3 延后**；不可硬套普通 readings 而不写规则。 |
 | **挡住** | 年运解锁、12+6 抽、报告结构、与会员权益关系。 |
 
@@ -74,6 +78,7 @@
 | **代码 / OpenAPI** | 服务端固定 `deck()` 78 张；**无** deck preference API。 |
 | **选项** | (1) V1 客户端默认牌背；(2) 增 `GET/PUT /deck-preference` 或 profile 字段。 |
 | **建议默认** | (1) 直到有设置屏与牌组资产版本策略（DEC-015 CONFIG）。 |
+| **2026-11-03 结案** | **不挡首发** — 定稿无牌组设置屏；服务端固定 78 张；**本轮不补** preference path。 |
 | **挡住** | 牌组列表、解锁、与 IAP 权益绑定。 |
 
 ### Q-B6 · 占位页正文 CMS
@@ -164,6 +169,7 @@
 | **代码 / OpenAPI** | 无后端 path。 |
 | **选项** | V1 纯客户端 WidgetKit；(2) 服务端同步配置。 |
 | **建议默认** | **无后端也可 V1**。 |
+| **2026-11-03 结案** | **不挡首发** — 首版纯客户端；**本轮不补** sync path。 |
 | **挡住** | (2) 的 sync API。 |
 
 ---
@@ -237,10 +243,10 @@
 
 ## 建议拍板顺序（给产品）
 
-1. **已拍 / 搁置 / 已砍：** Q-B1（**不**做服务端推）；Q-B2（Header 传语言）；**Q-B7 搁置**（删号稍后确认，本轮不接 UI）  
-2. **仍待拍：** Q-B5、Q-B6、Q-B8、Q-B9（及其他 B/C 项见上）  
-3. **本 PR 补码：** Q-B2 — OpenAPI `Accept-Language` + 服务端读 Header（缺省 `zh-Hans`）；**不**补 push/register  
-4. **本轮不做：** 删号 UI 对接 `auth/cancel`（等 Q-B7 细则）；Q-B3、Q-B4（V1.3）；关于/主题/分享/检查更新（客户端）
+1. **已拍 / 搁置 / 已砍：** Q-B1（**不**做服务端推）；Q-B2（Header 传语言）；**Q-B7 搁置**（删号稍后确认，本轮不接 UI）；**Q-B3/B4 首版不做**；**Q-N1 登录绑定 UI 后置**  
+2. **仍待拍（非缺 path）：** Q-B5（不挡首发）、Q-B6、Q-B8、Q-B9（及其他 B/C 项见上）  
+3. **HTTP 结案：** [`design/ui-gap-close-2026-11-03.md`](./design/ui-gap-close-2026-11-03.md) — **0 条新 App path**  
+4. **本轮不做：** 删号 UI 对接 `auth/cancel`（等 Q-B7 细则）；月报/年运；push/register；profile.locale；deck/widget 新路由；关于/主题/分享/检查更新（客户端）
 
 ---
 
@@ -251,6 +257,9 @@
 | 2026-11-02 | Q-B1 | 不要服务端推；本地通知 + notification-preferences；不补 push/register。 |
 | 2026-11-02 | Q-B2 | 语言不上云；本地存偏好；接口用 `Accept-Language`（或 `X-Language`）传语言；缺省 `zh-Hans`；不补 `profile.locale`。 |
 | 2026-11-02 | Q-B7 | 删号流程搁置；保留 `auth/cancel` 钩子；细则 TBD 后写回本文档再接 UI。 |
+| 2026-11-03 | Q-B3 / Q-B4 | 月报/年运 **首版不做**；有图、无 path、不补。 |
+| 2026-11-03 | Q-N1 | 登录/注册/绑定多步 UI **后置**。 |
+| 2026-11-03 | Q-B5 / Q-B14 | 不挡首发；本轮不补 deck preference / widget sync。 |
 
 ---
 
@@ -260,3 +269,4 @@
 |------|------|
 | 2026-11-02 | 自 Quin 功能结论官全量对照稿拆出；对齐用户指令：B 项待拍不编码，C 项不编字段。 |
 | 2026-11-02 | Q-B2 已拍：Header 传语言；Q-B7 搁置：本轮不接删号 UI；Q-B1 已拍砍：不补 push/register。 |
+| 2026-11-03 | 定稿画板结案：范围内无缺 App HTTP path（57 条 1:1）；Q-B3/B4 首版不做、Q-N1 后置；见 `docs/design/ui-gap-close-2026-11-03.md`。 |

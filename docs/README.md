@@ -8,6 +8,8 @@
 
 同日 App P1：`GET /api/app/v1/redeem/records`、`GET /api/app/v1/campaigns`、`GET /api/app/v1/campaigns/{id}`、`GET /api/app/v1/campaigns/participations`、`GET /api/app/v1/campaigns/rewards`、`GET /api/app/v1/help/categories`、`GET /api/app/v1/help/articles`（`category`、`q`）、`GET /api/app/v1/help/articles/{id}`。兑换记录、活动详情、参与记录、奖励记录和 FAQ 正文仍是占位：列表可为空，不编造记录；FAQ `body` 为「待确认」。`POST /api/app/v1/push/register` 未注册：通知设置没有推送 token 字段。
 
+2026-11-03 定稿画板对照结案：App `method+path` **57** 条与 OpenAPI 1:1；**范围内无缺失 HTTP API、本轮不新增 path**。模块→已有 path / 延后清单见 [design/ui-gap-close-2026-11-03.md](./design/ui-gap-close-2026-11-03.md)；逐模块复阅表见 [design/ui-api-missing-paths-2026-11-03.md](./design/ui-api-missing-paths-2026-11-03.md)（PR#13）。月报/年运首版不做；Q-N1 登录绑定 UI 后置；Q-B5/Q-B14 不挡首发故不补。P0 UI 字段验收（抽牌/牌阵/历史/日历）**未**标 Done。
+
 ## 导入 Apifox
 
 在 Apifox 中选择 **导入 → OpenAPI**，选择本仓库的 `docs/openapi.yaml`。
