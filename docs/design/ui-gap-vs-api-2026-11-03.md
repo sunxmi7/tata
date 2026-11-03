@@ -2,8 +2,10 @@
 
 **角色：** 设计稿对照分析（不改 `server/` / `admin/` / `app/` 业务代码）。  
 **设计依据：** `uploads/ui-design-new_b5f3.zip` → `定稿界面.png`（7342×23000，左列浅色、右列深色）；辅助切片 `定稿界面-v01…v04`、旧包对照 [`docs/ui-api-gap-full-2026-11-02.md`](../ui-api-gap-full-2026-11-02.md) + [`uploads/tata-ui-api-full-gap-questions-2026-11-02_66e1.md`](../../uploads/tata-ui-api-full-gap-questions-2026-11-02_66e1.md)（路径以本机 uploads 为准）。  
-**API 依据：** main `docs/openapi.yaml`（2026-11-02 口径：56 条 App 路由；`Accept-Language` / `X-Language` 已文档化；**无** `push/register`；**无** `profile.locale`）。  
+**API 依据：** main `docs/openapi.yaml` + `server/internal/tata/routes.go`（**57** 条 App `method+path` 1:1；`Accept-Language` / `X-Language` 已文档化；**无** `push/register`；**无** `profile.locale`）。  
 **Admin：** 跟 Vben 原框架，**不**与本定稿 App UI 逐屏对照。
+
+**结案（2026-11-03）：** 范围内 **无缺失 App HTTP API**，**不新增 path**。模块→已有 path / 延后表见 [`ui-gap-close-2026-11-03.md`](./ui-gap-close-2026-11-03.md)。**不**把 P0 UI 字段验收标成 Done。
 
 **规则：** 占位/手册「待确认」不当已证实事实；设计示例价不当正式定价；已拍板约束见 §1。
 
@@ -16,7 +18,8 @@
 | Q-B1 | 不要服务端推送；**不补** `POST /api/app/v1/push/register` |
 | Q-B2 | 语言不上云；**无** `profile.locale`；客户端存偏好，请求 **Header**（`Accept-Language` / `X-Language`）传语言 |
 | Q-B7 | 删号流程**搁置**；`POST /auth/cancel` 钩子保留，本轮不接 UI |
-| — | 月报 / 年运等：设计有则标 **「设计有、首版是否做待产品拍」**（历史口径 V1.3 延后，见 Q-B3/Q-B4） |
+| Q-B3 / Q-B4 | 月报 / 年运：**首版不做**（图保留；无 path；不硬套 readings） |
+| Q-N1 | 登录/注册/绑定多步 UI **后置**（`auth/*` 钩子已有，不新开 UI 驱动流） |
 
 ---
 
@@ -47,7 +50,7 @@
 | 塔塔币购买 | 2 | 1 | `GET /iap/skus` `POST /iap/verify` `GET /quota` `GET /wallet/ledger` | 价仍 null（Q-B13）；流水字段 Q-B8 |
 | 兑换码 | 7 | 1 | `POST /redeem` | 状态机屏齐；P0 已有 |
 | 参与活动 | 9 | 1 | `GET /campaigns` `{id}` `participations` `rewards` | 详情/记录仍占位 Q-B6 |
-| 月度报告 | 8 | 1 | **无** | **设计有、首版是否做待产品拍**（Q-B3 / V1.3） |
+| 月度报告 | 8 | 1 | **无** | **设计有、首版不做**（Q-B3 / V1.3） |
 | 语言 | 8 | 1 | **无 profile.locale** | **Q-B2 已拍**：仅 Header + 本地偏好 |
 | 功能心愿单 | 10 | 1 | `POST /wishlist` `POST /uploads` | P0 已有 |
 | 帮助中心 | 9 | 1 | `GET /help/categories` `articles` `articles/{id}`（`q`） | FAQ `body` 仍「待确认」Q-B6 |
@@ -55,7 +58,7 @@
 | 关于塔塔 | 5 | 2 | **不必** | 版本/协议/分享/检查更新 → 客户端 + 静态 |
 | 账号 | 14 | 1 | `GET/PUT /profile`；`POST /auth/cancel`（不接 UI） | 性别/生日 OpenAPI 有；删号 **Q-B7 搁置**；手机排版 **Q-B11** |
 | 通知设置 | 5 | 1 | `GET/PUT /notification-preferences` | **Q-B1 已砍** push；本地/OS 提醒 + 选时间 Q-B10 |
-| 年度运势 | 3 | 3 | **无** | **设计有、首版是否做待产品拍**（Q-B4 / V1.3） |
+| 年度运势 | 3 | 3 | **无** | **设计有、首版不做**（Q-B4 / V1.3） |
 | 日历记录 | 3 | 3 | `GET /calendar` `POST /daily` | 月视图/打点 UI 新定稿；详情 schema Q-C4 |
 | 历史记录 | 2 | 3 | `GET /readings` `{id}` `messages` | 列表 UI 新定稿；字段 Q-C6 |
 | 会员中心 | 3 | 3 | `GET /iap/entitlements` `GET /iap/skus` `readings/{id}/paywall` | 订阅权益文案 Q-C3/Q-B13 |
@@ -83,7 +86,7 @@
 | P0-8 | **会员中心** 权益与 SKU | 会员中心分区 | `iap/*` `entitlements` | Q-C3 / Q-B13 |
 | P0-9 | **探索 → 开局** | 探索 + 首页入口 | `topics` → `POST /readings`（推断） | Q-C7 模板映射 |
 
-**P0 条数：9**
+**P0 条数：9（均为字段/文案/空态验收，不是缺 HTTP path；本轮不标 Done）**
 
 ### 4.2 P1（可联调但允许空列表 / 占位正文 / 客户端兜底）
 
@@ -101,11 +104,13 @@
 
 | 项 | 说明 |
 |----|------|
-| 月度报告 | 无 path；**设计有、首版是否做待产品拍**（Q-B3） |
-| 年度运势 | 无 path；**设计有、首版是否做待产品拍**（Q-B4） |
+| 月度报告 | 无 path；**设计有、首版不做**（Q-B3） |
+| 年度运势 | 无 path；**设计有、首版不做**（Q-B4） |
 | 删号 UI | Q-B7 **搁置** |
 | 服务端推送 | Q-B1 **已砍** |
-| 小组件数据同步 | Q-B14 |
+| 小组件数据同步 | Q-B14（首版纯客户端，不挡发版） |
+| 登录/绑定多步 UI | Q-N1 **后置** |
+| 牌组偏好 | Q-B5 未拍、不挡首发（固定 deck） |
 | Admin 运营台 | 不跟本 App UI 逐屏对 |
 
 ---
@@ -119,19 +124,19 @@
 | **历史 / 日历 / 会员** | 多为 C 或「我的长页部分」 | **独立模块行**，P0-3/P0-4/P0-8 |
 | **账号** | 已知 profile + 删号占位 | 定稿 **屏量显著增加**（性别/生日/退出等），API 字段大体已有 |
 | Q-B1 / B2 / B7 | 已拍 / 砍 / 搁置 | **不变** |
-| Q-B3 / B4 月报年运 | V1.3 延后 | **不变**；定稿仍完整呈现 → 产品再确认首版 |
-| OpenAPI 路由数 | 56 条对齐 | **无新增 path**（本报告仅对照，不改 yaml） |
+| Q-B3 / B4 月报年运 | V1.3 延后 | **已拍首版不做**；定稿仍完整呈现，不补 path |
+| OpenAPI 路由数 | 56 条对齐（当时口径） | 现核验 **57** 条 method+path 与 routes 1:1（含 `DELETE /readings/{id}`）；**仍无新增 path** |
 
 ---
 
 ## 6. 待拍问题（延续 + 11-03 触发）
 
-已拍项（B1/B2/B7）不再重复立项。下列 **仍为待拍 / 待确认**（不得写成已证实）：
+已拍项（B1/B2/B3/B4/B7、N1）不再重复立项。下列 **仍为待拍 / 待确认**（不得写成已证实；**均非缺 HTTP path**）：
 
 | ID | 问题 | 11-03 触发点 |
 |----|------|----------------|
-| Q-B3 | 月报是否首版做、path 形状 | 月度报告 8+ 浅色状态屏 |
-| Q-B4 | 年运是否首版做 | 年度运势深浅各 3 屏 |
+| Q-B3 | ~~月报是否首版做~~ **已拍首版不做** | 月度报告 8+ 浅色状态屏；不补 path |
+| Q-B4 | ~~年运是否首版做~~ **已拍首版不做** | 年度运势深浅各 3 屏；不补 path |
 | Q-B5 | 牌组/牌面 preference path | 首页/抽牌视觉依赖 deck，仍无 API |
 | Q-B6 | help/campaign/充值帮助 CMS | 帮助/活动定稿屏 > 占位页 |
 | Q-B8 | ledger / redeem.records 列字段 | 塔塔币购买链 |
@@ -146,17 +151,18 @@
 | Q-C5 | AI 塔罗师试用耗尽态 | 抽牌分区含 AI/师者卡片态（需与 `tarotists` 对照） |
 | Q-C6 | readings 列表字段 | **P0-3** |
 | Q-C7 | explore topic → 开局 | **P0-9** |
-| **Q-N1（新）** | 画板 **登录/注册/绑定** 子流是否在 App 首版范围 | 11-03 账号屏偏资料编辑；auth 多步流 **未** 在同画板展开（仍属 C 或未交付） |
+| **Q-N1（新）** | ~~登录/绑定子流是否首版~~ **已拍后置** | 账号屏偏资料编辑；`auth/*` 钩子保留，不新开 UI 驱动流 |
 | **Q-N2（新）** | 抽牌分区是否覆盖 **AI 会话 / 付费墙** 全部态 | 需产品确认是否另补画板或沿用 readings/paywall 流程图 |
 
 ---
 
 ## 7. 建议决策顺序（给产品 / @dr eggbot）
 
-1. **首版范围：** 月报 / 年运（Q-B3/Q-B4）是否砍；小组件（Q-B14）是否纯客户端。  
-2. **P0 验收：** 优先 **抽牌 + 牌阵 + 历史 + 日历** 四套屏 ↔ OpenAPI 字段表（Q-C2/C4/C6 + P0-1～4）。  
+1. **首版范围（已拍）：** 月报 / 年运 **不做**（Q-B3/Q-B4）；小组件纯客户端（Q-B14）；牌组偏好不挡首发（Q-B5）。  
+2. **P0 验收：** 优先 **抽牌 + 牌阵 + 历史 + 日历** 四套屏 ↔ OpenAPI 字段表（Q-C2/C4/C6 + P0-1～4）。**钩子已齐，字段验收未标 Done。**  
 3. **占位收口：** Q-B6 / Q-B8 拍板后再填 help/campaign/ledger 数据（仍不编造）。  
-4. **已拍不动：** 无 push、无 profile.locale、删号搁置、Admin 不对 App UI。
+4. **已拍不动：** 无 push、无 profile.locale、删号搁置、Q-N1 后置、Admin 不对 App UI。  
+5. **HTTP：** 见 [`ui-gap-close-2026-11-03.md`](./ui-gap-close-2026-11-03.md) — **0 条新 path。**
 
 ---
 
@@ -165,3 +171,4 @@
 | 日期 | 说明 |
 |------|------|
 | 2026-11-03 | 基于 `定稿界面.png` 目视 + `docs/openapi.yaml` / 11-02 gap 产出；仅新增本文件。 |
+| 2026-11-03 | 结案：Q-B3/B4 首版不做、Q-N1 后置；HTTP 无缺 path（57 条 1:1）；见 close 文档。 |

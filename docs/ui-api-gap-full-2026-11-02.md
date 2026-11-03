@@ -4,7 +4,7 @@
 **依据：** 设计包 `design-pack/`（**170** PNG，本 PR 盘点路径）+ main `docs/openapi.yaml` + `server/internal/tata/routes.go`（PR #6 P0 shell、PR #7 P1）。  
 **权威 A/B/C：** 与 Quin 功能结论官稿一致；疑问明细见 [`ui-api-questions-2026-11-02.md`](./ui-api-questions-2026-11-02.md)。
 
-**OpenAPI 核验（2026-11-02）：** `routes.go` 注册的 **56** 条 App HTTP 路由（method+path）均在 `openapi.yaml` 有对应 operation；描述中的 P0/P1 占位策略（空列表、help「待确认」、**Q-B1 不注册 push/register**）与代码一致。**本轮** 同步 Q-B1/Q-B2/Q-B7 决策文档，并增加 App `Accept-Language` 解析（不改业务响应文案）。
+**OpenAPI 核验（2026-11-02）：** 当时口径为 **56** 条；**2026-11-03 复核为 57** 条 App `method+path`（含 `DELETE /readings/{id}`），与 `openapi.yaml` 1:1。占位策略（空列表、help「待确认」、**Q-B1 不注册 push/register**）不变。定稿 HTTP 结案见 [`design/ui-gap-close-2026-11-03.md`](./design/ui-gap-close-2026-11-03.md)（**无新增 path**）。
 
 ---
 
@@ -331,4 +331,5 @@
 |------|------|
 | 2026-11-02 | 170 屏清单 + A/B/C + 矩阵；routes/openapi 核验；首轮仅文档。 |
 | 2026-11-02 | Q-B2 已拍、Q-B7 搁置、Q-B1 已拍砍；Accept-Language 文档 + 服务端解析。 |
+| 2026-11-03 | 定稿结案：Q-B3/B4 首版不做、Q-N1 后置；57 条 1:1、0 新 path。见 close 文档。 |
 
