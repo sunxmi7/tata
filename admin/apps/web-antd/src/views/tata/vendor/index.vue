@@ -174,6 +174,7 @@ onMounted(async () => {
     </Table>
     <Card class="mt-4" title="调用绑定">
       <Table
+        class="bind-table"
         :columns="[
           { title: '调用', dataIndex: 'task' },
           { title: '供应商', dataIndex: 'vendor_id' },
@@ -192,40 +193,47 @@ onMounted(async () => {
           <template v-else-if="column.dataIndex === 'model'">{{ record.model || '—' }}</template>
         </template>
       </Table>
-      <Form v-if="canWrite()" class="mt-4 flex flex-wrap gap-y-2" layout="inline">
-        <Form.Item label="调用">
-          <Select
-            v-model:value="bind.task"
-            :options="tasks"
-            placeholder="选择调用"
-            style="width: 160px"
-            @change="onTaskChange"
-          />
-        </Form.Item>
-        <Form.Item label="供应商">
-          <Select
-            v-model:value="bind.vendor_id"
-            :options="vendorOptions"
-            allow-clear
-            placeholder="选择供应商"
-            style="min-width: 200px; width: 220px"
-            @change="onVendorChange"
-          />
-        </Form.Item>
-        <Form.Item label="模型">
-          <Select
-            v-model:value="bind.model"
-            :disabled="bind.vendor_id == null || modelOptions.length === 0"
-            :options="modelOptions"
-            allow-clear
-            :placeholder="modelPlaceholder"
-            style="min-width: 200px; width: 220px"
-          />
-        </Form.Item>
-        <Form.Item>
-          <Button type="primary" @click="bindTask">绑定</Button>
-        </Form.Item>
-      </Form>
+      <!--
+        Spacing must live outside <Form>. Ant Design's unlayered
+        `.ant-form { margin: 0 }` zeros Tailwind mt-* on the form root
+        (computed margin stays 0 even when class="mt-4" is present).
+      -->
+      <div v-if="canWrite()" class="bind-form-bar">
+        <Form class="bind-form" layout="inline">
+          <Form.Item label="调用">
+            <Select
+              v-model:value="bind.task"
+              :options="tasks"
+              placeholder="选择调用"
+              style="width: 160px"
+              @change="onTaskChange"
+            />
+          </Form.Item>
+          <Form.Item label="供应商">
+            <Select
+              v-model:value="bind.vendor_id"
+              :options="vendorOptions"
+              allow-clear
+              placeholder="选择供应商"
+              style="min-width: 200px; width: 220px"
+              @change="onVendorChange"
+            />
+          </Form.Item>
+          <Form.Item label="模型">
+            <Select
+              v-model:value="bind.model"
+              :disabled="bind.vendor_id == null || modelOptions.length === 0"
+              :options="modelOptions"
+              allow-clear
+              :placeholder="modelPlaceholder"
+              style="min-width: 200px; width: 220px"
+            />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" @click="bindTask">绑定</Button>
+          </Form.Item>
+        </Form>
+      </div>
     </Card>
     <Modal v-model:open="open" title="供应商" @ok="save">
       <Form layout="vertical">
@@ -238,3 +246,42 @@ onMounted(async () => {
     </Modal>
   </Page>
 </template>
+
+<style scoped>
+.bind-table :deep(.ant-table-thead > tr > th),
+.bind-table :deep(.ant-table-tbody > tr > td) {
+  padding-block: 12px;
+}
+
+.bind-form-bar {
+  padding-top: 16px;
+}
+
+.bind-form {
+  align-items: center;
+  row-gap: 8px;
+}
+
+.bind-form :deep(.ant-form-item) {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.bind-form :deep(.ant-form-item-label),
+.bind-form :deep(.ant-form-item-control-input) {
+  display: flex;
+  align-items: center;
+}
+
+.bind-form :deep(.ant-select-selector) {
+  display: flex;
+  align-items: center;
+  min-height: var(--ant-control-height, 32px);
+  padding-block: 4px;
+}
+
+.bind-form :deep(.ant-select-selection-item),
+.bind-form :deep(.ant-select-selection-placeholder) {
+  line-height: 1.375;
+}
+</style>
