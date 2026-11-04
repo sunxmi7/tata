@@ -10,6 +10,14 @@ import { Button, Card, Form, Input, Modal, Select, Switch, Table, Tag, message }
 
 import { createVendor, listBindings, listVendors, probeVendor, putBinding } from '#/api/tata';
 
+import {
+  modelSelectOptions,
+  modelSelectPlaceholder,
+  nextModelAfterVendorChange,
+  resolveBindForm,
+  vendorSelectOptions,
+} from './bind-form';
+
 const tasks = [
   { label: '问题检测', value: 'detect' },
   { label: '问题改写', value: 'rewrite' },
@@ -40,8 +48,18 @@ const vendorNameById = computed(() => {
   return map;
 });
 
-const vendorOptions = computed(() =>
-  vendors.value.map((item) => ({ label: item.name, value: item.id })),
+const selectedVendor = computed(() =>
+  vendors.value.find((item) => item.id === bind.value.vendor_id),
+);
+
+const vendorOptions = computed(() => vendorSelectOptions(vendors.value));
+
+const modelOptions = computed(() =>
+  modelSelectOptions(selectedVendor.value, bind.value.model ?? ''),
+);
+
+const modelPlaceholder = computed(() =>
+  modelSelectPlaceholder(bind.value.vendor_id, selectedVendor.value),
 );
 
 function vendorLabel(id?: number) {
@@ -54,13 +72,38 @@ function taskLabel(task: string) {
   return taskLabelByValue[task] ?? task;
 }
 
+function applyBinding(task: string) {
+  bind.value = resolveBindForm(task, bindings.value);
+}
+
+function onTaskChange(task: string) {
+  applyBinding(task);
+}
+
+function onVendorChange(value?: number | null) {
+  bind.value.vendor_id = value ?? undefined;
+  bind.value.model = nextModelAfterVendorChange(selectedVendor.value, bind.value.model ?? '');
+}
+
+function bindingRowProps(record: Binding) {
+  return {
+    onClick: () => {
+      if (!canWrite()) return;
+      applyBinding(record.task);
+    },
+    style: { cursor: canWrite() ? 'pointer' : undefined },
+  };
+}
+
+function bindingRowClassName(record: Binding) {
+  return record.task === bind.value.task ? 'ant-table-row-selected' : '';
+}
+
 async function load() {
   vendors.value = await listVendors();
   bindings.value = await listBindings();
-  if (bind.value.vendor_id === undefined && vendors.value.length > 0) {
-    bind.value.vendor_id = vendors.value[0]?.id;
-  }
 }
+
 function canWrite() {
   return access.accessCodes.includes('write');
 }
@@ -75,6 +118,7 @@ async function save() {
   message.success('已保存，密钥不会回显');
   open.value = false;
   bind.value.vendor_id = created.id;
+  bind.value.model = '';
   await load();
 }
 async function bindTask() {
@@ -82,20 +126,24 @@ async function bindTask() {
     message.warning('请选择供应商');
     return;
   }
-  const model = bind.value.model.trim();
+  const model = (bind.value.model ?? '').trim();
   if (!model) {
-    message.warning('请填写模型名');
+    message.warning('请选择模型');
     return;
   }
   await putBinding(bind.value.task, { vendor_id: bind.value.vendor_id, model });
   message.success('绑定已更新');
   await load();
+  applyBinding(bind.value.task);
 }
 async function probe(id: number) {
   await probeVendor(id);
   message.success('连通');
 }
-onMounted(load);
+onMounted(async () => {
+  await load();
+  applyBinding(bind.value.task);
+});
 </script>
 
 <template>
@@ -131,19 +179,28 @@ onMounted(load);
           { title: '供应商', dataIndex: 'vendor_id' },
           { title: '模型', dataIndex: 'model' },
         ]"
+        :custom-row="bindingRowProps"
         :data-source="bindings"
         :pagination="false"
+        :row-class-name="bindingRowClassName"
         row-key="task"
         :locale="{ emptyText: '暂无绑定' }"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.dataIndex === 'task'">{{ taskLabel(record.task) }}</template>
           <template v-else-if="column.dataIndex === 'vendor_id'">{{ vendorLabel(record.vendor_id) }}</template>
+          <template v-else-if="column.dataIndex === 'model'">{{ record.model || '—' }}</template>
         </template>
       </Table>
       <Form v-if="canWrite()" class="mt-4 flex flex-wrap gap-y-2" layout="inline">
         <Form.Item label="调用">
-          <Select v-model:value="bind.task" :options="tasks" placeholder="选择调用" style="width: 160px" />
+          <Select
+            v-model:value="bind.task"
+            :options="tasks"
+            placeholder="选择调用"
+            style="width: 160px"
+            @change="onTaskChange"
+          />
         </Form.Item>
         <Form.Item label="供应商">
           <Select
@@ -152,10 +209,18 @@ onMounted(load);
             allow-clear
             placeholder="选择供应商"
             style="min-width: 200px; width: 220px"
+            @change="onVendorChange"
           />
         </Form.Item>
         <Form.Item label="模型">
-          <Input v-model:value="bind.model" placeholder="模型 ID" style="width: 200px" />
+          <Select
+            v-model:value="bind.model"
+            :disabled="bind.vendor_id == null || modelOptions.length === 0"
+            :options="modelOptions"
+            allow-clear
+            :placeholder="modelPlaceholder"
+            style="min-width: 200px; width: 220px"
+          />
         </Form.Item>
         <Form.Item>
           <Button type="primary" @click="bindTask">绑定</Button>
