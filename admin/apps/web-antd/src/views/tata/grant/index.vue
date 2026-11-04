@@ -7,6 +7,8 @@ import { Button, Input, InputNumber, Select, Table } from 'ant-design-vue';
 
 import { createGrant, listGrants } from '#/api/tata';
 
+import { useTataLookups } from '../use-tata-lookups';
+
 const userId = ref('');
 const diamonds = ref<number | null>(null);
 const freeCount = ref<number | null>(null);
@@ -15,9 +17,12 @@ const note = ref('');
 const view = ref<Record<string, unknown>>({});
 const rows = ref<Record<string, unknown>[]>([]);
 
+const { loadLookups, operatorLabel, userLabel } = useTataLookups();
+
 const canWrite = computed(() => view.value.can_write !== false);
 
 async function load() {
+  await loadLookups();
   const data = await listGrants(userId.value);
   view.value = data;
   rows.value = (data.grants as Record<string, unknown>[]) || [];
@@ -63,8 +68,8 @@ onMounted(load);
       <Button type="primary" :disabled="!canWrite" @click="submit">补发</Button>
     </div>
     <p v-if="view.user_id" class="mb-4">
-      次卡钻石 {{ view.pack_diamonds }} / 订阅钻石 {{ view.subscription_diamonds }} / 补发免费次数
-      {{ view.free_count_remaining }}
+      用户 {{ userLabel(view.user_id) }} · 次卡钻石 {{ view.pack_diamonds }} / 订阅钻石
+      {{ view.subscription_diamonds }} / 补发免费次数 {{ view.free_count_remaining }}
     </p>
     <p class="mb-4 text-sm opacity-70">{{ view.permission_note }}</p>
     <Table
@@ -84,6 +89,22 @@ onMounted(load);
       :data-source="rows"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-    />
+      :locale="{ emptyText: '暂无补发记录' }"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.dataIndex === 'user_id'">
+          {{ userLabel(record.user_id) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'operator_id'">
+          {{ operatorLabel(record.operator_id) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'diamond_ledger_id'">
+          {{ record.diamond_ledger_id ? `#${record.diamond_ledger_id}` : '—' }}
+        </template>
+        <template v-else-if="column.dataIndex === 'count_ledger_id'">
+          {{ record.count_ledger_id ? `#${record.count_ledger_id}` : '—' }}
+        </template>
+      </template>
+    </Table>
   </Page>
 </template>

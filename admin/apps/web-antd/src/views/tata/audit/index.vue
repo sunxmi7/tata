@@ -7,8 +7,13 @@ import { Table } from 'ant-design-vue';
 
 import { listAudit } from '#/api/tata';
 
+import { useTataLookups } from '../use-tata-lookups';
+
 const rows = ref<Record<string, unknown>[]>([]);
+const { loadLookups, operatorLabel } = useTataLookups();
+
 onMounted(async () => {
+  await loadLookups();
   rows.value = await listAudit();
 });
 </script>
@@ -27,6 +32,13 @@ onMounted(async () => {
       :data-source="rows"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-    />
+      :locale="{ emptyText: '暂无审计记录' }"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.dataIndex === 'operator_id'">
+          {{ operatorLabel(record.operator_id) }}
+        </template>
+      </template>
+    </Table>
   </Page>
 </template>

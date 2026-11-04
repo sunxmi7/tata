@@ -7,21 +7,29 @@ import { Button, Input, Table } from 'ant-design-vue';
 
 import { getIAPDiamonds, listIAPOrders, listIAPSkus } from '#/api/tata';
 
+import { useTataLookups } from '../use-tata-lookups';
+
 const userId = ref('');
 const orders = ref<Record<string, unknown>[]>([]);
 const skus = ref<Record<string, unknown>[]>([]);
 const diamonds = ref<Record<string, unknown> | null>(null);
 const ledger = ref<Record<string, unknown>[]>([]);
 
+const { loadLookups, userLabel } = useTataLookups();
+const filterUserLabel = ref('');
+
 async function load() {
+  await loadLookups();
   const id = userId.value.trim();
   orders.value = await listIAPOrders(id);
   if (id) {
     diamonds.value = await getIAPDiamonds(id);
     ledger.value = (diamonds.value.ledger as Record<string, unknown>[]) || [];
+    filterUserLabel.value = userLabel(Number(id));
   } else {
     diamonds.value = null;
     ledger.value = [];
+    filterUserLabel.value = '';
   }
 }
 
@@ -36,12 +44,13 @@ onMounted(async () => {
     description="按用户查看验单状态、有效期和钻石入账。价格与发放数量未配置时为空。订阅钻石和次卡钻石分账。"
     title="IAP 订单"
   >
-    <div class="mb-4 flex gap-2">
+    <div class="mb-4 flex flex-wrap gap-2">
       <Input v-model:value="userId" placeholder="用户 ID" style="max-width: 240px" @press-enter="load" />
       <Button type="primary" @click="load">查询</Button>
     </div>
     <p v-if="diamonds" class="mb-4">
-      订阅钻石 {{ diamonds.subscription_diamonds }} / 次卡钻石 {{ diamonds.pack_diamonds }}
+      {{ filterUserLabel }} · 订阅钻石
+      {{ diamonds.subscription_diamonds }} / 次卡钻石 {{ diamonds.pack_diamonds }}
     </p>
     <Table
       :columns="[
@@ -59,7 +68,14 @@ onMounted(async () => {
       :data-source="orders"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-    />
+      :locale="{ emptyText: '暂无订单' }"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.dataIndex === 'user_id'">
+          {{ userLabel(record.user_id) }}
+        </template>
+      </template>
+    </Table>
     <Table
       v-if="ledger.length"
       class="mt-4"
@@ -88,6 +104,7 @@ onMounted(async () => {
       :data-source="skus"
       row-key="id"
       :pagination="false"
+      :locale="{ emptyText: '暂无 SKU 配置' }"
     />
   </Page>
 </template>

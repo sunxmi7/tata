@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { Binding, Vendor } from '#/api/tata';
 
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { useAccessStore } from '@vben/stores';
@@ -17,6 +17,8 @@ const tasks = [
   { label: '解读', value: 'interpret' },
   { label: '塔罗师', value: 'tarotist' },
 ];
+const taskLabelByValue = Object.fromEntries(tasks.map((item) => [item.value, item.label]));
+
 const access = useAccessStore();
 const vendors = ref<Vendor[]>([]);
 const bindings = ref<Binding[]>([]);
@@ -28,11 +30,36 @@ const form = ref({
   models: 'demo',
   enabled: true,
 });
-const bind = ref({ task: 'interpret', vendor_id: undefined as number | undefined, model: 'demo' });
+const bind = ref({ task: 'interpret', vendor_id: undefined as number | undefined, model: '' });
+
+const vendorNameById = computed(() => {
+  const map = new Map<number, string>();
+  for (const vendor of vendors.value) {
+    map.set(vendor.id, vendor.name);
+  }
+  return map;
+});
+
+const vendorOptions = computed(() =>
+  vendors.value.map((item) => ({ label: item.name, value: item.id })),
+);
+
+function vendorLabel(id?: number) {
+  if (id === undefined || id === null) return '—';
+  const name = vendorNameById.value.get(id);
+  return name ? `${name} (#${id})` : `#${id}`;
+}
+
+function taskLabel(task: string) {
+  return taskLabelByValue[task] ?? task;
+}
 
 async function load() {
   vendors.value = await listVendors();
   bindings.value = await listBindings();
+  if (bind.value.vendor_id === undefined && vendors.value.length > 0) {
+    bind.value.vendor_id = vendors.value[0]?.id;
+  }
 }
 function canWrite() {
   return access.accessCodes.includes('write');
@@ -51,8 +78,16 @@ async function save() {
   await load();
 }
 async function bindTask() {
-  if (!bind.value.vendor_id) return;
-  await putBinding(bind.value.task, { vendor_id: bind.value.vendor_id, model: bind.value.model });
+  if (!bind.value.vendor_id) {
+    message.warning('请选择供应商');
+    return;
+  }
+  const model = bind.value.model.trim();
+  if (!model) {
+    message.warning('请填写模型名');
+    return;
+  }
+  await putBinding(bind.value.task, { vendor_id: bind.value.vendor_id, model });
   message.success('绑定已更新');
   await load();
 }
@@ -79,6 +114,7 @@ onMounted(load);
       :data-source="vendors"
       row-key="id"
       :pagination="false"
+      :locale="{ emptyText: '暂无供应商' }"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'api_key_set'">{{ record.api_key_set ? '已设置' : '未设置' }}</template>
@@ -98,20 +134,32 @@ onMounted(load);
         :data-source="bindings"
         :pagination="false"
         row-key="task"
-      />
-      <Form v-if="canWrite()" class="mt-4" layout="inline">
+        :locale="{ emptyText: '暂无绑定' }"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'task'">{{ taskLabel(record.task) }}</template>
+          <template v-else-if="column.dataIndex === 'vendor_id'">{{ vendorLabel(record.vendor_id) }}</template>
+        </template>
+      </Table>
+      <Form v-if="canWrite()" class="mt-4 flex flex-wrap gap-y-2" layout="inline">
         <Form.Item label="调用">
-          <Select v-model:value="bind.task" :options="tasks" style="width: 140px" />
+          <Select v-model:value="bind.task" :options="tasks" placeholder="选择调用" style="width: 160px" />
         </Form.Item>
         <Form.Item label="供应商">
           <Select
             v-model:value="bind.vendor_id"
-            :options="vendors.map((item) => ({ label: item.name, value: item.id }))"
-            style="width: 160px"
+            :options="vendorOptions"
+            allow-clear
+            placeholder="选择供应商"
+            style="min-width: 200px; width: 220px"
           />
         </Form.Item>
-        <Form.Item label="模型"><Input v-model:value="bind.model" /></Form.Item>
-        <Button type="primary" @click="bindTask">绑定</Button>
+        <Form.Item label="模型">
+          <Input v-model:value="bind.model" placeholder="模型 ID" style="width: 200px" />
+        </Form.Item>
+        <Form.Item>
+          <Button type="primary" @click="bindTask">绑定</Button>
+        </Form.Item>
       </Form>
     </Card>
     <Modal v-model:open="open" title="供应商" @ok="save">
