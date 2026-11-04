@@ -7,8 +7,13 @@ import { Table } from 'ant-design-vue';
 
 import { listMessages } from '#/api/tata';
 
+import { useTataLookups } from '../use-tata-lookups';
+
 const rows = ref<Record<string, unknown>[]>([]);
+const { loadLookups, readingLabel } = useTataLookups();
+
 onMounted(async () => {
+  await loadLookups();
   rows.value = await listMessages();
 });
 </script>
@@ -26,6 +31,13 @@ onMounted(async () => {
       :data-source="rows"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-    />
+      :locale="{ emptyText: '暂无消息' }"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.dataIndex === 'reading_id'">
+          {{ readingLabel(record.reading_id) }}
+        </template>
+      </template>
+    </Table>
   </Page>
 </template>

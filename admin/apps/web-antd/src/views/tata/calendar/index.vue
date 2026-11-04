@@ -7,8 +7,13 @@ import { Table } from 'ant-design-vue';
 
 import { listCalendar } from '#/api/tata';
 
+import { useTataLookups } from '../use-tata-lookups';
+
 const rows = ref<Record<string, unknown>[]>([]);
+const { loadLookups, userLabel } = useTataLookups();
+
 onMounted(async () => {
+  await loadLookups();
   rows.value = await listCalendar();
 });
 </script>
@@ -26,6 +31,13 @@ onMounted(async () => {
       :data-source="rows"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-    />
+      :locale="{ emptyText: '暂无日历记录' }"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.dataIndex === 'user_id'">
+          {{ userLabel(record.user_id) }}
+        </template>
+      </template>
+    </Table>
   </Page>
 </template>

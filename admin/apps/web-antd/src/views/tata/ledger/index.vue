@@ -7,8 +7,13 @@ import { Table } from 'ant-design-vue';
 
 import { listLedger } from '#/api/tata';
 
+import { useTataLookups } from '../use-tata-lookups';
+
 const rows = ref<Record<string, unknown>[]>([]);
+const { loadLookups, readingLabel, userLabel } = useTataLookups();
+
 onMounted(async () => {
+  await loadLookups();
   rows.value = await listLedger();
 });
 </script>
@@ -28,6 +33,16 @@ onMounted(async () => {
       :data-source="rows"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-    />
+      :locale="{ emptyText: '暂无流水' }"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.dataIndex === 'user_id'">
+          {{ userLabel(record.user_id) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'reading_id'">
+          {{ readingLabel(record.reading_id) }}
+        </template>
+      </template>
+    </Table>
   </Page>
 </template>
