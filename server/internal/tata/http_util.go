@@ -14,11 +14,17 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type bizError struct{ msg string }
+type bizError struct {
+	msg  string
+	code string // 稳定错误码（error_code）。空表示尚未归类的业务错误，仅凭中文 message。
+}
 
 func (e *bizError) Error() string { return e.msg }
 
 func biz(msg string) error { return &bizError{msg: msg} }
+
+// bizCode 带稳定错误码的业务错误，供 App 端按码分支，而不是匹配中文 message。
+func bizCode(code, msg string) error { return &bizError{msg: msg, code: code} }
 
 // displayLabelTataCoin is the UI name for diamonds. The ledger unit stays diamond.
 const displayLabelTataCoin = "塔塔币"
@@ -32,7 +38,12 @@ func writeOK(w http.ResponseWriter, data any) {
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"code": 1, "data": nil, "message": msg})
+	writeErrCode(w, status, "", msg)
+}
+
+// writeErrCode 带 error_code 的错误包络。error_code 为稳定分类码，message 仍为中文原因。
+func writeErrCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]any{"code": 1, "data": nil, "message": msg, "error_code": code})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -45,7 +56,7 @@ func decode(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		return biz("请求字段不正确")
+		return bizCode("invalid_request_body", "请求字段不正确")
 	}
 	return nil
 }
@@ -53,7 +64,7 @@ func decode(r *http.Request, dst any) error {
 func pathID(r *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		return 0, biz("id 不正确")
+		return 0, bizCode("invalid_path_id", "id 不正确")
 	}
 	return id, nil
 }
@@ -63,6 +74,7 @@ type App struct {
 	JWTSecret []byte
 	Redis     redisLocker
 	UploadDir string
+	Push      *Pusher
 }
 
 type redisLocker interface {

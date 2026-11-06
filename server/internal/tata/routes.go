@@ -48,12 +48,16 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/bindings/{task}", a.h(a.adminPutBinding))
 
 	mux.HandleFunc("GET /api/admin/v1/quota-params", a.h(a.adminQuota))
-	mux.HandleFunc("PUT /api/admin/v1/quota-params", a.h(a.rejectQuotaWrite))
+	mux.HandleFunc("PUT /api/admin/v1/quota-params", a.h(a.adminUpdateQuota))
 	mux.HandleFunc("POST /api/admin/v1/quota-params", a.h(a.rejectQuotaWrite))
+
+	mux.HandleFunc("GET /api/admin/v1/copy/{kind}", a.h(a.adminGetCopy))
+	mux.HandleFunc("PUT /api/admin/v1/copy/{kind}", a.h(a.adminPutCopy))
 
 	mux.HandleFunc("GET /api/admin/v1/banners", a.h(a.adminListBanners))
 	mux.HandleFunc("POST /api/admin/v1/banners", a.h(a.adminCreateBanner))
 	mux.HandleFunc("PUT /api/admin/v1/banners/{id}", a.h(a.adminUpdateBanner))
+	mux.HandleFunc("POST /api/admin/v1/push/broadcast", a.h(a.adminBroadcastPush))
 
 	mux.HandleFunc("GET /api/admin/v1/readings", a.h(a.adminListReadings))
 	mux.HandleFunc("GET /api/admin/v1/readings/{id}", a.h(a.adminGetReading))
@@ -74,6 +78,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/account-merges", a.h(a.adminListAccountMerges))
 	mux.HandleFunc("GET /api/admin/v1/iap/orders", a.h(a.adminListIAPOrders))
 	mux.HandleFunc("GET /api/admin/v1/iap/skus", a.h(a.adminListIAPSKUs))
+	mux.HandleFunc("POST /api/admin/v1/iap/skus", a.h(a.adminCreateIAPSKU))
+	mux.HandleFunc("PUT /api/admin/v1/iap/skus/{id}", a.h(a.adminUpdateIAPSKU))
 	mux.HandleFunc("GET /api/admin/v1/iap/diamonds", a.h(a.adminIAPDiamonds))
 	mux.HandleFunc("GET /api/admin/v1/iap/config", a.h(a.adminIAPConfig))
 	mux.HandleFunc("GET /api/admin/v1/messages", a.h(a.adminListMessages))
@@ -103,10 +109,12 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/cut", a.h(a.appCut))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/draw", a.h(a.appDraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret", a.h(a.appInterpret))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret/stream", a.h(a.appInterpretStream))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/confirm-quota", a.h(a.appConfirmQuota))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/use-reward", a.h(a.appUseReward))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/paywall", a.h(a.appCancelPaywall))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups", a.h(a.appFollowup))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/stream", a.h(a.appFollowupStream))
 	mux.HandleFunc("GET /api/app/v1/readings/{id}/messages", a.h(a.appMessages))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/workflow", a.h(a.appWorkflow))
 	mux.HandleFunc("GET /api/app/v1/readings", a.h(a.appListReadings))
@@ -114,6 +122,12 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/app/v1/readings/{id}", a.h(a.appDeleteReading))
 	mux.HandleFunc("POST /api/app/v1/daily", a.h(a.appDaily))
 	mux.HandleFunc("GET /api/app/v1/calendar", a.h(a.appCalendar))
+	mux.HandleFunc("GET /api/app/v1/monthly-reports", a.h(a.appMonthlyReports))
+	mux.HandleFunc("POST /api/app/v1/monthly-reports/save", a.h(a.appSaveMonthlyReport))
+	mux.HandleFunc("GET /api/app/v1/yearly-reports/{id}", a.h(a.appYearlyReport))
+	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/unlock", a.h(a.appUnlockYearlyReport))
+	mux.HandleFunc("GET /api/app/v1/deck-preference", a.h(a.appGetDeckPreference))
+	mux.HandleFunc("PUT /api/app/v1/deck-preference", a.h(a.appPutDeckPreference))
 	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
 	mux.HandleFunc("POST /api/app/v1/iap/restore", a.h(a.appIAPRestore))
 	mux.HandleFunc("GET /api/app/v1/iap/entitlements", a.h(a.appIAPEntitlements))
@@ -128,7 +142,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/feedback", a.h(a.appFeedback))
 	mux.HandleFunc("GET /api/app/v1/notification-preferences", a.h(a.appGetNotificationPrefs))
 	mux.HandleFunc("PUT /api/app/v1/notification-preferences", a.h(a.appPutNotificationPrefs))
-	// POST /api/app/v1/push/register — Q-B1 已拍砍（2026-11-02）：不做服务端推；仅 notification-preferences + 客户端本地通知。
+	// 推送（2026-11-06 重启 Q-B1）：今日/明日抽牌走 App 本地通知；优惠/活动等消息类走个推服务端下发。
+	mux.HandleFunc("POST /api/app/v1/push/register", a.h(a.appRegisterPush))
+	mux.HandleFunc("GET /api/app/v1/messages", a.h(a.appListInbox))
+	mux.HandleFunc("POST /api/app/v1/messages/{id}/read", a.h(a.appReadMessage))
 	mux.HandleFunc("GET /api/app/v1/redeem/records", a.h(a.appRedeemRecords))
 	mux.HandleFunc("GET /api/app/v1/campaigns", a.h(a.appCampaigns))
 	mux.HandleFunc("GET /api/app/v1/campaigns/participations", a.h(a.appCampaignParticipations))
@@ -163,6 +180,9 @@ func (a *App) Bind(s *ghttp.Server) {
 			if task := r.Get("task").String(); task != "" {
 				r.Request.SetPathValue("task", task)
 			}
+			// 传 r.Response.Writer（内嵌的 *response.Writer），它直接包裹原始 http.ResponseWriter：
+			// Write/WriteHeader 不走 ghttp 的 BufferWriter 缓冲，Flush 直达底层 http.Flusher。
+			// SSE 流式（interpret/stream、followups/stream）依赖这一点才能逐段下发，勿改成 r.Response 本身。
 			a.Handler().ServeHTTP(r.Response.Writer, r.Request)
 		})
 	})
@@ -176,16 +196,16 @@ func (a *App) h(fn func(http.ResponseWriter, *http.Request) error) http.HandlerF
 		}
 		var ae authFail
 		if errors.As(err, &ae) {
-			writeErr(w, http.StatusUnauthorized, "未登录或令牌无效")
+			writeErrCode(w, http.StatusUnauthorized, "unauthorized", "未登录或令牌无效")
 			return
 		}
 		var be *bizError
 		if errors.As(err, &be) {
-			writeErr(w, http.StatusOK, be.msg)
+			writeErrCode(w, http.StatusOK, be.code, be.msg)
 			return
 		}
 		log.Printf("internal: %v", err)
-		writeErr(w, http.StatusOK, "内部错误")
+		writeErrCode(w, http.StatusOK, "internal", "内部错误")
 	}
 }
 
@@ -269,19 +289,19 @@ func (a *App) ownReading(ctx context.Context, id, userID int64, anon string) err
 	var deleted *time.Time
 	err := a.Store.QueryRow(ctx, `SELECT user_id, anonymous_id, deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &anonID, &deleted)
 	if err != nil {
-		return biz("记录不存在")
+		return bizCode("reading_not_found", "记录不存在")
 	}
 	if deleted != nil {
-		return biz("记录已删除")
+		return bizCode("reading_deleted", "记录已删除")
 	}
 	if userID > 0 {
 		if owner == nil || *owner != userID {
-			return biz("记录不属于当前用户")
+			return bizCode("reading_forbidden", "记录不属于当前用户")
 		}
 		return nil
 	}
 	if anonID == nil || *anonID != anon {
-		return biz("记录不属于当前用户")
+		return bizCode("reading_forbidden", "记录不属于当前用户")
 	}
 	return nil
 }

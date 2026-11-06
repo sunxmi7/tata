@@ -329,6 +329,12 @@ func (a *App) appUploads(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) serveUpload(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if name == defaultCardThumbnailName {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(defaultCardPNG)
+		return
+	}
 	if !validUploadName(name) {
 		http.NotFound(w, r)
 		return
@@ -690,7 +696,10 @@ func emptyAsNil(s string) any {
 	return s
 }
 
-func accountDisplay(email string, wechat, apple *string) string {
+func accountDisplay(email string, phone, wechat, apple *string) string {
+	if phone != nil && strings.TrimSpace(*phone) != "" {
+		return maskPhone(*phone)
+	}
 	if strings.TrimSpace(email) != "" {
 		return maskEmail(email)
 	}
@@ -701,6 +710,77 @@ func accountDisplay(email string, wechat, apple *string) string {
 		return "Apple 已绑定"
 	}
 	return ""
+}
+
+func maskPhone(phone string) string {
+	var digits strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	s := digits.String()
+	if len(s) < 7 {
+		return phone
+	}
+	return s[:3] + "****" + s[len(s)-4:]
+}
+
+const publicIDAlphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ123456789"
+
+func (a *App) ensurePublicID(ctx context.Context, uid int64, current string) (string, error) {
+	if strings.TrimSpace(current) != "" {
+		return current, nil
+	}
+	for i := 0; i < 8; i++ {
+		id, err := randomPublicID()
+		if err != nil {
+			return "", err
+		}
+		tag, err := a.Store.Exec(ctx, `UPDATE app_users SET public_id=$1 WHERE id=$2 AND (public_id IS NULL OR public_id='')`, id, uid)
+		if err != nil {
+			if strings.Contains(err.Error(), "app_users_public_id") {
+				continue
+			}
+			return "", err
+		}
+		if tag.RowsAffected() > 0 {
+			return id, nil
+		}
+		var got sql.NullString
+		if err := a.Store.QueryRow(ctx, `SELECT public_id FROM app_users WHERE id=$1`, uid).Scan(&got); err != nil {
+			return "", err
+		}
+		if got.Valid && got.String != "" {
+			return got.String, nil
+		}
+	}
+	return "", biz("公开 ID 生成失败")
+}
+
+func randomPublicID() (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, 6)
+	for i, b := range buf {
+		out[i] = publicIDAlphabet[int(b)%len(publicIDAlphabet)]
+	}
+	return string(out), nil
+}
+
+func attachReadingPreview(item map[string]any) {
+	name := firstCardName(item["cards"])
+	item["card_name"] = name
+	item["short_text"] = clipText(interpText(item["interpretation"]), 48)
+	item["card_thumbnail"] = nil
+	status, _ := item["status"].(string)
+	if status == "COMPLETED" {
+		item["status_label"] = "已解读"
+	} else {
+		item["status_label"] = "待继续"
+	}
 }
 
 func maskEmail(email string) string {
@@ -741,7 +821,7 @@ func publicBlurb(blurb, copy string) string {
 	return copy
 }
 
-func attachDailyHome(item map[string]any, target, business string) {
+func attachDailyHome(item map[string]any, target, business string, yi, thumbnail any) {
 	if target == "" {
 		target = "today"
 	}
@@ -750,8 +830,8 @@ func attachDailyHome(item map[string]any, target, business string) {
 	name := firstCardName(item["cards"])
 	item["card_name"] = name
 	item["short_text"] = clipText(interpText(item["interpretation"]), 48)
-	item["yi"] = nil
-	item["card_thumbnail"] = nil
+	item["yi"] = yi
+	item["card_thumbnail"] = thumbnail
 	item["has_result"] = name != ""
 }
 

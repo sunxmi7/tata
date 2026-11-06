@@ -2,8 +2,10 @@ package tata
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -127,19 +129,22 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 	}
 	items := []item{
 		{Name: "Spread", Path: "/spread", Meta: map[string]any{"title": "牌阵", "order": 1}},
-		{Name: "Tarotist", Path: "/tarotist", Meta: map[string]any{"title": "塔罗师", "order": 2}},
-		{Name: "Vendor", Path: "/vendor", Meta: map[string]any{"title": "模型供应商", "order": 3}},
-		{Name: "Quota", Path: "/quota", Meta: map[string]any{"title": "额度参数", "order": 4}},
-		{Name: "Banner", Path: "/banner", Meta: map[string]any{"title": "首页提示窗", "order": 5}},
-		{Name: "Reading", Path: "/reading", Meta: map[string]any{"title": "占卜记录", "order": 6}},
-		{Name: "Ledger", Path: "/ledger", Meta: map[string]any{"title": "额度流水", "order": 7}},
-		{Name: "Operator", Path: "/operator", Meta: map[string]any{"title": "操作员", "order": 8}},
-		{Name: "Users", Path: "/users", Meta: map[string]any{"title": "用户账号", "order": 9}},
-		{Name: "Calendar", Path: "/calendar", Meta: map[string]any{"title": "日历", "order": 10}},
-		{Name: "Messages", Path: "/messages", Meta: map[string]any{"title": "追问消息", "order": 11}},
-		{Name: "Audit", Path: "/audit", Meta: map[string]any{"title": "审计日志", "order": 12}},
-		{Name: "IAPOrders", Path: "/iap-orders", Meta: map[string]any{"title": "IAP 订单", "order": 13}},
-		{Name: "Grant", Path: "/grant", Meta: map[string]any{"title": "人工补发", "order": 14}},
+		{Name: "Deck", Path: "/deck", Meta: map[string]any{"title": "牌面", "order": 2}},
+		{Name: "Tarotist", Path: "/tarotist", Meta: map[string]any{"title": "塔罗师", "order": 3}},
+		{Name: "Vendor", Path: "/vendor", Meta: map[string]any{"title": "模型供应商", "order": 4}},
+		{Name: "Quota", Path: "/quota", Meta: map[string]any{"title": "额度参数", "order": 5}},
+		{Name: "Copy", Path: "/copy", Meta: map[string]any{"title": "运营文案", "order": 6}},
+		{Name: "Banner", Path: "/banner", Meta: map[string]any{"title": "首页提示窗", "order": 7}},
+		{Name: "Reading", Path: "/reading", Meta: map[string]any{"title": "占卜记录", "order": 8}},
+		{Name: "Ledger", Path: "/ledger", Meta: map[string]any{"title": "额度流水", "order": 9}},
+		{Name: "Operator", Path: "/operator", Meta: map[string]any{"title": "操作员", "order": 10}},
+		{Name: "Users", Path: "/users", Meta: map[string]any{"title": "用户账号", "order": 11}},
+		{Name: "Calendar", Path: "/calendar", Meta: map[string]any{"title": "日历", "order": 12}},
+		{Name: "Messages", Path: "/messages", Meta: map[string]any{"title": "追问消息", "order": 13}},
+		{Name: "Audit", Path: "/audit", Meta: map[string]any{"title": "审计日志", "order": 14}},
+		{Name: "IAPOrders", Path: "/iap-orders", Meta: map[string]any{"title": "IAP 订单", "order": 15}},
+		{Name: "IAPSkus", Path: "/iap-skus", Meta: map[string]any{"title": "价位", "order": 16}},
+		{Name: "Grant", Path: "/grant", Meta: map[string]any{"title": "人工补发", "order": 17}},
 	}
 	writeOK(w, items)
 	return nil
@@ -386,12 +391,22 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	if configured {
 		diamondCost = cost
 	}
+	followupLimit, followupReady, err := loadFollowupLimit(r.Context(), a.Store)
+	if err != nil {
+		return err
+	}
+	var followup any
+	if followupReady {
+		followup = followupLimit
+	}
 	writeOK(w, map[string]any{
 		"reset_at":                "北京时间 08:00",
 		"daily_free_count":        1,
 		"shared_scope":            "全玩法共用：注册奖励，今日免费次数，人工补发免费次数，然后钻石",
 		"failure_policy":          "已扣不退",
 		"editable":                false,
+		"followup_limit":          followup,
+		"followup_limit_editable": true,
 		"diamond_cost":            diamondCost,
 		"diamond_cost_configured": configured,
 		"diamond_spend_order":     "pack_then_subscription",
@@ -399,6 +414,40 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 		"paid_label":              "钻石",
 	})
 	return nil
+}
+
+func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, true); err != nil {
+		return err
+	}
+	raw := map[string]json.RawMessage{}
+	if err := decode(r, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["daily_free_count"]; ok {
+		return biz("本期不可修改重置时刻或每日次数")
+	}
+	if _, ok := raw["reset_at"]; ok {
+		return biz("本期不可修改重置时刻或每日次数")
+	}
+	limitRaw, ok := raw["followup_limit"]
+	if !ok {
+		return biz("本期不可修改重置时刻或每日次数")
+	}
+	if string(limitRaw) == "null" {
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=NULL, updated_at=now() WHERE id=1`); err != nil {
+			return err
+		}
+	} else {
+		var limit int
+		if err := json.Unmarshal(limitRaw, &limit); err != nil || limit <= 0 {
+			return biz("追问次数上限须为正整数，或 null 表示不限制")
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=$1, updated_at=now() WHERE id=1`, limit); err != nil {
+			return err
+		}
+	}
+	return a.adminQuota(w, r)
 }
 
 func (a *App) rejectQuotaWrite(w http.ResponseWriter, r *http.Request) error {
@@ -444,6 +493,20 @@ func (a *App) adminCreateBanner(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	a.Store.audit(r.Context(), act.id, "create", "banner", fmtID(id), "")
+	if b.push {
+		title := b.pushTitle
+		if title == "" {
+			title = "新活动上线"
+		}
+		msgID, derr := a.deliverMessage(r.Context(), broadcastIn{
+			audience: "all", category: "campaign", title: title, body: b.copy, target: b.target,
+		})
+		if derr != nil {
+			log.Printf("banner %d push failed: %v", id, derr)
+		} else {
+			a.Store.audit(r.Context(), act.id, "broadcast", "push", fmtID(msgID), title)
+		}
+	}
 	writeOK(w, map[string]any{"id": id})
 	return nil
 }
@@ -475,20 +538,24 @@ func (a *App) adminUpdateBanner(w http.ResponseWriter, r *http.Request) error {
 }
 
 type bannerIn struct {
-	copy     string
-	start    time.Time
-	end      time.Time
-	priority int
-	target   string
+	copy      string
+	start     time.Time
+	end       time.Time
+	priority  int
+	target    string
+	push      bool
+	pushTitle string
 }
 
 func readBanner(r *http.Request) (bannerIn, error) {
 	var req struct {
-		Copy     string `json:"copy"`
-		StartAt  string `json:"start_at"`
-		EndAt    string `json:"end_at"`
-		Priority int    `json:"priority"`
-		Target   string `json:"target"`
+		Copy      string `json:"copy"`
+		StartAt   string `json:"start_at"`
+		EndAt     string `json:"end_at"`
+		Priority  int    `json:"priority"`
+		Target    string `json:"target"`
+		Push      bool   `json:"push"`
+		PushTitle string `json:"push_title"`
 	}
 	if err := decode(r, &req); err != nil {
 		return bannerIn{}, err
@@ -501,7 +568,10 @@ func readBanner(r *http.Request) (bannerIn, error) {
 	if err1 != nil || err2 != nil || !end.After(start) {
 		return bannerIn{}, biz("展示时间不正确")
 	}
-	return bannerIn{req.Copy, start, end, req.Priority, req.Target}, nil
+	return bannerIn{
+		copy: req.Copy, start: start, end: end, priority: req.Priority, target: req.Target,
+		push: req.Push, pushTitle: strings.TrimSpace(req.PushTitle),
+	}, nil
 }
 
 func scanBanners(rows interface {

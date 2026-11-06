@@ -56,9 +56,6 @@ func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
 	if _, err := store.Exec(t.Context(), `UPDATE app_users SET wechat_openid=$1, phone=$2, apple_sub=$3 WHERE id=$4`, openID, phone, apple, idB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(t.Context(), `INSERT INTO paid_pools(user_id, subscription_remaining, pack_remaining) VALUES ($1,2,5),($2,3,7)`, idA, idB); err != nil {
-		t.Fatal(err)
-	}
 	later := time.Now().Add(30 * 24 * time.Hour).UTC()
 	sooner := time.Now().Add(10 * 24 * time.Hour).UTC()
 	var subA, subB int64
@@ -116,12 +113,12 @@ func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
 	assertNotMerged(t, store, idA, idB, readingB)
 
 	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	assertMergeOutcome(t, merged, idA, idB, 2, 2, 0, 5, 12, false)
+	assertMergeOutcome(t, merged, idA, idB, 2, 2, 0, false)
 	if merged["identity_prompt_required"] != true {
 		t.Fatalf("both emails should be retained for a client prompt: %#v", merged["retained_identities"])
 	}
 	againMerged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	if againMerged["reward_remaining"].(float64) != 2 || againMerged["paid_subscription_remaining"].(float64) != 5 {
+	if againMerged["reward_remaining"].(float64) != 2 {
 		t.Fatalf("second confirm changed balances: %#v", againMerged)
 	}
 	must(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
@@ -209,8 +206,8 @@ func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
 	if quota["reward_remaining"].(float64) != 2 || quota["daily_free_remaining"].(float64) != 2 || quota["daily_used_flags"].(float64) != 0 {
 		t.Fatalf("quota after merge: %#v", quota)
 	}
-	if quota["paid_subscription_remaining"].(float64) != 5 || quota["paid_pack_remaining"].(float64) != 12 || quota["subscription_prompt_required"] != false {
-		t.Fatalf("paid/subscription quota: %#v", quota)
+	if quota["subscription_prompt_required"] != false {
+		t.Fatalf("subscription quota: %#v", quota)
 	}
 	create(t, ts, tokenA, "/api/app/v1/readings", map[string]any{"question": "合并后再问", "type": "normal"})
 	quota = listOne(t, ts, tokenA, "/api/app/v1/quota")
@@ -535,7 +532,7 @@ func assertNotMerged(t *testing.T, store *Store, idA, idB, readingB int64) {
 	}
 }
 
-func assertMergeOutcome(t *testing.T, merged map[string]any, idA, idB int64, reward, dailyRemaining, dailyUsed, subRemain, packRemain int, subPrompt bool) {
+func assertMergeOutcome(t *testing.T, merged map[string]any, idA, idB int64, reward, dailyRemaining, dailyUsed int, subPrompt bool) {
 	t.Helper()
 	if merged["merged"] != true {
 		t.Fatalf("not merged: %#v", merged)
@@ -552,11 +549,9 @@ func assertMergeOutcome(t *testing.T, merged map[string]any, idA, idB int64, rew
 		t.Fatal("missing confirm_at")
 	}
 	checks := map[string]float64{
-		"reward_remaining":            float64(reward),
-		"daily_free_remaining":        float64(dailyRemaining),
-		"daily_used_flags":            float64(dailyUsed),
-		"paid_subscription_remaining": float64(subRemain),
-		"paid_pack_remaining":         float64(packRemain),
+		"reward_remaining":     float64(reward),
+		"daily_free_remaining": float64(dailyRemaining),
+		"daily_used_flags":     float64(dailyUsed),
 	}
 	for key, want := range checks {
 		got, ok := merged[key].(float64)

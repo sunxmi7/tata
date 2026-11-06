@@ -44,30 +44,24 @@ type mergeParties struct {
 }
 
 type mergeOutcome struct {
-	Merged                          bool         `json:"merged"`
-	Before                          mergeParties `json:"before"`
-	After                           mergeParties `json:"after"`
-	ConfirmAt                       time.Time    `json:"confirm_at"`
-	RewardBeforePrimary             int          `json:"reward_before_primary"`
-	RewardBeforeSecondary           int          `json:"reward_before_secondary"`
-	RewardRemaining                 int          `json:"reward_remaining"`
-	DailyFreeRemaining              int          `json:"daily_free_remaining"`
-	DailyUsedFlags                  int          `json:"daily_used_flags"`
-	DailySlotRemaining              int          `json:"daily_slot_remaining"`
-	DailySlotUsed                   int          `json:"daily_slot_used"`
-	PaidSubscriptionBeforePrimary   int          `json:"paid_subscription_before_primary"`
-	PaidSubscriptionBeforeSecondary int          `json:"paid_subscription_before_secondary"`
-	PaidPackBeforePrimary           int          `json:"paid_pack_before_primary"`
-	PaidPackBeforeSecondary         int          `json:"paid_pack_before_secondary"`
-	PaidSubscriptionRemaining       int          `json:"paid_subscription_remaining"`
-	PaidPackRemaining               int          `json:"paid_pack_remaining"`
-	ReadingsMoved                   int64        `json:"readings_moved"`
-	MessagesKept                    int64        `json:"messages_kept"`
-	SubscriptionResolution          string       `json:"subscription_resolution"`
-	SubscriptionPromptRequired      bool         `json:"subscription_prompt_required"`
-	SubscriptionWinnerID            int64        `json:"subscription_winner_id,omitempty"`
-	IdentityPromptRequired          bool         `json:"identity_prompt_required"`
-	RetainedIdentities              []string     `json:"retained_identities,omitempty"`
+	Merged                     bool         `json:"merged"`
+	Before                     mergeParties `json:"before"`
+	After                      mergeParties `json:"after"`
+	ConfirmAt                  time.Time    `json:"confirm_at"`
+	RewardBeforePrimary        int          `json:"reward_before_primary"`
+	RewardBeforeSecondary      int          `json:"reward_before_secondary"`
+	RewardRemaining            int          `json:"reward_remaining"`
+	DailyFreeRemaining         int          `json:"daily_free_remaining"`
+	DailyUsedFlags             int          `json:"daily_used_flags"`
+	DailySlotRemaining         int          `json:"daily_slot_remaining"`
+	DailySlotUsed              int          `json:"daily_slot_used"`
+	ReadingsMoved              int64        `json:"readings_moved"`
+	MessagesKept               int64        `json:"messages_kept"`
+	SubscriptionResolution     string       `json:"subscription_resolution"`
+	SubscriptionPromptRequired bool         `json:"subscription_prompt_required"`
+	SubscriptionWinnerID       int64        `json:"subscription_winner_id,omitempty"`
+	IdentityPromptRequired     bool         `json:"identity_prompt_required"`
+	RetainedIdentities         []string     `json:"retained_identities,omitempty"`
 }
 
 type subscriptionRow struct {
@@ -121,29 +115,6 @@ func consumeMergedDaily(ctx context.Context, ex execer, uid int64, cycle string)
 		return true, false, err
 	}
 	return true, tag.RowsAffected() == 1, nil
-}
-
-func lockDailyBalance(ctx context.Context, ex execer, uid int64, cycle string) (ok bool, remaining, slotRemaining int, err error) {
-	err = ex.QueryRow(ctx, `SELECT remaining, daily_slot_remaining FROM daily_free_balance WHERE user_id=$1 AND cycle=$2 FOR UPDATE`, uid, cycle).Scan(&remaining, &slotRemaining)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, 0, 0, nil
-	}
-	if err != nil {
-		return false, 0, 0, err
-	}
-	return true, remaining, slotRemaining, nil
-}
-
-func dailySlotTaken(ctx context.Context, ex execer, uid int64, cycle string) (bool, error) {
-	var id int64
-	err := ex.QueryRow(ctx, `SELECT reading_id FROM daily_slot WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindSpec) error {
@@ -449,10 +420,6 @@ func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutc
 	if err != nil {
 		return mergeOutcome{}, err
 	}
-	subP, packP, subS, packS, subAfter, packAfter, err := foldPaid(ctx, tx, primary, secondary)
-	if err != nil {
-		return mergeOutcome{}, err
-	}
 	if err := foldDiamonds(ctx, tx, primary, secondary); err != nil {
 		return mergeOutcome{}, err
 	}
@@ -483,9 +450,6 @@ func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutc
 		RewardBeforePrimary: rewardP, RewardBeforeSecondary: rewardS, RewardRemaining: rewardAfter,
 		DailyFreeRemaining: daily.remaining, DailyUsedFlags: daily.used,
 		DailySlotRemaining: daily.slotRemaining, DailySlotUsed: daily.slotUsed,
-		PaidSubscriptionBeforePrimary: subP, PaidSubscriptionBeforeSecondary: subS,
-		PaidPackBeforePrimary: packP, PaidPackBeforeSecondary: packS,
-		PaidSubscriptionRemaining: subAfter, PaidPackRemaining: packAfter,
 		ReadingsMoved: readingsMoved, MessagesKept: messagesAfter,
 		SubscriptionResolution: decision.Resolution, SubscriptionPromptRequired: decision.Prompt,
 		SubscriptionWinnerID:   decision.WinnerID,
@@ -670,37 +634,6 @@ func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
 	return err
 }
 
-func foldPaid(ctx context.Context, tx Tx, primary, secondary int64) (subP, packP, subS, packS, subAfter, packAfter int, err error) {
-	subP, packP, err = poolOf(ctx, tx, primary)
-	if err != nil {
-		return
-	}
-	subS, packS, err = poolOf(ctx, tx, secondary)
-	if err != nil {
-		return
-	}
-	subAfter = subP + subS
-	packAfter = packP + packS
-	_, err = tx.Exec(ctx, `INSERT INTO paid_pools(user_id, subscription_remaining, pack_remaining, updated_at)
-		VALUES ($1,$2,$3,now())
-		ON CONFLICT (user_id) DO UPDATE SET subscription_remaining=EXCLUDED.subscription_remaining, pack_remaining=EXCLUDED.pack_remaining, updated_at=now()`,
-		primary, subAfter, packAfter)
-	if err != nil {
-		return
-	}
-	_, err = tx.Exec(ctx, `DELETE FROM paid_pools WHERE user_id=$1`, secondary)
-	return
-}
-
-func poolOf(ctx context.Context, ex execer, uid int64) (int, int, error) {
-	var sub, pack int
-	err := ex.QueryRow(ctx, `SELECT subscription_remaining, pack_remaining FROM paid_pools WHERE user_id=$1`, uid).Scan(&sub, &pack)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, nil
-	}
-	return sub, pack, err
-}
-
 func foldSubscriptions(ctx context.Context, tx Tx, primary, secondary int64, now time.Time) (subscriptionDecision, error) {
 	if _, err := tx.Exec(ctx, `UPDATE subscriptions SET user_id=$1 WHERE user_id=$2`, primary, secondary); err != nil {
 		return subscriptionDecision{}, err
@@ -804,7 +737,6 @@ func foldDaily(ctx context.Context, tx Tx, primary, secondary int64, now time.Ti
 	cycles := map[string]struct{}{current: {}}
 	for _, q := range []string{
 		`SELECT cycle FROM quota_use WHERE user_id=$1`,
-		`SELECT cycle FROM daily_slot WHERE user_id=$1`,
 		`SELECT cycle FROM daily_free_balance WHERE user_id=$1`,
 	} {
 		for _, id := range []int64{primary, secondary} {
@@ -829,11 +761,6 @@ func foldDaily(ctx context.Context, tx Tx, primary, secondary int64, now time.Ti
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO daily_free_uses(user_id, cycle, reading_id, source_user_id, kind)
 		SELECT $1, cycle, reading_id, user_id, 'quota_use' FROM quota_use WHERE user_id IN ($2,$3)
-		ON CONFLICT DO NOTHING`, primary, primary, secondary); err != nil {
-		return dailyContrib{}, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO daily_free_uses(user_id, cycle, reading_id, source_user_id, kind)
-		SELECT $1, cycle, reading_id, user_id, 'daily_slot' FROM daily_slot WHERE user_id IN ($2,$3)
 		ON CONFLICT DO NOTHING`, primary, primary, secondary); err != nil {
 		return dailyContrib{}, err
 	}
@@ -867,9 +794,6 @@ func foldDaily(ctx context.Context, tx Tx, primary, secondary int64, now time.Ti
 	if _, err := tx.Exec(ctx, `DELETE FROM quota_use WHERE user_id IN ($1,$2)`, primary, secondary); err != nil {
 		return dailyContrib{}, err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM daily_slot WHERE user_id IN ($1,$2)`, primary, secondary); err != nil {
-		return dailyContrib{}, err
-	}
 	return currentOut, nil
 }
 
@@ -883,18 +807,12 @@ func loadDailyContrib(ctx context.Context, tx Tx, uid int64, cycle, current stri
 	if !errors.Is(err, sql.ErrNoRows) {
 		return c, err
 	}
-	var quotaN, slotN int
+	var quotaN int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM quota_use WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&quotaN); err != nil {
 		return c, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM daily_slot WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&slotN); err != nil {
-		return c, err
-	}
-	if quotaN > 0 || slotN > 0 {
+	if quotaN > 0 {
 		c.used = 1
-	}
-	if slotN > 0 {
-		c.slotUsed = 1
 	}
 	if cycle == current {
 		if c.used == 0 {

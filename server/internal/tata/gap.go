@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -412,6 +413,10 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 		a.clearPendingIdem(r, scope, idemKey)
 		return err
 	}
+	if err := enforceFollowupLimit(r.Context(), tx, id, turn); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
 	key := "followup:" + fmtID(turn)
 	decision, err := settleSharedQuota(r.Context(), tx, chargeOpts{
 		UserID: uid, ReadingID: id, ChargeKey: key, Cycle: a.userCycle(r, uid),
@@ -546,6 +551,51 @@ func (a *App) answerFollowup(ctx context.Context, readingID, uid, turn int64, te
 	return map[string]any{"turn_id": turn, "bubbles": bubbles, "cards_unchanged": true}, nil
 }
 
+// answerFollowupStreaming 与 answerFollowup 相同的生成与落库，但流式回调 onChunk 下发原始增量。
+// 全部收完后按空行切成不超过四个气泡落库，返回与非流式一致的 body。
+func (a *App) answerFollowupStreaming(ctx context.Context, readingID, uid, turn int64, text string, onChunk func(string) error) (map[string]any, error) {
+	var question string
+	var cards *string
+	var tarotistID *int64
+	if err := a.Store.QueryRow(ctx, `SELECT question, cards, tarotist_id FROM readings WHERE id=$1`, readingID).Scan(&question, &cards, &tarotistID); err != nil {
+		return nil, err
+	}
+	if cards == nil || *cards == "" {
+		return nil, biz("牌面尚未固定")
+	}
+	prompt := a.personaPrompt(ctx, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
+	_, _, output, err := a.runEinoStream(ctx, "tarotist", prompt, onChunk)
+	if err != nil {
+		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣次数或钻石", "cards_unchanged": true, "bubbles": []string{}}, nil
+	}
+	parts := strings.Split(output, "\n\n")
+	bubbles := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		bubbles = append(bubbles, part)
+		if len(bubbles) == 4 {
+			break
+		}
+	}
+	if len(bubbles) == 0 {
+		bubbles = []string{output}
+	}
+	var existing int
+	_ = a.Store.QueryRow(ctx, `SELECT count(*) FROM reading_messages WHERE reading_id=$1 AND turn_id=$2 AND role='assistant'`, readingID, turn).Scan(&existing)
+	if existing == 0 {
+		for i, bubble := range bubbles {
+			if _, err := a.Store.Exec(ctx, `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content) VALUES ($1,$2,$3,'assistant',$4)`, readingID, turn, i+1, bubble); err != nil {
+				return nil, err
+			}
+		}
+	}
+	_, _ = a.Store.Exec(ctx, `UPDATE readings SET updated_at=now() WHERE id=$1`, readingID)
+	return map[string]any{"turn_id": turn, "bubbles": bubbles, "cards_unchanged": true}, nil
+}
+
 func (a *App) personaPrompt(ctx context.Context, tarotistID *int64, uid int64) string {
 	persona, voice, banned, ask, name := "", "", "", "", ""
 	if tarotistID != nil {
@@ -609,11 +659,19 @@ func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
 		return biz("登录后才能看日历")
 	}
 	month := r.URL.Query().Get("month")
+	typ := r.URL.Query().Get("type")
+	if typ != "" && typ != "normal" && typ != "tarotist" && typ != "explore" && typ != "daily" {
+		return biz("type 不正确")
+	}
 	q := `SELECT id, type, question, status, business_date, updated_at FROM readings WHERE user_id=$1 AND deleted_at IS NULL AND business_date<>''`
 	args := []any{uid}
 	if month != "" {
-		q += ` AND business_date LIKE $2`
+		q += ` AND business_date LIKE $` + strconv.Itoa(len(args)+1)
 		args = append(args, month+"%")
+	}
+	if typ != "" {
+		q += ` AND type=$` + strconv.Itoa(len(args)+1)
+		args = append(args, typ)
 	}
 	q += ` ORDER BY business_date, id`
 	rows, err := a.Store.Query(r.Context(), q, args...)

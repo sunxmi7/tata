@@ -17,6 +17,12 @@ const routes: RouteRecordRaw[] = [
         meta: { icon: 'lucide:layers', title: '牌阵' },
       },
       {
+        name: 'TataDeck',
+        path: 'deck',
+        component: () => import('#/views/tata/deck/index.vue'),
+        meta: { icon: 'lucide:layout-grid', title: '牌面' },
+      },
+      {
         name: 'TataTarotist',
         path: 'tarotist',
         component: () => import('#/views/tata/tarotist/index.vue'),
@@ -39,6 +45,12 @@ const routes: RouteRecordRaw[] = [
         path: 'quota',
         component: () => import('#/views/tata/quota/index.vue'),
         meta: { icon: 'lucide:calendar-clock', title: '额度参数' },
+      },
+      {
+        name: 'TataCopy',
+        path: 'copy',
+        component: () => import('#/views/tata/copy/index.vue'),
+        meta: { icon: 'lucide:file-text', title: '运营文案' },
       },
       {
         name: 'TataBanner',
@@ -93,6 +105,12 @@ const routes: RouteRecordRaw[] = [
         path: 'iap-orders',
         component: () => import('#/views/tata/iap-order/index.vue'),
         meta: { icon: 'lucide:receipt-text', title: 'IAP 订单' },
+      },
+      {
+        name: 'TataIAPSkus',
+        path: 'iap-skus',
+        component: () => import('#/views/tata/iap-sku/index.vue'),
+        meta: { icon: 'lucide:tag', title: '价位' },
       },
       {
         name: 'TataGrant',

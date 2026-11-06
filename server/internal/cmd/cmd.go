@@ -19,6 +19,19 @@ var Main = gcmd.Command{
 			return err
 		}
 		app := &tata.App{Store: store, JWTSecret: []byte("tata-demo-jwt-secret-change-me")}
+		app.Push = tata.NewPusher(tata.PushConfig{
+			AppID:        g.Cfg().MustGet(ctx, "getui.appId").String(),
+			AppKey:       g.Cfg().MustGet(ctx, "getui.appKey").String(),
+			AppSecret:    g.Cfg().MustGet(ctx, "getui.appSecret").String(),
+			MasterSecret: g.Cfg().MustGet(ctx, "getui.masterSecret").String(),
+			BaseURL:      g.Cfg().MustGet(ctx, "getui.baseUrl").String(),
+			Enabled:      g.Cfg().MustGet(ctx, "getui.enabled").Bool(),
+		})
+		if app.Push.Ready() {
+			g.Log().Info(ctx, "getui push enabled")
+		} else {
+			g.Log().Info(ctx, "getui push disabled (unconfigured); only in-app messages stored")
+		}
 		if _, err = g.Redis().Do(ctx, "PING"); err != nil {
 			g.Log().Warningf(ctx, "redis unavailable, generation lock falls back to database: %v", err)
 		} else {

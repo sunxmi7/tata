@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -68,6 +69,7 @@ func (a *App) demoOpenAI(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(d)
 	}
 	var req struct {
+		Stream   bool `json:"stream"`
 		Messages []struct {
 			Content string `json:"content"`
 		} `json:"messages"`
@@ -78,7 +80,46 @@ func (a *App) demoOpenAI(w http.ResponseWriter, r *http.Request) {
 		content = req.Messages[len(req.Messages)-1].Content
 	}
 	reply := "【演示解读】牌面由业务固定，这里只解读，不改牌。\n" + content
+	if req.Stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for _, piece := range chunkRunes(reply, 24) {
+			evt := map[string]any{
+				"object":  "chat.completion.chunk",
+				"choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": piece}}},
+			}
+			b, _ := json.Marshal(evt)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": reply}}},
 	})
+}
+
+// chunkRunes 把文本按 rune 切成每段至多 n 个字符，供演示流式分片下发。
+func chunkRunes(s string, n int) []string {
+	runes := []rune(s)
+	var out []string
+	for i := 0; i < len(runes); i += n {
+		end := i + n
+		if end > len(runes) {
+			end = len(runes)
+		}
+		out = append(out, string(runes[i:end]))
+	}
+	if len(out) == 0 {
+		out = []string{""}
+	}
+	return out
 }

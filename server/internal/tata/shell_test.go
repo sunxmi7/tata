@@ -26,8 +26,13 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	}
 	display, _ := profile["account_display"].(string)
 	email, _ := profile["email"].(string)
-	if display == "" || display == phone || !strings.Contains(display, "***@") || strings.Contains(display, phone) {
-		t.Fatalf("account_display should be masked email, got %#v phone=%s email=%s", profile["account_display"], phone, email)
+	wantPhone := maskPhone(phone)
+	if display != wantPhone || display == phone || strings.Contains(display, email) {
+		t.Fatalf("account_display should be masked phone, got %#v phone=%s email=%s", profile["account_display"], phone, email)
+	}
+	publicID, _ := profile["public_id"].(string)
+	if len(publicID) != 6 {
+		t.Fatalf("public_id: %#v", profile["public_id"])
 	}
 	must(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{
 		"name": "塔塔", "bio": "爱抽牌", "avatar_url": "https://cdn.example/avatar.png",
@@ -162,8 +167,12 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 		if sku["display_label"] != displayLabelTataCoin || sku["unit"] != "diamond" {
 			t.Fatalf("sku label: %#v", sku)
 		}
-		if sku["price_amount_minor"] != nil {
-			t.Fatalf("sku invented price: %#v", sku)
+		code, _ := sku["code"].(string)
+		if code == "sub_month" && sku["price_amount_minor"].(float64) != 3900 {
+			t.Fatalf("month price: %#v", sku)
+		}
+		if code == "pack_60" && sku["app_store_product_id"] != "tata.coin.60" {
+			t.Fatalf("apple id: %#v", sku)
 		}
 	}
 

@@ -290,6 +290,45 @@ func loadDiamondCost(ctx context.Context, ex execer) (int, bool, error) {
 	return int(cost.Int64), true, nil
 }
 
+func loadFollowupLimit(ctx context.Context, ex execer) (int, bool, error) {
+	var limit sql.NullInt64
+	err := ex.QueryRow(ctx, `SELECT followup_limit FROM quota_settings WHERE id=1`).Scan(&limit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !limit.Valid || limit.Int64 <= 0 {
+		return 0, false, nil
+	}
+	return int(limit.Int64), true, nil
+}
+
+// enforceFollowupLimit caps new follow-up turns on a reading.
+// reading_messages only stores follow-ups; the original question is readings.question.
+func enforceFollowupLimit(ctx context.Context, ex execer, readingID, turn int64) error {
+	limit, ok, err := loadFollowupLimit(ctx, ex)
+	if err != nil || !ok {
+		return err
+	}
+	var have int
+	if err := ex.QueryRow(ctx, `SELECT count(*) FROM reading_messages WHERE reading_id=$1 AND turn_id=$2 AND role='user'`, readingID, turn).Scan(&have); err != nil {
+		return err
+	}
+	if have > 0 {
+		return nil
+	}
+	var used int
+	if err := ex.QueryRow(ctx, `SELECT count(DISTINCT turn_id) FROM reading_messages WHERE reading_id=$1 AND role='user'`, readingID).Scan(&used); err != nil {
+		return err
+	}
+	if used >= limit {
+		return biz("本条解读追问已达上限")
+	}
+	return nil
+}
+
 // spendDiamonds debits pack first, then subscription. It never splits one charge
 // across the two buckets and never invents a cost.
 func spendDiamonds(ctx context.Context, tx Tx, uid int64, cost int) (bucket string, after int, ok bool, err error) {

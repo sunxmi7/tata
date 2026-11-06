@@ -2,6 +2,9 @@
 # 完整契约（含管理端）见 docs/openapi.yaml。
 # 系统路径（/health、/demo、/admin）未收入，是否给 App 导入待确认。
 # 服务地址默认 http://127.0.0.1:8080。App 接口选 AppBearer。
+# 分组口径（2026-11-06）：tag 已按 Pixso 定稿「手机界面」总览（节点 619:7）的 UI 模块划分，
+#   导入 Apifox 后文件夹=UI 模块。共用接口（如 /quota、/uploads）挂到多个模块下。
+#   月度报告/年度运势已补只读接口；语言/关于塔塔 仍无专用 path。
 # 说明同时见 docs/README.md。
 openapi: 3.0.3
 info:
@@ -32,10 +35,10 @@ info:
     语言偏好**不上云**（无 `profile.locale`）。客户端本地保存；需要服务端本地化文案的 App 接口应携带 **`Accept-Language`**（推荐 `zh-Hans`、`zh-Hant`、`en`、`ja`、`ko`），亦可传项目约定的 **`X-Language`**（同名语义）。未带头或无法识别时按 **`zh-Hans`**。服务端在请求上下文中解析该头（`AppLanguageFromContext`），**本轮不改变**既有业务响应文案；后续 help/campaign 等多语言再读该值。
 
     ## 未配置的价格、验单与占位
-    - 种子 SKU（`sub_month`、`sub_year`、`pack_consumable`）的 `price_amount_minor`、`price_currency`、`diamond_grant`、商店商品号、`period_count` 保持 null。接口不编造价格或钻石数。
-    - `POST /api/app/v1/iap/verify` 与 restore **不调用** App Store / Google Play。只保存票据的 SHA-256，按 `product_id` 映射 `iap_skus`。`diamond_grant` 为 null 时 `credit_status=amount_unconfigured`，不写钻石流水。
+    - 种子 SKU（`sub_month`、`sub_year`、`sub_times`、`pack_consumable`）的 `price_amount_minor`、`price_currency`、`diamond_grant`、`reading_grant`、商店商品号、`period_count` 保持 null。接口不编造价格、钻石数或次卡次数。
+    - `POST /api/app/v1/iap/verify` 与 restore **不调用** App Store / Google Play。只保存票据的 SHA-256，按 `product_id` 映射 `iap_skus`。发放量为 null 时 `credit_status=amount_unconfigured`，不写入账。
     - `quota_settings.diamond_cost` 默认为 null。未配置时扣费走到钻石步会停住：`quota_outcome=diamond_cost_unconfigured`，不猜测单次消耗。
-    - `paid_pools` 只是合并用的次数占位，不是 IAP 入账目标，响应里不出现价格。
+    - IAP 入账只写钻石账本与次卡次数（rewards.admin_grant_remaining），不写次数占位表。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
     - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心正文固定为「待确认」。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
     - 活动列表与帮助中心的「加载失败，请重试」是客户端在请求失败后的状态，重试同一 GET。服务端沿用现有 `code=1` 包络，不另开错误体。
@@ -43,34 +46,54 @@ servers:
   - url: http://127.0.0.1:8080
     description: 本机默认（server.address = :8080）
 tags:
-  - name: 登录绑定
-    description: App 登录、绑定、合并确认、注销。除绑定 / 合并 / 注销外不需要 Bearer。
-  - name: 用户档案
-    description: 登录用户档案。匿名令牌会得到「匿名用户没有档案」。
-  - name: 占卜解读
-    description: 占卜记录与仪式流程（检测、牌阵、洗牌、切牌、抽牌、解读、追问、工作流）。
-  - name: 额度钻石
-    description: 次数与钻石的查询、确认和付费等待。优先级见各接口说明。
-  - name: 内购
-    description: App 内购验单、恢复、余额与 SKU。价格与发放数量未配置时保持 null。
-  - name: 每日一牌
-    description: 今日 / 明日一牌与日历。
+  - name: 登录注册
+    description: 匿名进入、邮箱注册/登录、微信/苹果第三方登录。除匿名外签发 aud=app 的 access JWT，不签发 refresh。登录/注册多步 UI 为 Q-N1 后置，接口钩子已就绪。
+  - name: 首页
+    description: 首页聚合壳：提示窗、塔罗师、牌阵目录、额度与今日一牌。开始抽牌入口走「抽牌」分组。
   - name: 探索
-    description: 探索目录分组与主题条目。spread 映射可为空 stub。
-  - name: 钱包兑换
-    description: 兑换码核销、兑换记录与钻石（展示名「塔塔币」）流水。不另开第二套账本。兑换记录行字段仍待确认。
-  - name: 活动
-    description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
-  - name: 帮助
-    description: 帮助中心分类、搜索与问题详情。正文为「待确认」，不编写额度、退款或会员规则。
-  - name: 反馈心愿
-    description: 图片上传、功能心愿单与意见反馈。
+    description: 探索目录分组与主题条目。点进后开局复用「抽牌」的 POST /readings（映射 Q-C7）。
+  - name: 我的中心
+    description: 我的页聚合入口（头像资料、塔塔币余额）。无独立 path，复用档案/额度/余额读接口。
+  - name: 抽牌
+    description: 占卜全流程状态机：创建、问题检测、选阵、洗牌、切牌、抽牌、解读、追问、工作流，以及抽牌链路内的额度确认/付费等待。
+  - name: 牌阵界面
+    description: 牌阵目录与阵位、选阵与抽牌。阵位布局对照 Spread.positions。
+  - name: 历史记录
+    description: 我的占卜列表、详情、删除与追问消息。
+  - name: 日历记录
+    description: 今日/明日一牌与日历月视图。
+  - name: 塔塔币购买
+    description: 塔塔币（钻石）内购：SKU、验单、恢复购买、余额、流水与开关。价格/发放量未配置时为 null。
+  - name: 会员中心
+    description: 会员订阅权益与 SKU、验单、付费墙。权益文案 Q-C3、正式价 Q-B13 待拍。
+  - name: 兑换码
+    description: 兑换码核销与兑换记录。记录行字段 fields_confirmed=false，不编造记录。
+  - name: 参与活动
+    description: 参与活动列表、详情、参与记录与奖励记录。详情/记录为占位，不编造奖励。
+  - name: 月度报告
+    description: 按月汇总探索次数、陪伴天数、关注主题与寄语（寄语截取自当月已完成解读，不编造）。支持保存月报。
+  - name: 年度运势
+    description: 年运解锁卖点已对齐。年卡免费解锁；单独购买价取已启用 yearly_unlock SKU（种子 ¥28.8）。正文四段取 app_config，空则 content_status=pending。解锁后十二宫/四季抽牌与生成流程尚未对齐。
+  - name: 功能心愿单
+    description: 提交功能心愿（含图片上传）。
+  - name: 帮助中心
+    description: 帮助分类、文章列表与搜索、文章详情。正文种子为「待确认」。
+  - name: 反馈意见
+    description: 提交意见反馈（含图片上传）。
   - name: 通知设置
-    description: 通知偏好。系统推送授权只在客户端。推送 token 注册未做。
+    description: 通知偏好读写、推送设备注册与消息中心（站内信）。今日/明日抽牌为 App 本地通知；优惠/活动等消息类走个推服务端下发（2026-11-06 重启 Q-B1）。系统推送授权仍只在客户端。
+  - name: 账号
+    description: 登录用户档案读写、第三方/邮箱/手机绑定、合并确认与注销。删号 UI Q-B7 搁置，接口保留。
+  - name: 语言
+    description: 语言偏好不上云（Q-B2）。无 profile.locale，客户端本地保存，请求携带 Accept-Language / X-Language。
+  - name: 关于塔塔
+    description: 版本、协议、分享、检查更新等由客户端与静态资源承载，无专用 App 接口。
+  - name: 我的小组件
+    description: 桌面/锁屏小组件。首版纯客户端渲染（Q-B14），内容复用今日一牌 POST /daily，不单开同步 path。
 paths:
   /api/app/v1/auth/anonymous:
     post:
-      tags: [登录绑定]
+      tags: [登录注册]
       operationId: appAnonymous
       summary: 匿名进入
       description: 不需要令牌，也不读取请求体。签发 aud=app、sub=0 的 access JWT。不签发 refresh。
@@ -85,7 +108,7 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
   /api/app/v1/auth/register:
     post:
-      tags: [登录绑定]
+      tags: [登录注册]
       operationId: appRegister
       summary: 邮箱注册
       description: |
@@ -116,7 +139,7 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
   /api/app/v1/auth/login:
     post:
-      tags: [登录绑定]
+      tags: [登录注册]
       operationId: appLogin
       summary: 邮箱登录
       description: |
@@ -144,7 +167,7 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
   /api/app/v1/auth/wechat:
     post:
-      tags: [登录绑定]
+      tags: [登录注册]
       operationId: appWechat
       summary: 微信身份登录
       description: |
@@ -173,7 +196,7 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
   /api/app/v1/auth/apple:
     post:
-      tags: [登录绑定]
+      tags: [登录注册]
       operationId: appApple
       summary: 苹果身份登录
       description: |
@@ -201,7 +224,7 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
   /api/app/v1/auth/bind-wechat:
     post:
-      tags: [登录绑定]
+      tags: [账号]
       operationId: appBindWechat
       summary: 绑定微信
       security:
@@ -230,7 +253,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/auth/bind-apple:
     post:
-      tags: [登录绑定]
+      tags: [账号]
       operationId: appBindApple
       summary: 绑定苹果
       security:
@@ -256,7 +279,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/auth/bind-email:
     post:
-      tags: [登录绑定]
+      tags: [账号]
       operationId: appBindEmail
       summary: 绑定邮箱
       security:
@@ -284,7 +307,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/auth/bind-phone:
     post:
-      tags: [登录绑定]
+      tags: [账号]
       operationId: appBindPhone
       summary: 绑定手机号
       security:
@@ -310,15 +333,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/auth/merge-confirm:
     post:
-      tags: [登录绑定]
+      tags: [账号]
       operationId: appMergeConfirm
       summary: 确认账号合并
       security:
         - AppBearer: []
       description: |
         只有发起绑定的主账号可以确认。confirm=false 不会合并。
-        成功后次账号标记 merged_into，占卜、消息、注册奖励、人工补发次数、今日免费、paid_pools 占位次数和钻石余额并入主账号。
-        钻石加总不在响应里返回数字；paid_* 仍是占位次数，没有价格。订阅到期相同且多于一条时 subscription_resolution=prompt_required。
+        成功后次账号标记 merged_into，占卜、消息、注册奖励、人工补发次数、今日免费和钻石余额并入主账号。
+        钻石加总不在响应里返回数字。订阅到期相同且多于一条时 subscription_resolution=prompt_required。
         已经合并的请求会重放当时保存的结果。
       requestBody:
         required: true
@@ -344,7 +367,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/auth/cancel:
     post:
-      tags: [登录绑定]
+      tags: [账号]
       operationId: appCancel
       summary: 注销账号
       security:
@@ -365,7 +388,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/profile:
     get:
-      tags: [用户档案]
+      tags: [账号, 我的中心]
       operationId: appGetProfile
       summary: 读取档案
       security:
@@ -387,12 +410,12 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
-      tags: [用户档案]
+      tags: [账号]
       operationId: appPutProfile
       summary: 更新档案
       security:
         - AppBearer: []
-      description: 更新非空的 birth_date、gender、timezone、name、bio、avatar_url。账号主展示见 GET 的 account_display（邮箱脱敏，不用手机号）。
+      description: 更新非空的 birth_date、gender、timezone、name、bio、avatar_url。账号主展示见 GET 的 account_display（优先脱敏手机号，否则脱敏邮箱）与 public_id。
       requestBody:
         required: true
         content:
@@ -412,7 +435,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/spreads:
     get:
-      tags: [占卜解读]
+      tags: [首页, 抽牌, 牌阵界面]
       operationId: appListSpreads
       summary: 可用牌阵
       security:
@@ -436,7 +459,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/banners:
     get:
-      tags: [占卜解读]
+      tags: [首页]
       operationId: appListBanners
       summary: 当前首页提示窗
       security:
@@ -460,7 +483,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/tarotists:
     get:
-      tags: [占卜解读]
+      tags: [首页, 抽牌]
       operationId: appListTarotists
       summary: 可用塔罗师
       security:
@@ -484,7 +507,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/quota:
     get:
-      tags: [额度钻石]
+      tags: [首页, 我的中心, 塔塔币购买]
       operationId: appQuota
       summary: 当前额度
       security:
@@ -492,6 +515,7 @@ paths:
       description: |
         匿名用户仍返回结构，次数与钻石为 0，daily_free_used=false。
         diamond_cost 未配置时为 null，diamond_cost_configured=false。
+        followup_limit 为每条解读可追问次数，种子默认 5，null 不限制。
         display_label 为「塔塔币」（展示名）；paid_label 仍为「钻石」。balance 为两桶合计。
       responses:
         '200':
@@ -509,23 +533,53 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings:
     get:
-      tags: [占卜解读]
+      tags: [历史记录]
       operationId: appListReadings
       summary: 我的占卜列表
       security:
         - AppBearer: []
-      description: 登录用户按 user_id，匿名按 anonymous_id。不含已删除。按 updated_at 降序，无分页参数。
+      description: |
+        登录用户按 user_id，匿名按 anonymous_id。不含已删除。按 id 降序（比 updated_at 翻页更稳）。
+        游标分页：limit 默认 20、上限 100；用上一页的 next_cursor 作为下一页的 before_id。可按 type 过滤。
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          description: 每页条数。空或非法用 20，超过 100 截到 100。
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: 游标：只返回 id 小于该值的记录。首页省略。非正数返回「before_id 不正确」。
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [normal, tarotist, explore, daily]
+          description: 按占卜类型过滤。非法值返回「type 不正确」。
       responses:
         '200':
-          description: data 为 Reading 数组。
+          description: data 为分页对象 ReadingPage。
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReadingListOK'
+                allOf:
+                  - $ref: '#/components/schemas/SuccessMeta'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ReadingPage'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appCreateReading
       summary: 创建占卜
       security:
@@ -556,7 +610,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}:
     get:
-      tags: [占卜解读]
+      tags: [历史记录, 抽牌]
       operationId: appGetReading
       summary: 占卜详情
       security:
@@ -575,7 +629,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     delete:
-      tags: [占卜解读]
+      tags: [历史记录]
       operationId: appDeleteReading
       summary: 删除占卜
       security:
@@ -596,7 +650,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/question:
     put:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appEditQuestion
       summary: 修改问题
       security:
@@ -625,7 +679,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/detect:
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appDetect
       summary: 问题检测
       security:
@@ -654,7 +708,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/spread:
     post:
-      tags: [占卜解读]
+      tags: [牌阵界面, 抽牌]
       operationId: appSelectSpread
       summary: 选择牌阵
       security:
@@ -681,7 +735,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/shuffle:
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appShuffle
       summary: 洗牌
       security:
@@ -705,7 +759,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/cut:
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appCut
       summary: 切牌
       security:
@@ -726,14 +780,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/draw:
     post:
-      tags: [占卜解读]
+      tags: [抽牌, 牌阵界面]
       operationId: appDraw
       summary: 抽牌
       security:
         - AppBearer: []
       description: |
         登录用户先过 play 额度门槛。状态须为 SPREAD_SELECTED 或 CUTTING。
-        SHUFFLING 会提示先切牌。mode 只接受 normal。牌面由服务端固定，客户端不能指定牌。
+        SHUFFLING 会提示先切牌。mode 为 normal（随机）或 numerology（灵数 1–78 不重复、个数=牌位数，映射 Rider-Waite 顺序，正位）。
         成功后状态 CARDS_FIXED。
       parameters:
         - $ref: '#/components/parameters/PathId'
@@ -757,7 +811,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/interpret:
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appInterpret
       summary: 生成解读
       security:
@@ -780,9 +834,38 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/readings/{id}/interpret/stream:
+    post:
+      tags: [抽牌]
+      operationId: appInterpretStream
+      summary: 生成解读（SSE 流式）
+      security:
+        - AppBearer: []
+      description: |
+        与 interpret 相同的额度门槛与落库，但以 SSE 逐段下发，供打字机效果。无请求体。
+        额度拦截发生在切换到流之前，仍返回普通 JSON 的 QuotaBlockEnvelope（Content-Type application/json）。
+        通过后 Content-Type 为 text/event-stream，事件：
+        - `delta`：`data: {"text":"增量片段"}`，多次。
+        - `done`：`data: {"reading": Reading}`，解读已 COMPLETED 并落库。
+        - `error`：`data: {"message":"..."}`，生成失败（已置 FAILED_RETRYABLE，未重新扣费）。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 成功为 text/event-stream 事件流；额度拦截为 application/json 的 QuotaBlockEnvelope。
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "SSE 事件流：每个事件形如 event 行 + data 行（JSON），空行分隔。"
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaBlockEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/confirm-quota:
     post:
-      tags: [额度钻石]
+      tags: [抽牌]
       operationId: appConfirmQuota
       summary: 确认是否扣额度
       security:
@@ -818,7 +901,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/use-reward:
     post:
-      tags: [额度钻石]
+      tags: [抽牌]
       operationId: appUseReward
       summary: 按共享优先级扣一次
       security:
@@ -848,7 +931,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/paywall:
     post:
-      tags: [额度钻石]
+      tags: [会员中心, 抽牌]
       operationId: appPaywall
       summary: 取消或继续付费等待
       security:
@@ -882,7 +965,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/followups:
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appFollowup
       summary: 追问
       security:
@@ -891,6 +974,7 @@ paths:
         continuation 必填。false 时新建 normal 占卜。
         true 时记录类型须为 normal、explore、daily、tarotist，且解读已完成、牌面已固定。
         匿名用户在延续追问时被拒绝。登录后按 followup:{turn} 扣费，不够则 QuotaBlockEnvelope，并把追问文本记在 resume_payload。
+        每条解读追问次数受 quota_settings.followup_limit 限制（种子 5，null 不限制）；超限返回「本条解读追问已达上限」。
         含「别这样说」或「不舒服」会关掉照野调侃。模型失败不重复扣费。气泡最多 4 条。
       parameters:
         - $ref: '#/components/parameters/PathId'
@@ -918,9 +1002,43 @@ paths:
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/readings/{id}/followups/stream:
+    post:
+      tags: [抽牌]
+      operationId: appFollowupStream
+      summary: 追问（SSE 流式）
+      security:
+        - AppBearer: []
+      description: |
+        仅支持延续追问（continuation 必须为 true；新建占卜请用非流式 followups）。
+        额度/轮次/扣费与非流式一致；额度拦截在切换到流之前，返回普通 JSON 的 QuotaBlockEnvelope。
+        通过后 Content-Type 为 text/event-stream，事件：
+        - `delta`：`data: {"text":"增量片段"}`，多次。
+        - `done`：`data: {"followup": FollowupOKData}`，气泡已落库。
+        - `error`：`data: {"message":"..."}`。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowupBody'
+      responses:
+        '200':
+          description: 成功为 text/event-stream 事件流；额度拦截为 application/json 的 QuotaBlockEnvelope。
+          content:
+            text/event-stream:
+              schema:
+                type: string
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaBlockEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/messages:
     get:
-      tags: [占卜解读]
+      tags: [历史记录, 抽牌]
       operationId: appMessages
       summary: 追问消息
       security:
@@ -946,7 +1064,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/workflow:
     post:
-      tags: [占卜解读]
+      tags: [抽牌]
       operationId: appWorkflow
       summary: 按步骤跑工作流
       security:
@@ -981,7 +1099,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/daily:
     post:
-      tags: [每日一牌]
+      tags: [首页, 日历记录, 我的小组件]
       operationId: appDaily
       summary: 今日或明日一牌
       security:
@@ -990,7 +1108,7 @@ paths:
         必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
         否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置或钻石不足为 QuotaBlockEnvelope。
         扣费成功后抽一张牌并生成解读。生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
-        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（可空）、target、business_date、has_result。不编造宜忌文案。
+        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、has_result。不编造宜忌文案。
       requestBody:
         required: true
         content:
@@ -1012,13 +1130,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/calendar:
     get:
-      tags: [每日一牌]
+      tags: [日历记录]
       operationId: appCalendar
       summary: 日历
       security:
         - AppBearer: []
       description: 必须登录。data 为 {days, cycle, tomorrow_date}。days 只含未删除且 business_date 非空的记录。month 按前缀匹配，例如
-        2026-10。tomorrow_date 供首页明日运势预览。
+        2026-10。type 可按 normal/tarotist/explore/daily 过滤。tomorrow_date 供首页明日运势预览。
       parameters:
         - name: month
           in: query
@@ -1026,6 +1144,12 @@ paths:
           schema:
             type: string
             example: 2026-10
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [normal, tarotist, explore, daily]
       responses:
         '200':
           description: data 为日历条目，含 progress 与 continue。
@@ -1042,7 +1166,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/iap/verify:
     post:
-      tags: [内购]
+      tags: [塔塔币购买, 会员中心]
       operationId: appIAPVerify
       summary: 验单并入账钻石
       security:
@@ -1078,7 +1202,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/iap/restore:
     post:
-      tags: [内购]
+      tags: [塔塔币购买]
       operationId: appIAPRestore
       summary: 恢复购买
       security:
@@ -1123,7 +1247,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/iap/entitlements:
     get:
-      tags: [内购]
+      tags: [塔塔币购买, 会员中心, 我的中心]
       operationId: appIAPEntitlements
       summary: 钻石余额
       security:
@@ -1147,13 +1271,21 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/iap/skus:
     get:
-      tags: [内购]
+      tags: [塔塔币购买, 会员中心]
       operationId: appIAPSKUs
       summary: 已启用的 SKU
       security:
         - AppBearer: []
-      description: 只返回 enabled=true。种子商品的价格、货币、发放量和商店商品号为 null。每条含 display_label=塔塔币、unit=diamond。不把设计示例价写入
-        SKU。
+      description: |
+        只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、reading_pack、consumable_pack、yearly_unlock。
+        种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
       responses:
         '200':
           description: data 为 IAPSKU 数组。
@@ -1172,7 +1304,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/iap/config:
     get:
-      tags: [内购]
+      tags: [塔塔币购买]
       operationId: appIAPConfig
       summary: 恢复购买开关
       security:
@@ -1215,7 +1347,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/redeem:
     post:
-      tags: [钱包兑换]
+      tags: [兑换码]
       operationId: appRedeem
       summary: 兑换码核销
       security:
@@ -1247,7 +1379,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/wallet/ledger:
     get:
-      tags: [钱包兑换]
+      tags: [塔塔币购买]
       operationId: appWalletLedger
       summary: 钻石余额流水
       security:
@@ -1271,7 +1403,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/uploads:
     post:
-      tags: [反馈心愿]
+      tags: [功能心愿单, 反馈意见]
       operationId: appUploads
       summary: 上传图片
       security:
@@ -1309,9 +1441,9 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /uploads/{name}:
     get:
-      tags: [反馈心愿]
+      tags: [功能心愿单, 反馈意见]
       operationId: serveUpload
-      summary: 读取已上传图片
+      summary: 读取已上传图片或内置默认牌背（name=card-default.png）
       parameters:
         - name: name
           in: path
@@ -1325,7 +1457,7 @@ paths:
           description: 文件不存在或文件名不合法。
   /api/app/v1/wishlist:
     post:
-      tags: [反馈心愿]
+      tags: [功能心愿单]
       operationId: appWishlist
       summary: 提交功能心愿
       security:
@@ -1355,7 +1487,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/feedback:
     post:
-      tags: [反馈心愿]
+      tags: [反馈意见]
       operationId: appFeedback
       summary: 提交反馈意见
       security:
@@ -1438,7 +1570,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/redeem/records:
     get:
-      tags: [钱包兑换]
+      tags: [兑换码]
       operationId: appRedeemRecords
       summary: 兑换记录
       security:
@@ -1465,7 +1597,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/campaigns:
     get:
-      tags: [活动]
+      tags: [参与活动]
       operationId: appCampaigns
       summary: 参与活动列表
       security:
@@ -1493,7 +1625,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/campaigns/participations:
     get:
-      tags: [活动]
+      tags: [参与活动]
       operationId: appCampaignParticipations
       summary: 参与记录
       security:
@@ -1517,7 +1649,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/campaigns/rewards:
     get:
-      tags: [活动]
+      tags: [参与活动]
       operationId: appCampaignRewards
       summary: 奖励记录
       security:
@@ -1541,7 +1673,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/campaigns/{id}:
     get:
-      tags: [活动]
+      tags: [参与活动]
       operationId: appCampaign
       summary: 活动详情
       security:
@@ -1574,7 +1706,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/help/categories:
     get:
-      tags: [帮助]
+      tags: [帮助中心]
       operationId: appHelpCategories
       summary: 帮助中心分类
       security:
@@ -1598,7 +1730,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/help/articles:
     get:
-      tags: [帮助]
+      tags: [帮助中心]
       operationId: appHelpArticles
       summary: 帮助文章列表与搜索
       security:
@@ -1639,7 +1771,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/help/articles/{id}:
     get:
-      tags: [帮助]
+      tags: [帮助中心]
       operationId: appHelpArticle
       summary: 帮助文章详情
       security:
@@ -1668,6 +1800,258 @@ paths:
                         properties:
                           data:
                             $ref: '#/components/schemas/HelpArticle'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/push/register:
+    post:
+      tags: [通知设置]
+      operationId: appRegisterPush
+      summary: 注册推送设备
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。上报个推 CID 与平台，按 (user_id, cid) 幂等 upsert。
+        今日/明日抽牌提醒走 App 本地通知，不经此接口；此处仅用于优惠/活动等消息类的服务端下发（个推）。
+        cid 为空返回「缺少推送 CID」；platform 只接受 ''/ios/android。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushRegisterBody'
+      responses:
+        '200':
+          description: 成功返回登记的 cid/platform/enabled。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/PushDevice'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/messages:
+    get:
+      tags: [通知设置]
+      operationId: appListInbox
+      summary: 消息中心（站内信）
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。返回广播（audience=all）与定向给本人的消息，按时间倒序，最多 100 条。
+        每条带 read 标记，unread_count 为未读数。优惠/活动的服务端推送会在此留底，可回看。
+        定稿 UI 暂无消息中心入口，本接口先行落底；客户端可暂不展示。
+      responses:
+        '200':
+          description: data 为 InboxList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/InboxList'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/messages/{id}/read:
+    post:
+      tags: [通知设置]
+      operationId: appReadMessage
+      summary: 标记消息已读
+      security:
+        - AppBearer: []
+      description: 必须登录。消息不存在或既非广播也非本人定向时返回「消息不存在」。重复标记无副作用。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BoolOK'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/monthly-reports:
+    get:
+      tags: [月度报告, 我的中心]
+      operationId: appMonthlyReports
+      summary: 月度报告
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。month 缺省为用户时区当前月。未来月份拒绝。
+        统计来自该月 readings：探索次数、陪伴天数、关注主题（问题命中探索主题标题）。
+        寄语截取当月已完成解读，无则 quote_status=pending，不编造。无记录时 status=empty。
+      parameters:
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+            example: 2026-11
+      responses:
+        '200':
+          description: data 为 MonthlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/MonthlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/monthly-reports/save:
+    post:
+      tags: [月度报告]
+      operationId: appSaveMonthlyReport
+      summary: 保存月度报告
+      security:
+        - AppBearer: []
+      description: 必须登录。按 user+month 幂等保存。返回保存后的 MonthlyReport。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonthlySaveBody'
+      responses:
+        '200':
+          description: data 为 MonthlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/MonthlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/yearly-reports/{id}:
+    get:
+      tags: [年度运势, 我的中心]
+      operationId: appYearlyReport
+      summary: 年度运势
+      security:
+        - AppBearer: []
+      description: |
+        必须登录。路径 id 为年份。年卡有效则 unlocked=true。
+        单独购买价格取已启用的 yearly_unlock SKU（种子 ¥28.8）。正文取 app_config yearly.{year}.*，未填 content_status=pending。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: data 为 YearlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/YearlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/yearly-reports/{id}/unlock:
+    post:
+      tags: [年度运势]
+      operationId: appUnlockYearlyReport
+      summary: 解锁年度运势
+      security:
+        - AppBearer: []
+      description: 必须登录。年卡有效则免费解锁；已定价则提示通过内购单独解锁；未定价则「年卡未开通，单独购买价格未配置」。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: data 为 YearlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/YearlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/deck-preference:
+    get:
+      tags: [首页]
+      operationId: appGetDeckPreference
+      summary: 牌面风格
+      security:
+        - AppBearer: []
+      description: 必须登录。available 来自已启用牌组；种子仅 rider-waite（莱德韦特）。预览图未配则用内置默认牌背。不编造未上架牌组。
+      responses:
+        '200':
+          description: data 为 DeckPreference。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/DeckPreference'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [首页]
+      operationId: appPutDeckPreference
+      summary: 更换牌面风格
+      security:
+        - AppBearer: []
+      description: 必须登录。code 须为已启用牌组，否则「该牌面风格尚未开放」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeckPreferenceBody'
+      responses:
+        '200':
+          description: data 为 DeckPreference。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/DeckPreference'
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -1731,6 +2115,12 @@ components:
           enum: [1]
         message:
           type: string
+        error_code:
+          type: string
+          description: |
+            稳定错误码，供客户端按码分支（message 仍为中文原因）。有界推进中：
+            已归类 unauthorized、invalid_request_body、invalid_path_id、reading_not_found、reading_deleted、reading_forbidden、internal；
+            其余尚未归类的业务错误为空字符串，仅凭 message。
         data:
           nullable: true
           description: 普通 writeErr 为 null。配额拦截、绑定冲突、今日一牌复用不用这个 schema。
@@ -1839,18 +2229,21 @@ components:
           description: 建议的下一步动作名；完成时为空字符串。
         card_name:
           type: string
-          description: POST /daily 首页卡牌名。来自第一张牌，无牌时为空。
+          description: 第一张牌名。无牌时为空。列表与详情、今日一牌共用。
         short_text:
           type: string
-          description: POST /daily 首页短句。从 interpretation 截取，无解读时为空，不编造。
+          description: 从 interpretation 截取的一句预览，无解读时为空，不编造。
+        status_label:
+          type: string
+          description: COMPLETED 为「已解读」，其余为「待继续」。
         yi:
           type: string
           nullable: true
-          description: 「宜」尚未有数据源时为 null，不编造。
+          description: 今日一牌「宜」。取 app_config 的 card.{牌名}.yi；未配置为 null。
         card_thumbnail:
           type: string
           nullable: true
-          description: 牌面缩略图未配置时为 null。
+          description: 牌面缩略图。优先 card.{牌名}.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回内置默认牌背 /uploads/card-default.png。无牌名时为 null。
         target:
           type: string
           description: today 或 tomorrow。仅 daily 响应。
@@ -1914,6 +2307,22 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Reading'
+    ReadingPage:
+      type: object
+      description: 占卜列表的游标分页结果。
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reading'
+        has_more:
+          type: boolean
+        next_cursor:
+          type: integer
+          format: int64
+          description: 下一页的 before_id。has_more=false 时为 0。
+        limit:
+          type: integer
     ReadingCreatedOK:
       allOf:
         - $ref: '#/components/schemas/SuccessMeta'
@@ -2026,6 +2435,7 @@ components:
         用户可见「次数」与「钻石」分开。扣减顺序固定：注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费等待。
         钻石先扣 pack（consumable），再扣 subscription，单次不拆桶。
         diamond_cost 未配置时为 null，不会出现猜测出来的单价。
+        followup_limit 为每条解读可追问次数，种子默认 5，null 不限制。
       properties:
         cycle:
           type: string
@@ -2047,12 +2457,6 @@ components:
           type: integer
         admin_grant_free_remaining:
           type: integer
-        paid_subscription_remaining:
-          type: integer
-          description: paid_pools 占位次数，不是钻石，也没有价格。
-        paid_pack_remaining:
-          type: integer
-          description: paid_pools 占位次数，不是钻石。
         subscription_prompt_required:
           type: boolean
         free_label:
@@ -2084,6 +2488,10 @@ components:
         balance:
           type: integer
           description: pack_diamonds + subscription_diamonds。我的页余额用这个合计。
+        followup_limit:
+          type: integer
+          nullable: true
+          description: 每条解读可追问次数。种子默认 5；null 表示不限制。
     Profile:
       type: object
       properties:
@@ -2118,11 +2526,15 @@ components:
         avatar_url:
           type: string
           nullable: true
+        public_id:
+          type: string
+          description: 6 位短公开 ID，首次读档案时生成并固化。
         account_display:
           type: string
           description: |
-            账号页主展示。优先脱敏邮箱（本地第一部分字符 + *** + @域名）。
-            无邮箱时为「微信已绑定」或「Apple 已绑定」。不用手机号当主展示。
+            账号页主展示。优先脱敏手机号（前三后四，中间 ****）。
+            无手机号时脱敏邮箱（本地第一部分字符 + *** + @域名）。
+            再无则「微信已绑定」或「Apple 已绑定」。
     ProfileBody:
       type: object
       additionalProperties: false
@@ -2247,6 +2659,154 @@ components:
         tomorrow_date:
           type: string
           description: 明日运势预览用的业务日。
+    MonthlyReport:
+      type: object
+      properties:
+        month:
+          type: string
+        status:
+          type: string
+          enum: [empty, ready]
+        empty_title:
+          type: string
+        exploration_count:
+          type: integer
+        companion_days:
+          type: integer
+        focus_topics:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              count:
+                type: integer
+              ratio:
+                type: number
+        quote:
+          type: string
+        quote_status:
+          type: string
+          enum: [pending, ready]
+        saved:
+          type: boolean
+        saved_at:
+          type: string
+          format: date-time
+          nullable: true
+        months:
+          type: array
+          items:
+            type: object
+            properties:
+              month:
+                type: string
+              exploration_count:
+                type: integer
+              saved:
+                type: boolean
+        fields_confirmed:
+          type: boolean
+        content_invented:
+          type: boolean
+    MonthlySaveBody:
+      type: object
+      additionalProperties: false
+      properties:
+        month:
+          type: string
+          description: YYYY-MM。空则当前月。
+    YearlyReport:
+      type: object
+      properties:
+        year:
+          type: integer
+        unlocked:
+          type: boolean
+        unlock_source:
+          type: string
+        year_member_unlocks:
+          type: boolean
+        unlock_price_minor:
+          type: integer
+          format: int64
+          nullable: true
+        unlock_price_currency:
+          type: string
+          nullable: true
+        content_status:
+          type: string
+          enum: [pending, ready]
+        theme:
+          type: string
+        domain:
+          type: string
+        rhythm:
+          type: string
+        action:
+          type: string
+        sections:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              title:
+                type: string
+              body:
+                type: string
+              content_status:
+                type: string
+        fields_confirmed:
+          type: boolean
+        content_invented:
+          type: boolean
+    DeckPreference:
+      type: object
+      properties:
+        code:
+          type: string
+        available:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              name:
+                type: string
+              thumbnail:
+                type: string
+                description: 牌组预览图。未配置时为内置默认牌背 /uploads/card-default.png。
+              available:
+                type: boolean
+    DeckPreferenceBody:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+    SKUBenefit:
+      type: object
+      properties:
+        key:
+          type: string
+        title:
+          type: string
+        count:
+          type: integer
+          nullable: true
+        included:
+          type: boolean
+        copy_status:
+          type: string
+        body:
+          type: string
+          nullable: true
+          description: 年卡专属活动权益取 iap_skus.copy。未填为 null，copy_status=pending。
     FlowStep:
       type: object
       properties:
@@ -2323,8 +2883,13 @@ components:
       properties:
         mode:
           type: string
-          description: 只接受 normal。numerology 会拒绝且不生成牌面（「灵数映射未确认，本期不生成牌面」）。
-          enum: [normal]
+          description: normal 随机抽牌；numerology 按 numbers 映射牌面。
+          enum: [normal, numerology]
+        numbers:
+          type: array
+          items:
+            type: integer
+          description: mode=numerology 时必填。1–78、不重复、长度等于牌阵牌位数。number N 对应 Rider-Waite 第 N 张（1=愚者）。
     ConfirmQuotaBody:
       type: object
       additionalProperties: false
@@ -2496,7 +3061,6 @@ components:
       type: object
       description: |
         只在 confirm=true 且合并成功（或已经合并、重放保存结果）时作为 data。
-        paid_* 来自 paid_pools 占位次数，不是价格，也不是 IAP 钻石。
         钻石余额会在库内加总到主账号并迁移 diamond_ledger，但本对象不返回钻石数量。iap_orders 不改写。
         次账号的 App refresh（若有）会被吊销，之后次账号 access 也会因 merged_into 失效。
       properties:
@@ -2522,18 +3086,6 @@ components:
         daily_slot_remaining:
           type: integer
         daily_slot_used:
-          type: integer
-        paid_subscription_before_primary:
-          type: integer
-        paid_subscription_before_secondary:
-          type: integer
-        paid_pack_before_primary:
-          type: integer
-        paid_pack_before_secondary:
-          type: integer
-        paid_subscription_remaining:
-          type: integer
-        paid_pack_remaining:
           type: integer
         readings_moved:
           type: integer
@@ -2621,7 +3173,7 @@ components:
       type: object
       description: |
         本地验单结果。verify_status=verified 只表示商品映射通过，不是商店回执。
-        credit_status=amount_unconfigured 表示 diamond_grant 未配置，credited_diamonds 为 null，余额不变。
+        credit_status=amount_unconfigured 表示发放量未配置（钻石或次卡次数），对应 credited_* 为 null，余额不变。
         同一 platform+transaction_id 再次提交且已 verified 时 idempotent=true，不重复入账。
       properties:
         order_id:
@@ -2659,6 +3211,10 @@ components:
         credited_diamonds:
           type: integer
           nullable: true
+        credited_readings:
+          type: integer
+          nullable: true
+          description: 次卡入账的解读次数。未配置或非次卡为 null。
         period_start:
           type: string
           format: date-time
@@ -2691,10 +3247,9 @@ components:
     IAPSKU:
       type: object
       description: |
-        种子三条不带价格：sub_month（月订阅 / subscription / period_unit=month）、
-        sub_year（年订阅 / subscription / period_unit=year）、
-        pack_consumable（次卡 / 点数包 / consumable / period_unit 为空）。
-        价格、货币、diamond_grant、商店商品号、period_count 在配置前为 null。
+        三类价位对应三块屏：会员（月卡 / 年卡 / 次卡）、塔塔币、年运单独解锁。
+        种子已填设计价（分）和 App Store 占位商品号；管理员改过的值保留。
+        kind：month_subscription（会员月卡）、year_subscription（会员年卡）、reading_pack（会员次卡）、consumable_pack（塔塔币）、yearly_unlock（年运解锁）。
       properties:
         id:
           type: integer
@@ -2703,7 +3258,7 @@ components:
           type: string
         kind:
           type: string
-          enum: [month_subscription, year_subscription, consumable_pack]
+          enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
         ledger_bucket:
           type: string
           enum: [subscription, consumable]
@@ -2712,6 +3267,7 @@ components:
         app_store_product_id:
           type: string
           nullable: true
+          description: App Store 商品 ID。验单按票据 product_id 映射本列。种子为占位编码（tata.membership.month 等），上架前换成 Connect 正式 ID。
         play_product_id:
           type: string
           nullable: true
@@ -2719,19 +3275,26 @@ components:
           type: integer
           format: int64
           nullable: true
-          description: 未配置为 null。契约不提供示例金额。
+          description: 单位分。种子已填设计价；未配置为 null。
         price_currency:
           type: string
           nullable: true
         diamond_grant:
           type: integer
           nullable: true
-          description: 未配置为 null。验单不会把 null 当成 0 颗钻石入账。
+          description: 未配置为 null。验单不会把 null 当成 0 颗钻石入账。次卡与年运解锁不使用此字段。
+        reading_grant:
+          type: integer
+          nullable: true
+          description: 仅次卡。解读次数，未配置为 null。验单不会把 null 当成 0 次入账。
         period_unit:
           type: string
         period_count:
           type: integer
           nullable: true
+        copy:
+          type: string
+          description: 价位附带运营文案。年卡用于专属活动权益。空字符串表示未定稿。
         enabled:
           type: boolean
         unit:
@@ -2740,7 +3303,12 @@ components:
         display_label:
           type: string
           example: 塔塔币
-          description: UI 展示名。档位数量来自 diamond_grant；价格未配置时保持 null，不把设计示例价写入契约。
+          description: UI 展示名。档位数量来自 diamond_grant。
+        benefits:
+          type: array
+          description: 订阅 SKU 的权益结构。followup.count 取 quota_settings.followup_limit（种子 5）。年卡 campaign_perk.body 取本行 copy。消耗包为空数组。
+          items:
+            $ref: '#/components/schemas/SKUBenefit'
     IAPConfig:
       type: object
       properties:
@@ -3325,3 +3893,57 @@ components:
             body_status:
               type: string
               enum: [pending, ready]
+    PushRegisterBody:
+      type: object
+      additionalProperties: false
+      required: [cid]
+      properties:
+        cid:
+          type: string
+          description: 个推客户端 CID。
+        platform:
+          type: string
+          enum: ['', ios, android]
+          description: 省略为空。
+        enabled:
+          type: boolean
+          description: 省略默认 true。false 可临时停用该设备下发。
+    PushDevice:
+      type: object
+      properties:
+        cid:
+          type: string
+        platform:
+          type: string
+        enabled:
+          type: boolean
+    InboxList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxMessage'
+        unread_count:
+          type: integer
+    InboxMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        category:
+          type: string
+          description: campaign/promo/system 等。
+        title:
+          type: string
+        body:
+          type: string
+        target:
+          type: string
+          description: 跳转链接 / 深链，可空。
+        created_at:
+          type: string
+          format: date-time
+        read:
+          type: boolean

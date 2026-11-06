@@ -46,6 +46,20 @@ func deck() []cardDef {
 	return out
 }
 
+func cardByName(name string) (cardDef, bool) {
+	for _, card := range deck() {
+		if card.Name == name {
+			return card, true
+		}
+	}
+	return cardDef{}, false
+}
+
+func knownCardName(name string) bool {
+	_, ok := cardByName(name)
+	return ok
+}
+
 type drawnCard struct {
 	Position     int    `json:"position"`
 	PositionName string `json:"position_name"`
@@ -85,6 +99,36 @@ func drawCards(positions []position) ([]drawnCard, error) {
 			CardID:       c.ID,
 			Name:         c.Name,
 			Orientation:  ori,
+		}
+	}
+	return out, nil
+}
+
+// drawCardsNumerology maps 1–78 unique numbers onto the Rider-Waite deck in
+// position order. Orientation stays upright; the number only selects the card.
+func drawCardsNumerology(positions []position, numbers []int) ([]drawnCard, error) {
+	if len(numbers) != len(positions) {
+		return nil, biz("灵数个数必须与牌阵牌位数一致")
+	}
+	seen := make(map[int]bool, len(numbers))
+	all := deck()
+	out := make([]drawnCard, len(positions))
+	for i, pos := range positions {
+		n := numbers[i]
+		if n < 1 || n > 78 {
+			return nil, biz("灵数须为 1 到 78 的整数")
+		}
+		if seen[n] {
+			return nil, biz("灵数不能重复")
+		}
+		seen[n] = true
+		c := all[n-1]
+		out[i] = drawnCard{
+			Position:     pos.Index,
+			PositionName: pos.Name,
+			CardID:       c.ID,
+			Name:         c.Name,
+			Orientation:  "upright",
 		}
 	}
 	return out, nil

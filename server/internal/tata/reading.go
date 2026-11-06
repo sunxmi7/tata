@@ -52,7 +52,9 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer rows.Close()
-	writeOK(w, scanReadings(rows))
+	items := scanReadings(rows)
+	a.applyCardThumbnails(r.Context(), items...)
+	writeOK(w, items)
 	return nil
 }
 
@@ -238,16 +240,21 @@ func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("匿名用户没有档案")
 	}
-	var email, tz, name, bio, avatar string
+	var email, tz, name, bio, avatar, publicID string
 	var birth, gender, openid, apple, phone *string
-	if err := a.Store.QueryRow(r.Context(), `SELECT email, birth_date, gender, wechat_openid, apple_sub, phone, timezone, name, bio, avatar_url FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &phone, &tz, &name, &bio, &avatar); err != nil {
+	if err := a.Store.QueryRow(r.Context(), `SELECT email, birth_date, gender, wechat_openid, apple_sub, phone, timezone, name, bio, avatar_url, COALESCE(public_id,'') FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &phone, &tz, &name, &bio, &avatar, &publicID); err != nil {
+		return err
+	}
+	publicID, err = a.ensurePublicID(r.Context(), uid, publicID)
+	if err != nil {
 		return err
 	}
 	writeOK(w, map[string]any{
 		"id": uid, "email": email, "birth_date": birth, "gender": gender,
 		"wechat_openid": openid, "apple_sub": apple, "phone": phone, "timezone": tz,
 		"name": name, "bio": bio, "avatar_url": emptyAsNil(avatar),
-		"account_display": accountDisplay(email, openid, apple),
+		"public_id":       publicID,
+		"account_display": accountDisplay(email, phone, openid, apple),
 	})
 	return nil
 }
@@ -377,12 +384,9 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 	dailyRemaining := 0
 	usedFlags := 0
 	rewardRemaining := 0
-	subRemaining := 0
-	packRemaining := 0
 	subPrompt := false
 	if uid > 0 {
 		_ = a.Store.QueryRow(r.Context(), `SELECT remaining FROM rewards WHERE user_id=$1 AND remaining>0 AND expires_at>now()`, uid).Scan(&rewardRemaining)
-		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_remaining, pack_remaining FROM paid_pools WHERE user_id=$1`, uid).Scan(&subRemaining, &packRemaining)
 		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_prompt_required FROM app_users WHERE id=$1`, uid).Scan(&subPrompt)
 		err = a.Store.QueryRow(r.Context(), `SELECT used_flags, remaining FROM daily_free_balance WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&usedFlags, &dailyRemaining)
 		if err == nil {
@@ -408,13 +412,17 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 	if configured {
 		diamondCost = cost
 	}
+	followupLimit, followupReady, _ := loadFollowupLimit(r.Context(), a.Store)
+	var followup any
+	if followupReady {
+		followup = followupLimit
+	}
 	writeOK(w, map[string]any{
 		"cycle": cycle, "reset_at": "北京时间 08:00",
 		"daily_free_used": used, "daily_free_count": 1,
 		"daily_free_remaining": dailyRemaining, "daily_used_flags": usedFlags,
-		"reward_remaining":            rewardRemaining,
-		"admin_grant_free_remaining":  adminGrantRemaining,
-		"paid_subscription_remaining": subRemaining, "paid_pack_remaining": packRemaining,
+		"reward_remaining":             rewardRemaining,
+		"admin_grant_free_remaining":   adminGrantRemaining,
 		"subscription_prompt_required": subPrompt,
 		"free_label":                   "次数",
 		"paid_label":                   "钻石",
@@ -424,6 +432,7 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		"diamond_spend_order":          "pack_then_subscription",
 		"diamond_cost":                 diamondCost,
 		"diamond_cost_configured":      configured,
+		"followup_limit":               followup,
 		"subscription_diamonds":        subDiamonds,
 		"pack_diamonds":                packDiamonds,
 	})
@@ -670,15 +679,13 @@ func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var req struct {
-		Mode string `json:"mode"`
+		Mode    string `json:"mode"`
+		Numbers []int  `json:"numbers"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if req.Mode == "numerology" {
-		return biz("灵数映射未确认，本期不生成牌面")
-	}
-	if req.Mode != "normal" {
+	if req.Mode != "normal" && req.Mode != "numerology" {
 		return biz("抽牌方式不正确")
 	}
 	var spreadID *int64
@@ -701,7 +708,12 @@ func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
 	if err := json.Unmarshal([]byte(posRaw), &positions); err != nil {
 		return err
 	}
-	cards, err := drawCards(positions)
+	var cards []drawnCard
+	if req.Mode == "numerology" {
+		cards, err = drawCardsNumerology(positions, req.Numbers)
+	} else {
+		cards, err = drawCards(positions)
+	}
 	if err != nil {
 		return err
 	}
@@ -756,18 +768,74 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	var rows *sql.Rows
-	if uid > 0 {
-		rows, err = a.Store.Query(r.Context(), `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at FROM readings WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, uid)
-	} else {
-		rows, err = a.Store.Query(r.Context(), `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at FROM readings WHERE anonymous_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, anon)
+	q := r.URL.Query()
+	limit := parseLimit(q.Get("limit"), 20, 100)
+	typ := q.Get("type")
+	if typ != "" && typ != "normal" && typ != "tarotist" && typ != "explore" && typ != "daily" {
+		return biz("type 不正确")
 	}
+	var beforeID int64
+	if s := q.Get("before_id"); s != "" {
+		v, perr := strconv.ParseInt(s, 10, 64)
+		if perr != nil || v <= 0 {
+			return biz("before_id 不正确")
+		}
+		beforeID = v
+	}
+	// 按 id 降序做游标分页（id 随创建单调，比 updated_at 翻页更稳）。多取一条判断是否还有下一页。
+	where := []string{"deleted_at IS NULL"}
+	args := []any{}
+	add := func(cond string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(cond, len(args)))
+	}
+	if uid > 0 {
+		add("user_id=$%d", uid)
+	} else {
+		add("anonymous_id=$%d", anon)
+	}
+	if typ != "" {
+		add("type=$%d", typ)
+	}
+	if beforeID > 0 {
+		add("id<$%d", beforeID)
+	}
+	args = append(args, limit+1)
+	cols := `id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at`
+	query := "SELECT " + cols + " FROM readings WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args))
+	rows, err := a.Store.Query(r.Context(), query, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	writeOK(w, scanReadings(rows))
+	items := scanReadings(rows)
+	a.applyCardThumbnails(r.Context(), items...)
+	hasMore := false
+	var nextCursor int64
+	if len(items) > limit {
+		items = items[:limit]
+		hasMore = true
+		if last, ok := items[len(items)-1]["id"].(int64); ok {
+			nextCursor = last
+		}
+	}
+	writeOK(w, map[string]any{"items": items, "has_more": hasMore, "next_cursor": nextCursor, "limit": limit})
 	return nil
+}
+
+// parseLimit 解析分页 limit：空或非法用 def，超过 max 则截到 max。
+func parseLimit(s string, def, max int) int {
+	if s == "" {
+		return def
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return def
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
 
 func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
@@ -859,7 +927,7 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 		if business != cycle {
 			msg = "该日已有结果，不重复扣次数或钻石"
 		}
-		attachDailyHome(item, req.Target, business)
+		a.attachDailyHome(r.Context(), item, req.Target, business)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"code": 1, "message": msg,
 			"data": map[string]any{"reused": true, "charged": false, "reading": item},
@@ -917,11 +985,11 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 		if loadErr != nil {
 			return err
 		}
-		attachDailyHome(failed, req.Target, business)
+		a.attachDailyHome(r.Context(), failed, req.Target, business)
 		writeOK(w, failed)
 		return nil
 	}
-	attachDailyHome(item, req.Target, business)
+	a.attachDailyHome(r.Context(), item, req.Target, business)
 	writeOK(w, item)
 	return nil
 }

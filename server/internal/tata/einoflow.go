@@ -52,6 +52,16 @@ func (a *App) runEino(ctx context.Context, task, userPrompt string) (string, str
 	return spec.Vendor, spec.Model, text, err
 }
 
+// runEinoStream 流式版本：每个增量片段回调 onChunk，返回拼好的完整文本。
+func (a *App) runEinoStream(ctx context.Context, task, userPrompt string, onChunk func(string) error) (string, string, string, error) {
+	spec, err := a.modelSpec(ctx, task)
+	if err != nil {
+		return "", "", "", err
+	}
+	text, err := readingflow.RunTaskStream(ctx, spec, task, map[string]any{"question": userPrompt}, onChunk)
+	return spec.Vendor, spec.Model, text, err
+}
+
 func (a *App) einoChat(ctx context.Context, baseURL, apiKey, model string, timeoutSec *int, system, user string) (string, error) {
 	wait := 30 * time.Second
 	if timeoutSec != nil && *timeoutSec > 0 {

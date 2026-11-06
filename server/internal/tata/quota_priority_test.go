@@ -283,6 +283,44 @@ func TestFollowupReentersSharedQuota(t *testing.T) {
 	}
 }
 
+func TestFollowupLimitConfigurable(t *testing.T) {
+	store, ts := newMergeServer(t)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET followup_limit=5 WHERE id=1`)
+	})
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	params := listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	if params["followup_limit"].(float64) != 5 || params["followup_limit_editable"] != true {
+		t.Fatalf("seed followup limit: %#v", params)
+	}
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"followup_limit": 1})
+	token, _ := registerUser(t, ts, store, "followcap")
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "限次追问", "type": "normal"})
+	id := asID(reading["id"])
+	completeReading(t, store, id)
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "第一次", "continuation": true})
+	if msg != "" {
+		t.Fatalf("first followup: %s", msg)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content)
+		SELECT $1, turn_id, 1, 'assistant', '已答' FROM reading_messages WHERE reading_id=$1 AND role='user' ORDER BY turn_id DESC LIMIT 1`, id); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "第二次", "continuation": true})
+	if !strings.Contains(msg, "上限") {
+		t.Fatalf("limit: %s", msg)
+	}
+	quota := listOne(t, ts, token, "/api/app/v1/quota")
+	if quota["followup_limit"].(float64) != 1 {
+		t.Fatalf("app quota limit: %#v", quota)
+	}
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"followup_limit": nil})
+	params = listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	if params["followup_limit"] != nil {
+		t.Fatalf("cleared limit: %#v", params)
+	}
+}
+
 func TestAITrialThenFormalQuota(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)

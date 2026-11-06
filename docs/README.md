@@ -8,13 +8,41 @@
 
 2026-10-28 起 App P0 壳层路径包括：`GET/PUT /api/app/v1/profile`（name/bio/avatar_url、account_display）、`GET /api/app/v1/explore/topics`、`POST /api/app/v1/redeem`、`GET /api/app/v1/wallet/ledger`、`POST /api/app/v1/uploads`、`POST /api/app/v1/wishlist`、`POST /api/app/v1/feedback`、`GET/PUT /api/app/v1/notification-preferences`。钻石账本的 UI 展示名为「塔塔币」（`display_label`）。
 
-同日 App P1：`GET /api/app/v1/redeem/records`、`GET /api/app/v1/campaigns`、`GET /api/app/v1/campaigns/{id}`、`GET /api/app/v1/campaigns/participations`、`GET /api/app/v1/campaigns/rewards`、`GET /api/app/v1/help/categories`、`GET /api/app/v1/help/articles`（`category`、`q`）、`GET /api/app/v1/help/articles/{id}`。兑换记录、活动详情、参与记录、奖励记录和 FAQ 正文仍是占位：列表可为空，不编造记录；FAQ `body` 为「待确认」。`POST /api/app/v1/push/register` 未注册：通知设置没有推送 token 字段。
+同日 App P1：`GET /api/app/v1/redeem/records`、`GET /api/app/v1/campaigns`、`GET /api/app/v1/campaigns/{id}`、`GET /api/app/v1/campaigns/participations`、`GET /api/app/v1/campaigns/rewards`、`GET /api/app/v1/help/categories`、`GET /api/app/v1/help/articles`（`category`、`q`）、`GET /api/app/v1/help/articles/{id}`。兑换记录、活动详情、参与记录、奖励记录和 FAQ 正文仍是占位：列表可为空，不编造记录；FAQ `body` 为「待确认」。
 
-2026-11-03 定稿画板对照结案：App `method+path` **57** 条与 OpenAPI 1:1；**范围内无缺失 HTTP API、本轮不新增 path**。模块→已有 path / 延后清单见 [design/ui-gap-close-2026-11-03.md](./design/ui-gap-close-2026-11-03.md)；逐模块复阅表见 [design/ui-api-missing-paths-2026-11-03.md](./design/ui-api-missing-paths-2026-11-03.md)（PR#13）。月报/年运首版不做；Q-N1 登录绑定 UI 后置；Q-B5/Q-B14 不挡首发故不补。P0 UI 字段验收（抽牌/牌阵/历史/日历）**未**标 Done。
+2026-11-06 重启推送（Q-B1 作废）：新增 `POST /api/app/v1/push/register`（上报个推 CID）、`GET /api/app/v1/messages`（消息中心/站内信）、`POST /api/app/v1/messages/{id}/read`，以及管理端 `POST /api/admin/v1/push/broadcast`（群发）。今日/明日抽牌仍走 App 本地通知；优惠/活动走个推（GeTui）服务端下发，只推给 `messages_enabled=true` 的设备。个推凭证在 `server/manifest/config/config.yaml` 的 `getui`（`enabled=false` 时只落站内信、不真连）。
+
+2026-11-06 接口完善（进行中）：
+- **解读/追问 SSE 流式**：新增 `POST /api/app/v1/readings/{id}/interpret/stream` 与 `.../followups/stream`。额度门槛与落库同非流式；拦截仍返回普通 JSON 的 QuotaBlockEnvelope，通过后以 `text/event-stream` 下发 `delta`/`done`/`error` 事件，供打字机效果。原非流式接口保留。demo 供应商（`/demo/openai`）已支持 `stream:true` 便于本地联调。
+- **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
+- **错误码（有界）**：错误包络新增 `error_code` 字段供客户端按码分支，message 仍为中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
+
+App 路由现为 **69** 条（含公开 `GET /uploads/{name}`）、完整契约 **126** 条，与 `routes.go` 仍 1:1。
+
+管理端价位三类：会员（`month_subscription` / `year_subscription` / `reading_pack`）、塔塔币（`consumable_pack`）、年运解锁（`yearly_unlock`）。种子已填设计价（分）和 App Store 占位商品号（`iap_skus.app_store_product_id`，如 `tata.membership.month`）；管理员改过的值保留。次卡用 `reading_grant` 发解读次数。App `GET /iap/skus?kind=` 按类型过滤。年运解锁价取已启用且已定价的 `yearly_unlock` SKU。
+
+2026-11-06 对照定稿 UI 补接口（对齐项已确认，见 [design/ui-gap-vs-api-2026-11-06.md](./design/ui-gap-vs-api-2026-11-06.md)）：
+- **月度报告**：`GET /api/app/v1/monthly-reports`、`POST /api/app/v1/monthly-reports/save`。统计来自当月 readings；寄语截取已完成解读，不编造。
+- **年度运势**：`GET /api/app/v1/yearly-reports/{id}`、`POST .../unlock`。年卡免费解锁；单独购买价取已启用 `yearly_unlock` SKU。解锁前卖点页已对齐；解锁后抽牌生成流程仍未对齐。
+- **灵数抽牌**：`POST /readings/{id}/draw` 接受 `mode=numerology` + `numbers`（1–78 不重复，映射 Rider-Waite）。
+- **账号**：`account_display` 优先脱敏手机号；新增 6 位 `public_id`。
+- **会员/塔塔币**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）；6 档消耗包 `pack_60`…`pack_3280` 已填设计价。追问上限管理端 `PUT /quota-params` 可改，null 不限制。
+- **历史列表**：每条带 `short_text` / `card_name` / `status_label` / `card_thumbnail`（单牌 URL → 模板 → 默认图 → 内置 `/uploads/card-default.png`；无牌名才为 null）。
+- **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。种子仅 `rider-waite` / 莱德韦特；管理端侧栏「牌面风格」（`PUT /copy/decks`）可加牌组。预览图未配用内置默认牌背。未上架 code 仍拒。
+- **日历**：`GET /calendar` 增加 `type` 过滤。
+- **消息中心**：接口领先于 UI，先行落底。
+- **今日一牌宜 / 牌面缩略图**：`yi` 取 `card.{牌名}.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。
+- **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；其余无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。
+
+内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
+
+仍未对齐：年运解锁后生成流程、日历日详情字段、牌组介绍字段。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。
 
 ## 导入 Apifox
 
 在 Apifox 中选择 **导入 → OpenAPI**，选择本仓库的 `docs/openapi-app.yaml`（仅 App 端分组与路径）。完整契约（含管理端）见 `docs/openapi.yaml`，给后台对接使用，不要作为 App 导入源。
+
+**分组口径（2026-11-06）：** `openapi-app.yaml` 的 tag 按 Pixso 定稿「手机界面」`619:7` 的 UI 模块划分。导入 Apifox 后文件夹即 UI 模块：登录注册、首页、探索、我的中心、抽牌、牌阵界面、历史记录、日历记录、塔塔币购买、会员中心、兑换码、参与活动、月度报告、年度运势、功能心愿单、帮助中心、反馈意见、通知设置、账号、语言、关于塔塔、我的小组件。共用接口（如 `GET /quota`、`POST /uploads`）会挂到多个模块下；`月度报告`、`年度运势` 已有专用 path，`语言`、`关于塔塔` 仍为空分组（Q-B2 + 客户端静态）。路径、方法、请求/响应形状与 `routes.go` 1:1。
 
 导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。App 接口使用安全方案 **AppBearer**（JWT `aud=app`）。
 

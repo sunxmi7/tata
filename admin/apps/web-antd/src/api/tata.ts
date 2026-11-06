@@ -79,6 +79,9 @@ export function putBinding(task: string, data: { vendor_id: number; model: strin
 export function getQuota() {
   return requestClient.get<Record<string, unknown>>('/quota-params');
 }
+export function updateQuota(data: Record<string, unknown>) {
+  return requestClient.put<Record<string, unknown>>('/quota-params', data);
+}
 export function listBanners() {
   return requestClient.get<Record<string, unknown>[]>('/banners');
 }
@@ -113,8 +116,15 @@ export function listIAPOrders(userId?: string) {
   const query = userId?.trim() ? `?user_id=${encodeURIComponent(userId.trim())}` : '';
   return requestClient.get<Record<string, unknown>[]>(`/iap/orders${query}`);
 }
-export function listIAPSkus() {
-  return requestClient.get<Record<string, unknown>[]>('/iap/skus');
+export function listIAPSkus(kind?: string) {
+  const query = kind?.trim() ? `?kind=${encodeURIComponent(kind.trim())}` : '';
+  return requestClient.get<Record<string, unknown>[]>(`/iap/skus${query}`);
+}
+export function createIAPSku(data: Record<string, unknown>) {
+  return requestClient.post<Record<string, unknown>>('/iap/skus', data);
+}
+export function updateIAPSku(id: number, data: Record<string, unknown>) {
+  return requestClient.put<Record<string, unknown>>(`/iap/skus/${id}`, data);
 }
 export function getIAPDiamonds(userId: string) {
   return requestClient.get<Record<string, unknown>>(
@@ -127,4 +137,11 @@ export function listGrants(userId?: string) {
 }
 export function createGrant(data: Record<string, unknown>) {
   return requestClient.post<Record<string, unknown>>('/grants', data);
+}
+export function getCopy(kind: string, year?: number) {
+  const query = year ? `?year=${year}` : '';
+  return requestClient.get<Record<string, unknown>>(`/copy/${kind}${query}`);
+}
+export function updateCopy(kind: string, data: Record<string, unknown>) {
+  return requestClient.put<Record<string, unknown>>(`/copy/${kind}`, data);
 }

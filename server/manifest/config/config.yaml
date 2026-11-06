@@ -12,3 +12,13 @@ redis:
   default:
     address: "127.0.0.1:63799"
     db: 0
+
+# 个推（GeTui）推送。消息类通知（优惠/活动）走服务端下发；今日/明日抽牌为 App 本地通知。
+# 凭证来自个推控制台；enabled=false 或凭证为空时只落站内信、不真连个推。
+getui:
+  enabled: false
+  appId: ""
+  appKey: ""
+  appSecret: ""
+  masterSecret: ""
+  baseUrl: "https://restapi.getui.com"

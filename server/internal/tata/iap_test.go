@@ -15,24 +15,32 @@ import (
 	"time"
 )
 
-func TestIAPSeedSlotsLeavePriceAndGrantEmpty(t *testing.T) {
+func TestIAPSeedPricesAndAppleProductIDs(t *testing.T) {
 	_, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	ro := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "readonly", "password": "readonly123"})
 	raw := get(t, ts, admin.access, "/api/admin/v1/iap/skus")
 	body := string(raw)
-	for _, banned := range []string{"18.80", "28.80", "¥98", "98/年"} {
+	for _, banned := range []string{"18.80", "¥98", "98/年"} {
 		if strings.Contains(body, banned) {
 			t.Fatalf("seed exposed a competitor price %s: %s", banned, body)
 		}
 	}
-	skus := list(t, ts, ro.access, "/api/admin/v1/iap/skus")
-	want := map[string][2]string{
-		"sub_month":       {"month_subscription", "subscription"},
-		"sub_year":        {"year_subscription", "subscription"},
-		"pack_consumable": {"consumable_pack", "consumable"},
+	type spec struct {
+		kind, bucket, apple string
+		price               float64
+		readings            any
+	}
+	want := map[string]spec{
+		"sub_month":     {"month_subscription", "subscription", "tata.membership.month", 3900, nil},
+		"sub_year":      {"year_subscription", "subscription", "tata.membership.year", 19800, nil},
+		"sub_times":     {"reading_pack", "consumable", "tata.membership.times", 1990, 5.0},
+		"pack_60":       {"consumable_pack", "consumable", "tata.coin.60", 600, nil},
+		"pack_180":      {"consumable_pack", "consumable", "tata.coin.180", 1800, nil},
+		"unlock_yearly": {"yearly_unlock", "consumable", "tata.unlock.yearly", 2880, nil},
 	}
 	found := map[string]bool{}
+	skus := list(t, ts, ro.access, "/api/admin/v1/iap/skus")
 	for _, row := range skus {
 		code, _ := row["code"].(string)
 		spec, ok := want[code]
@@ -40,17 +48,21 @@ func TestIAPSeedSlotsLeavePriceAndGrantEmpty(t *testing.T) {
 			continue
 		}
 		found[code] = true
-		if row["kind"] != spec[0] || row["ledger_bucket"] != spec[1] {
+		if row["kind"] != spec.kind || row["ledger_bucket"] != spec.bucket {
 			t.Fatalf("%s mapping: %#v", code, row)
 		}
-		for _, key := range []string{"price_amount_minor", "price_currency", "diamond_grant", "app_store_product_id", "play_product_id", "period_count"} {
-			if row[key] != nil {
-				t.Fatalf("%s %s should stay empty, got %#v", code, key, row[key])
-			}
+		if row["price_amount_minor"].(float64) != spec.price || row["price_currency"] != "CNY" {
+			t.Fatalf("%s price: %#v", code, row)
+		}
+		if row["app_store_product_id"] != spec.apple {
+			t.Fatalf("%s apple id: %#v", code, row)
+		}
+		if spec.readings != nil && row["reading_grant"] != spec.readings {
+			t.Fatalf("%s reading_grant: %#v", code, row)
 		}
 	}
 	if len(found) != len(want) {
-		t.Fatalf("reserved slots: %#v", found)
+		t.Fatalf("priced slots: %#v", found)
 	}
 	cfg := listOne(t, ts, admin.access, "/api/admin/v1/iap/config")
 	if cfg["restore_hook_enabled"] != true || cfg["restore_required_first_pack"] != false {
@@ -558,7 +570,7 @@ func iapBody(platform, product, txn, original, receipt string, expires *time.Tim
 
 func assertFreeQuotaUntouched(t *testing.T, store *Store, uid int64) {
 	t.Helper()
-	var reward, ledgerN, poolN, quotaN int
+	var reward, ledgerN, quotaN int
 	if err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, uid).Scan(&reward); err != nil {
 		t.Fatal(err)
 	}
@@ -568,14 +580,179 @@ func assertFreeQuotaUntouched(t *testing.T, store *Store, uid int64) {
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ledger WHERE user_id=$1`, uid).Scan(&ledgerN); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM paid_pools WHERE user_id=$1`, uid).Scan(&poolN); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_use WHERE user_id=$1`, uid).Scan(&quotaN); err != nil {
 		t.Fatal(err)
 	}
-	if ledgerN != 0 || poolN != 0 || quotaN != 0 {
-		t.Fatalf("IAP touched free/legacy pools ledger=%d paid_pools=%d quota=%d", ledgerN, poolN, quotaN)
+	if ledgerN != 0 || quotaN != 0 {
+		t.Fatalf("IAP touched free pools ledger=%d quota=%d", ledgerN, quotaN)
+	}
+}
+
+func TestAdminIAPSKUCreateByKindAndPrice(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	ro := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "readonly", "password": "readonly123"})
+	token, _ := registerUser(t, ts, store, "skuadmin")
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE iap_skus SET enabled=FALSE WHERE code LIKE $1`, "%"+suffix)
+	})
+	price := int64(3900)
+	grant := 60
+	month := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "month_" + suffix, "kind": "month_subscription", "display_name": "月卡测试",
+		"price_amount_minor": price, "price_currency": "CNY", "period_count": 1,
+	})
+	if month["kind"] != "month_subscription" || month["ledger_bucket"] != "subscription" || month["price_amount_minor"].(float64) != 3900 {
+		t.Fatalf("month sku: %#v", month)
+	}
+	pack := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "pack_" + suffix, "kind": "consumable_pack", "display_name": "60 测试",
+		"price_amount_minor": int64(600), "diamond_grant": grant,
+	})
+	if pack["kind"] != "consumable_pack" || pack["diamond_grant"].(float64) != 60 || pack["price_currency"] != "CNY" {
+		t.Fatalf("pack sku: %#v", pack)
+	}
+	unlock := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "yearunlock_" + suffix, "kind": "yearly_unlock", "display_name": "年运测试",
+		"price_amount_minor": int64(2880),
+	})
+	if unlock["kind"] != "yearly_unlock" || unlock["ledger_bucket"] != "consumable" || unlock["diamond_grant"] != nil {
+		t.Fatalf("unlock sku: %#v", unlock)
+	}
+	times := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "times_" + suffix, "kind": "reading_pack", "display_name": "次卡测试",
+		"price_amount_minor": int64(1990), "reading_grant": 5,
+	})
+	if times["kind"] != "reading_pack" || times["ledger_bucket"] != "consumable" || times["diamond_grant"] != nil || times["reading_grant"].(float64) != 5 {
+		t.Fatalf("reading pack sku: %#v", times)
+	}
+	msg, _ := call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "badtimes_" + suffix, "kind": "reading_pack", "display_name": "坏次卡", "diamond_grant": 10,
+	})
+	if !strings.Contains(msg, "不能发放钻石") {
+		t.Fatalf("reading pack grant: %s", msg)
+	}
+	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "badpack_" + suffix, "kind": "consumable_pack", "display_name": "坏币包", "reading_grant": 5,
+	})
+	if !strings.Contains(msg, "只有次卡") {
+		t.Fatalf("pack reading grant: %s", msg)
+	}
+	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "bad_" + suffix, "kind": "yearly_unlock", "display_name": "坏年运", "diamond_grant": 10,
+	})
+	if !strings.Contains(msg, "不能发放钻石") {
+		t.Fatalf("yearly grant: %s", msg)
+	}
+	msg, _ = call(t, ts, ro.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "ro_" + suffix, "kind": "consumable_pack", "display_name": "只读",
+	})
+	if !strings.Contains(msg, "只读") {
+		t.Fatalf("readonly create: %s", msg)
+	}
+	filtered := list(t, ts, token, "/api/app/v1/iap/skus?kind=yearly_unlock")
+	foundUnlock := false
+	for _, row := range filtered {
+		if row["code"] == "yearunlock_"+suffix {
+			foundUnlock = true
+		}
+	}
+	if !foundUnlock {
+		t.Fatalf("app kind filter: %#v", filtered)
+	}
+	timesList := list(t, ts, token, "/api/app/v1/iap/skus?kind=reading_pack")
+	foundTimes := false
+	for _, row := range timesList {
+		if row["code"] == "times_"+suffix {
+			foundTimes = true
+			if row["reading_grant"].(float64) != 5 {
+				t.Fatalf("app reading pack: %#v", row)
+			}
+		}
+	}
+	if !foundTimes {
+		t.Fatalf("app reading pack filter: %#v", timesList)
+	}
+	yearView := listOne(t, ts, token, "/api/app/v1/yearly-reports/2026")
+	if yearView["unlock_price_minor"].(float64) != 2880 || yearView["unlock_price_currency"] != "CNY" {
+		t.Fatalf("yearly price from sku: %#v", yearView)
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, "/api/app/v1/yearly-reports/2026/unlock", map[string]any{})
+	if !strings.Contains(msg, "内购") {
+		t.Fatalf("unlock with priced sku: %s", msg)
+	}
+	id := asID(month["id"])
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/iap/skus/%d", id), map[string]any{
+		"display_name": "月卡改价", "price_amount_minor": int64(4900), "price_currency": "CNY", "enabled": true,
+	})
+	skus := list(t, ts, admin.access, "/api/admin/v1/iap/skus?kind=month_subscription")
+	found := false
+	for _, row := range skus {
+		if asID(row["id"]) == id {
+			found = true
+			if row["display_name"] != "月卡改价" || row["price_amount_minor"].(float64) != 4900 {
+				t.Fatalf("updated: %#v", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("updated month missing: %#v", skus)
+	}
+}
+
+func TestIAPReadingPackCreditsFreeCounts(t *testing.T) {
+	store, ts := newMergeServer(t)
+	email := fmt.Sprintf("iap-times-%d@tata.local", time.Now().UnixNano())
+	token := register(t, ts, email)
+	uid := userIDByEmail(t, store, email)
+	grant := 5
+	product := fmt.Sprintf("test.times.%d", time.Now().UnixNano())
+	insertIAPSKUWithReadings(t, store, product, grant)
+	txn := fmt.Sprintf("txn-times-%d", time.Now().UnixNano())
+	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, "orig-"+txn, "receipt-"+txn, nil))
+	if out["idempotent"] != false || out["verify_status"] != "verified" || out["credit_status"] != "credited" {
+		t.Fatalf("verify: %#v", out)
+	}
+	if out["sku_kind"] != "reading_pack" || out["credited_diamonds"] != nil || out["credited_readings"].(float64) != 5 {
+		t.Fatalf("credit: %#v", out)
+	}
+	if out["subscription_diamonds"].(float64) != 0 || out["pack_diamonds"].(float64) != 0 {
+		t.Fatalf("diamonds: %#v", out)
+	}
+	var remaining, adminGrant int
+	if err := store.QueryRow(t.Context(), `SELECT remaining, admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&remaining, &adminGrant); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 || adminGrant != grant {
+		t.Fatalf("rewards remaining=%d admin=%d", remaining, adminGrant)
+	}
+	var ledger int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1`, uid).Scan(&ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger != 0 {
+		t.Fatalf("diamond ledger %d", ledger)
+	}
+	blank := fmt.Sprintf("test.times.blank.%d", time.Now().UnixNano())
+	insertIAPSKUWithReadings(t, store, blank, 0)
+	txn2 := fmt.Sprintf("txn-times-blank-%d", time.Now().UnixNano())
+	unconfig := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", blank, txn2, "orig-"+txn2, "receipt-"+txn2, nil))
+	if unconfig["credit_status"] != "amount_unconfigured" || unconfig["credited_readings"] != nil {
+		t.Fatalf("unconfigured: %#v", unconfig)
+	}
+}
+
+func insertIAPSKUWithReadings(t *testing.T, store *Store, productID string, grant int) {
+	t.Helper()
+	code := fmt.Sprintf("iap-times-%d-%d", time.Now().UnixNano(), iapSKUSeq.Add(1))
+	var amount any
+	if grant > 0 {
+		amount = grant
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO iap_skus(code, kind, ledger_bucket, display_name, app_store_product_id, reading_grant)
+		VALUES ($1,'reading_pack','consumable','次卡测试',$2,$3)`, code, productID, amount); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -602,4 +779,31 @@ func postIAP(ts *httptest.Server, token, path string, body any) (int, map[string
 		return 1, nil, err.Error()
 	}
 	return env.Code, env.Data, env.Message
+}
+
+func TestSchemaCommentsMapPriceKinds(t *testing.T) {
+	store, _ := newMergeServer(t)
+	var table, kind, grant string
+	if err := store.QueryRow(t.Context(), `SELECT obj_description('iap_skus'::regclass)`).Scan(&table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table, "会员") || !strings.Contains(table, "塔塔币") || !strings.Contains(table, "年运") {
+		t.Fatalf("iap_skus table comment: %s", table)
+	}
+	if err := store.QueryRow(t.Context(), `
+		SELECT col_description('iap_skus'::regclass, attnum) FROM pg_attribute
+		WHERE attrelid='iap_skus'::regclass AND attname='kind'`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(kind, "reading_pack") || !strings.Contains(kind, "consumable_pack") {
+		t.Fatalf("iap_skus.kind comment: %s", kind)
+	}
+	if err := store.QueryRow(t.Context(), `
+		SELECT col_description('iap_skus'::regclass, attnum) FROM pg_attribute
+		WHERE attrelid='iap_skus'::regclass AND attname='reading_grant'`).Scan(&grant); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(grant, "次卡") {
+		t.Fatalf("reading_grant comment: %s", grant)
+	}
 }
