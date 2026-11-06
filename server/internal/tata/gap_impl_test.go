@@ -297,12 +297,15 @@ func TestSpreadRecommended(t *testing.T) {
 	token, _ := registerUser(t, ts, store, "spredrec")
 	t.Cleanup(func() {
 		_, _ = store.Exec(context.Background(), `DELETE FROM spreads WHERE name<>'时间流'`)
-		_, _ = store.Exec(context.Background(), `UPDATE spreads SET recommended=true, enabled=true WHERE name='时间流'`)
+		_, _ = store.Exec(context.Background(), `UPDATE spreads SET recommended=true, enabled=true, thumbnail='' WHERE name='时间流'`)
 	})
 
 	appList := list(t, ts, token, "/api/app/v1/spreads")
 	if len(appList) == 0 || appList[0]["name"] != "时间流" || appList[0]["recommended"] != true {
 		t.Fatalf("seed recommended: %#v", appList)
+	}
+	if appList[0]["thumbnail"] != defaultCardThumbnailPath {
+		t.Fatalf("seed thumb: %#v", appList[0]["thumbnail"])
 	}
 
 	created := create(t, ts, admin.access, "/api/admin/v1/spreads", map[string]any{
@@ -327,6 +330,29 @@ func TestSpreadRecommended(t *testing.T) {
 	}
 	if !foundTime {
 		t.Fatalf("time flow missing: %#v", appList)
+	}
+	if appList[0]["thumbnail"] != defaultCardThumbnailPath {
+		t.Fatalf("new default thumb: %#v", appList[0]["thumbnail"])
+	}
+
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", newID), map[string]any{
+		"name": "多维解读", "description": "多个角度", "card_count": 1,
+		"positions": []map[string]any{{"index": 1, "name": "核心", "meaning": ""}},
+		"thumbnail": "https://cdn.example.test/spread.png",
+	})
+	appList = list(t, ts, token, "/api/app/v1/spreads")
+	if appList[0]["thumbnail"] != "https://cdn.example.test/spread.png" {
+		t.Fatalf("app thumb: %#v", appList[0])
+	}
+	adminRow := map[string]any{}
+	for _, s := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if asID(s["id"]) == newID {
+			adminRow = s
+			break
+		}
+	}
+	if adminRow["thumbnail"] != "https://cdn.example.test/spread.png" || adminRow["preview"] != "https://cdn.example.test/spread.png" {
+		t.Fatalf("admin thumb: %#v", adminRow)
 	}
 
 	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", newID), map[string]any{

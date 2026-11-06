@@ -459,6 +459,13 @@ components:
         recommended:
           type: boolean
           description: 选阵屏「推荐牌阵」角标。全表最多一张为 true。
+        thumbnail:
+          type: string
+          nullable: true
+          description: App 为示意图 URL（未配则为默认牌背）。管理端 list 为已填 URL 或 null，另有 preview 为实际展示 URL。
+        preview:
+          type: string
+          description: 仅管理端。未配 thumbnail 时为内置默认牌背。
     SpreadBody:
       type: object
       additionalProperties: false
@@ -489,6 +496,10 @@ components:
           type: boolean
           nullable: true
           description: 新建省略视为 false。更新省略保持原值。设为 true 时取消其他牌阵的推荐。
+        thumbnail:
+          type: string
+          nullable: true
+          description: 牌阵示意图 URL。新建省略为空。更新省略保持原值。空字符串清除。
     Banner:
       type: object
       properties:
@@ -3363,7 +3374,9 @@ paths:
       summary: 可用牌阵
       security:
         - AppBearer: []
-      description: 只返回 enabled=true。recommended=true 的排前面，其余按 id。匿名令牌也可以读。recommended 对应选阵屏「推荐牌阵」角标。
+      description: |
+        只返回 enabled=true。recommended=true 的排前面，其余按 id。匿名令牌也可以读。
+        recommended 对应选阵屏「推荐牌阵」角标。thumbnail 为牌阵示意图，未配则为内置默认牌背。
       responses:
         "200":
           description: data 为牌阵数组。
@@ -5310,7 +5323,7 @@ paths:
       summary: 更新牌阵
       security:
         - AdminBearer: []
-      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、启用、是否计费和推荐标记。recommended=true 时取消其他牌阵的推荐。
+      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、启用、是否计费、推荐标记和示意图。recommended=true 时取消其他牌阵的推荐。
       parameters:
         - $ref: "#/components/parameters/PathId"
       requestBody:

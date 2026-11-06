@@ -159,6 +159,7 @@ type spreadBody struct {
 	Enabled     *bool      `json:"enabled"`
 	Charged     *bool      `json:"charged"`
 	Recommended *bool      `json:"recommended"`
+	Thumbnail   *string    `json:"thumbnail"`
 }
 
 func (b spreadBody) enabled() bool {
@@ -180,6 +181,7 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 			"id": row.Id, "name": row.Name, "description": row.Description,
 			"card_count": row.CardCount, "positions": json.RawMessage(row.Positions),
 			"enabled": row.Enabled, "charged": row.Charged, "recommended": row.Recommended,
+			"thumbnail": nullableConfig(row.Thumbnail), "preview": deckPreviewURL(row.Thumbnail),
 		})
 	}
 	writeOK(w, list)
@@ -200,8 +202,12 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 	}
 	var id int64
 	rec := req.Recommended != nil && *req.Recommended
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec).Scan(&id)
+	thumb := ""
+	if req.Thumbnail != nil {
+		thumb = strings.TrimSpace(*req.Thumbnail)
+	}
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended, thumbnail) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -237,9 +243,9 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var oldCount int
-	var oldPos string
+	var oldPos, oldThumb string
 	var oldRec bool
-	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, recommended FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldRec)
+	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, recommended, thumbnail FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldRec, &oldThumb)
 	if err != nil {
 		return biz("牌阵不存在")
 	}
@@ -256,8 +262,12 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	if req.Recommended != nil {
 		rec = *req.Recommended
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7 WHERE id=$8`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, id)
+	thumb := oldThumb
+	if req.Thumbnail != nil {
+		thumb = strings.TrimSpace(*req.Thumbnail)
+	}
+	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7, thumbnail=$8 WHERE id=$9`,
+		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb, id)
 	if err != nil {
 		return err
 	}

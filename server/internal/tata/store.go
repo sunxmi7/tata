@@ -676,6 +676,7 @@ CREATE TABLE IF NOT EXISTS decks (
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS recommended BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS thumbnail TEXT NOT NULL DEFAULT '';
 INSERT INTO decks(code, name, enabled, sort_order) VALUES ('rider-waite', '莱德韦特', true, 0)
 ON CONFLICT (code) DO NOTHING;
 `)
@@ -702,6 +703,7 @@ COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wech
 COMMENT ON TABLE spreads IS '牌阵。对应 GET /spreads；抽牌 spread_id。种子含时间流等。recommended 为选阵屏「推荐牌阵」角标。';
 COMMENT ON COLUMN spreads.positions IS 'JSON 牌位：index/name/meaning。';
 COMMENT ON COLUMN spreads.recommended IS '推荐牌阵。全表最多一张。App 列表推荐的排前面。';
+COMMENT ON COLUMN spreads.thumbnail IS '选阵屏牌阵示意图。空则 App 返回内置默认牌背，不编造构图。';
 COMMENT ON TABLE tarotists IS '塔罗师。对应 GET /tarotists；会员权益 benefits.tarotists.count 统计 enabled=true。';
 COMMENT ON TABLE vendors IS '大模型供应商。api_key_enc 用 KEK 加密。';
 COMMENT ON TABLE bindings IS '任务到供应商+模型的绑定。task=detect/rewrite/recommend/interpret/tarotist。';

@@ -20,5 +20,6 @@ type Spreads struct {
 	Enabled     any         //
 	Charged     any         //
 	Recommended any         //
+	Thumbnail   any         //
 	CreatedAt   *gtime.Time //
 }

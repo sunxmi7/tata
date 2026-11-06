@@ -8,6 +8,9 @@ export interface Spread {
   positions: Array<{ index: number; name: string; meaning: string }>;
   enabled: boolean;
   charged: boolean;
+  recommended?: boolean;
+  thumbnail?: string | null;
+  preview?: string;
 }
 
 export interface Tarotist {

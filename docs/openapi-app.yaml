@@ -440,7 +440,9 @@ paths:
       summary: 可用牌阵
       security:
         - AppBearer: []
-      description: 只返回 enabled=true。recommended=true 的排前面，其余按 id。匿名令牌也可以读。recommended 对应选阵屏「推荐牌阵」角标。
+      description: |
+        只返回 enabled=true。recommended=true 的排前面，其余按 id。匿名令牌也可以读。
+        recommended 对应选阵屏「推荐牌阵」角标。thumbnail 为牌阵示意图，未配则为内置默认牌背。
       responses:
         '200':
           description: data 为牌阵数组。
@@ -2535,6 +2537,9 @@ components:
         recommended:
           type: boolean
           description: 选阵屏「推荐牌阵」角标。全表最多一张为 true。未推荐为 false，不编造。
+        thumbnail:
+          type: string
+          description: 选阵屏牌阵示意图。未配置时为内置默认牌背 /uploads/card-default.png。
     Banner:
       type: object
       properties:

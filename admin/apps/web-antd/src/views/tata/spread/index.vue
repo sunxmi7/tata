@@ -33,12 +33,15 @@ const form = ref({
     '[{"index":1,"name":"过去","meaning":""},{"index":2,"name":"现在","meaning":""},{"index":3,"name":"未来","meaning":""}]',
   enabled: true,
   charged: false,
+  recommended: false,
+  thumbnail: '',
 });
 
 const columns = [
   { title: '名称', dataIndex: 'name' },
   { title: '牌数', dataIndex: 'card_count' },
   { title: '启用', dataIndex: 'enabled' },
+  { title: '推荐', dataIndex: 'recommended' },
   { title: '收费', dataIndex: 'charged' },
   { title: '操作', dataIndex: 'action' },
 ];
@@ -61,6 +64,8 @@ function showCreate() {
       '[{"index":1,"name":"过去","meaning":""},{"index":2,"name":"现在","meaning":""},{"index":3,"name":"未来","meaning":""}]',
     enabled: true,
     charged: false,
+    recommended: false,
+    thumbnail: '',
   };
   open.value = true;
 }
@@ -74,6 +79,8 @@ function showEdit(row: Spread) {
     positionsText: JSON.stringify(row.positions, null, 2),
     enabled: row.enabled,
     charged: row.charged,
+    recommended: row.recommended ?? false,
+    thumbnail: row.thumbnail ?? '',
   };
   open.value = true;
 }
@@ -87,6 +94,8 @@ async function save() {
     positions,
     enabled: form.value.enabled,
     charged: form.value.charged,
+    recommended: form.value.recommended,
+    thumbnail: form.value.thumbnail,
   };
   if (editing.value) {
     await updateSpread(editing.value.id, body);
@@ -113,6 +122,9 @@ onMounted(load);
             {{ record.enabled ? '启用' : '停用' }}
           </Tag>
         </template>
+        <template v-else-if="column.dataIndex === 'recommended'">
+          {{ record.recommended ? '是' : '否' }}
+        </template>
         <template v-else-if="column.dataIndex === 'charged'">
           {{ record.charged ? '是' : '否' }}
         </template>
@@ -126,9 +138,11 @@ onMounted(load);
         <Form.Item label="名称"><Input v-model:value="form.name" /></Form.Item>
         <Form.Item label="描述"><Input v-model:value="form.description" /></Form.Item>
         <Form.Item label="牌数"><InputNumber v-model:value="form.card_count" :min="1" /></Form.Item>
+        <Form.Item label="示意图 URL"><Input v-model:value="form.thumbnail" placeholder="空则默认牌背" /></Form.Item>
         <Form.Item label="牌位 JSON"><Input.TextArea v-model:value="form.positionsText" :rows="6" /></Form.Item>
         <Space>
           <span>启用</span><Switch v-model:checked="form.enabled" />
+          <span>推荐</span><Switch v-model:checked="form.recommended" />
           <span>是否收费</span><Switch v-model:checked="form.charged" />
         </Space>
       </Form>

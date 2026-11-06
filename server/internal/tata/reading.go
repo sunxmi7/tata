@@ -314,7 +314,7 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	if _, _, err := a.appActor(r); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended, thumbnail FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
 	}
@@ -322,13 +322,16 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, desc, pos string
+		var name, desc, pos, thumb string
 		var count int
 		var charged, recommended bool
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended); err != nil {
+		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended, &thumb); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": id, "name": name, "description": desc, "card_count": count, "positions": json.RawMessage(pos), "charged": charged, "recommended": recommended})
+		list = append(list, map[string]any{
+			"id": id, "name": name, "description": desc, "card_count": count, "positions": json.RawMessage(pos),
+			"charged": charged, "recommended": recommended, "thumbnail": deckPreviewURL(thumb),
+		})
 	}
 	writeOK(w, list)
 	return nil
