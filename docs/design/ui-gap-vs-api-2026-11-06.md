@@ -1,7 +1,7 @@
 # 塔塔 App 定稿 UI ↔ HTTP（2026-11-06）
 
 **设计：** Pixso「手机界面」`619:7`（浅色主屏；深色 / 平板 / 折叠为同一流程的主题与设备变体）。  
-**代码：** `server/internal/tata/routes.go`，App **69** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
+**代码：** `server/internal/tata/routes.go`，App **73** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
 
 **结论：** 定稿各模块 HTTP path 已对齐，下表标 **已确认**。还没对齐的只剩 §2。
 
@@ -26,6 +26,7 @@
 | 参与活动 | `565:6104` | `GET /campaigns` `{id}` `participations` `rewards` | 已确认（详情占位） |
 | 月度报告 | `565:7013` | `GET /monthly-reports` `POST .../save` | 已确认 |
 | 年运解锁卖点 | `574:2376` / `574:2423` / `574:2469` | `GET /yearly-reports/{year}` `POST .../unlock`；年卡免费、单独解锁价取 SKU | 已确认 |
+| 年运四步（12+6） | `574:2469` | `PUT .../profile` → `POST .../rhythm`（12）→ `POST .../domains`（6：感情/事业/财运/健康/人际/成长）→ `POST .../generate` | 已确认 |
 | 账号 | `572:1877` | `GET/PUT /profile`：`account_display` 脱敏手机优先，`public_id` 6 位 | 已确认 |
 | 通知设置 | `572:2735` | `GET/PUT /notification-preferences`；`POST /push/register` | 已确认 |
 | 心愿单 / 帮助 / 反馈 | `572:40` / `572:544` / `572:805` | 对应 path 已齐；帮助正文空则 pending | 已确认 |
@@ -38,19 +39,6 @@
 ---
 
 ## 2. 未对齐
-
-### 年运解锁后的生成流程
-
-解锁前 3 屏（密函 / 卖点 / 四步说明）接口已齐。  
-**同一套 UI** 的解锁后操作流（浅色 `689:*`、深色 `682:*`；`661:*` 为同流程原型）还没有接口：
-
-1. 填写出生时间（到分钟）和出生地址（现 `profile` 只有 `birth_date`）
-2. 十二宫抽 12 张
-3. 四季抽 4 张
-4. 生成中 → 年度总览 / 完整报告（十个生活领域）→ 收藏报告
-
-现有年运接口只有四段运营文案（`theme/domain/rhythm/action`）+ 解锁，撑不住这套抽牌和生成。  
-四步说明文案仍写「抽 6 张看六大领域」，抽牌屏是四季 4 张——是同一套里的文案未改，不是第二种 UI。
 
 ### 日历日详情字段
 
@@ -70,3 +58,4 @@
 |------|------|
 | 2026-11-06 | 对照 `619:7` 全模块；月报/年运/灵数等由「首版不做」改为补接口。 |
 | 2026-11-06 | 已对齐项标已确认。未对齐收成：年运生成流程、日历日详情字段、牌组介绍字段。11-03 过期 gap 文档已删。 |
+| 2026-11-06 | 年运按定稿 12+6 四步落地：profile / rhythm / domains / generate。 |

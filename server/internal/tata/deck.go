@@ -69,6 +69,10 @@ type drawnCard struct {
 }
 
 func drawCards(positions []position) ([]drawnCard, error) {
+	return drawCardsSkipping(positions, nil)
+}
+
+func drawCardsSkipping(positions []position, skip map[int]bool) ([]drawnCard, error) {
 	all := deck()
 	order := make([]int, len(all))
 	for i := range order {
@@ -82,6 +86,20 @@ func drawCards(positions []position) ([]drawnCard, error) {
 		j := int(n.Int64())
 		order[i], order[j] = order[j], order[i]
 	}
+	picked := make([]cardDef, 0, len(positions))
+	for _, idx := range order {
+		c := all[idx]
+		if skip[c.ID] {
+			continue
+		}
+		picked = append(picked, c)
+		if len(picked) == len(positions) {
+			break
+		}
+	}
+	if len(picked) < len(positions) {
+		return nil, biz("可用牌不足")
+	}
 	out := make([]drawnCard, len(positions))
 	for i, pos := range positions {
 		bit, err := rand.Int(rand.Reader, big.NewInt(2))
@@ -92,7 +110,7 @@ func drawCards(positions []position) ([]drawnCard, error) {
 		if bit.Int64() == 1 {
 			ori = "reversed"
 		}
-		c := all[order[i]]
+		c := picked[i]
 		out[i] = drawnCard{
 			Position:     pos.Index,
 			PositionName: pos.Name,
@@ -107,6 +125,10 @@ func drawCards(positions []position) ([]drawnCard, error) {
 // drawCardsNumerology maps 1–78 unique numbers onto the Rider-Waite deck in
 // position order. Orientation stays upright; the number only selects the card.
 func drawCardsNumerology(positions []position, numbers []int) ([]drawnCard, error) {
+	return drawCardsNumerologySkipping(positions, numbers, nil)
+}
+
+func drawCardsNumerologySkipping(positions []position, numbers []int, skip map[int]bool) ([]drawnCard, error) {
 	if len(numbers) != len(positions) {
 		return nil, biz("灵数个数必须与牌阵牌位数一致")
 	}
@@ -123,6 +145,9 @@ func drawCardsNumerology(positions []position, numbers []int) ([]drawnCard, erro
 		}
 		seen[n] = true
 		c := all[n-1]
+		if skip[c.ID] {
+			return nil, biz("这张牌已经用过")
+		}
 		out[i] = drawnCard{
 			Position:     pos.Index,
 			PositionName: pos.Name,

@@ -17,13 +17,13 @@
 - **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
 - **错误码（有界）**：错误包络新增 `error_code` 字段供客户端按码分支，message 仍为中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
 
-App 路由现为 **69** 条（含公开 `GET /uploads/{name}`）、完整契约 **126** 条，与 `routes.go` 仍 1:1。
+App 路由现为 **73** 条（含公开 `GET /uploads/{name}`）、完整契约 **130** 条，与 `routes.go` 仍 1:1。
 
 管理端价位三类：会员（`month_subscription` / `year_subscription` / `reading_pack`）、塔塔币（`consumable_pack`）、年运解锁（`yearly_unlock`）。种子已填设计价（分）和 App Store 占位商品号（`iap_skus.app_store_product_id`，如 `tata.membership.month`）；管理员改过的值保留。次卡用 `reading_grant` 发解读次数。App `GET /iap/skus?kind=` 按类型过滤。年运解锁价取已启用且已定价的 `yearly_unlock` SKU。
 
 2026-11-06 对照定稿 UI 补接口（对齐项已确认，见 [design/ui-gap-vs-api-2026-11-06.md](./design/ui-gap-vs-api-2026-11-06.md)）：
 - **月度报告**：`GET /api/app/v1/monthly-reports`、`POST /api/app/v1/monthly-reports/save`。统计来自当月 readings；寄语截取已完成解读，不编造。
-- **年度运势**：`GET /api/app/v1/yearly-reports/{id}`、`POST .../unlock`。年卡免费解锁；单独购买价取已启用 `yearly_unlock` SKU。解锁前卖点页已对齐；解锁后抽牌生成流程仍未对齐。
+- **年度运势**：`GET /yearly-reports/{id}`、`POST .../unlock`、`PUT .../profile`、`POST .../rhythm`（12 张全年节奏）、`POST .../domains`（6 张：感情/事业/财运/健康/人际/成长）、`POST .../generate`。年卡免费解锁；单独购买价取 `yearly_unlock` SKU。生成走 interpret 供应商，不编造。
 - **灵数抽牌**：`POST /readings/{id}/draw` 接受 `mode=numerology` + `numbers`（1–78 不重复，映射 Rider-Waite）。
 - **账号**：`account_display` 优先脱敏手机号；新增 6 位 `public_id`。
 - **会员/塔塔币**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）；6 档消耗包 `pack_60`…`pack_3280` 已填设计价。追问上限管理端 `PUT /quota-params` 可改，null 不限制。
@@ -36,7 +36,7 @@ App 路由现为 **69** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 
-仍未对齐：年运解锁后生成流程、日历日详情字段、牌组介绍字段。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。
+仍未对齐：日历日详情字段、牌组介绍字段。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。
 
 ## 导入 Apifox
 

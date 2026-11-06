@@ -324,7 +324,7 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int) (map[s
 		body, _ := raw["body"].(string)
 		bodies[key] = body
 	}
-	return map[string]any{
+	view := map[string]any{
 		"year":                  year,
 		"unlocked":              unlocked,
 		"unlock_source":         source,
@@ -339,7 +339,11 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int) (map[s
 		"sections":              sections,
 		"fields_confirmed":      true,
 		"content_invented":      false,
-	}, nil
+	}
+	if err := a.attachYearlyFlow(ctx, uid, year, view); err != nil {
+		return nil, err
+	}
+	return view, nil
 }
 
 func (a *App) yearlyUnlockPrice(ctx context.Context) (any, any, error) {

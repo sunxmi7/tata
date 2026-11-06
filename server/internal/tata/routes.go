@@ -126,6 +126,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/monthly-reports/save", a.h(a.appSaveMonthlyReport))
 	mux.HandleFunc("GET /api/app/v1/yearly-reports/{id}", a.h(a.appYearlyReport))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/unlock", a.h(a.appUnlockYearlyReport))
+	mux.HandleFunc("PUT /api/app/v1/yearly-reports/{id}/profile", a.h(a.appYearlyProfile))
+	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/rhythm", a.h(a.appYearlyRhythm))
+	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/domains", a.h(a.appYearlyDomains))
+	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/generate", a.h(a.appYearlyGenerate))
 	mux.HandleFunc("GET /api/app/v1/deck-preference", a.h(a.appGetDeckPreference))
 	mux.HandleFunc("PUT /api/app/v1/deck-preference", a.h(a.appPutDeckPreference))
 	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
@@ -250,10 +254,13 @@ func (a *App) appActor(r *http.Request) (userID int64, anon string, err error) {
 }
 
 func (a *App) lockGen(id int64) (func(), error) {
+	return a.lockNamed("gen:" + fmtID(id))
+}
+
+func (a *App) lockNamed(key string) (func(), error) {
 	if a.Redis == nil {
 		return func() {}, nil
 	}
-	key := "gen:" + fmtID(id)
 	ok, err := a.Redis.Lock(key, 60*time.Second)
 	if err != nil {
 		return nil, err

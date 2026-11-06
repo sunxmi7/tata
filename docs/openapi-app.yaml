@@ -73,7 +73,7 @@ tags:
   - name: 月度报告
     description: 按月汇总探索次数、陪伴天数、关注主题与寄语（寄语截取自当月已完成解读，不编造）。支持保存月报。
   - name: 年度运势
-    description: 年运解锁卖点已对齐。年卡免费解锁；单独购买价取已启用 yearly_unlock SKU（种子 ¥28.8）。正文四段取 app_config，空则 content_status=pending。解锁后十二宫/四季抽牌与生成流程尚未对齐。
+    description: 年运按定稿四步：解锁卖点 → 填基本信息 → 选 12 张全年节奏 → 抽 6 张六大领域（感情/事业/财运/健康/人际/成长）→ 生成报告。年卡免费解锁；单独购买价取 yearly_unlock SKU。卖点四段取 app_config，空则 pending。生成正文走模型，不编造。
   - name: 功能心愿单
     description: 提交功能心愿（含图片上传）。
   - name: 帮助中心
@@ -1957,7 +1957,8 @@ paths:
         - AppBearer: []
       description: |
         必须登录。路径 id 为年份。年卡有效则 unlocked=true。
-        单独购买价格取已启用的 yearly_unlock SKU（种子 ¥28.8）。正文取 app_config yearly.{year}.*，未填 content_status=pending。
+        单独购买价格取已启用的 yearly_unlock SKU（种子 ¥28.8）。卖点四段取 app_config yearly.{year}.*，未填 content_status=pending。
+        解锁后按定稿四步：profile → rhythm（12 张全年节奏）→ domains（6 张六大领域）→ generate。step 指出当前步。
       parameters:
         - $ref: '#/components/parameters/PathId'
       responses:
@@ -1986,6 +1987,144 @@ paths:
       description: 必须登录。年卡有效则免费解锁；已定价则提示通过内购单独解锁；未定价则「年卡未开通，单独购买价格未配置」。
       parameters:
         - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: data 为 YearlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/YearlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/yearly-reports/{id}/profile:
+    put:
+      tags: [年度运势]
+      operationId: appYearlyProfile
+      summary: 年运填写基本信息
+      security:
+        - AppBearer: []
+      description: |
+        必须已解锁。birth_date 必填（YYYY-MM-DD，不能是未来）。gender 可选：女性 / 男性 / 不愿透露。
+        同时写入档案。完成后 step=rhythm。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/YearlyProfileBody'
+      responses:
+        '200':
+          description: data 为 YearlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/YearlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/yearly-reports/{id}/rhythm:
+    post:
+      tags: [年度运势]
+      operationId: appYearlyRhythm
+      summary: 年运选 12 张全年节奏牌
+      security:
+        - AppBearer: []
+      description: |
+        必须已填基本信息。mode=normal 或不传 numbers 为随机抽 12 张（一月至十二月）。
+        mode=pick 或只传 numbers 时，numbers 为 12 个不重复的 1–78，映射 Rider-Waite。
+        抽完不可重抽。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/YearlyDrawBody'
+      responses:
+        '200':
+          description: data 为 YearlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/YearlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/yearly-reports/{id}/domains:
+    post:
+      tags: [年度运势]
+      operationId: appYearlyDomains
+      summary: 年运抽 6 张六大领域牌
+      security:
+        - AppBearer: []
+      description: |
+        必须已选完 12 张节奏牌。六大领域顺序：感情、事业、财运、健康、人际、成长。
+        从剩余 66 张中抽取，不与节奏牌重复。mode 规则同 rhythm。抽完不可重抽。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/YearlyDrawBody'
+      responses:
+        '200':
+          description: data 为 YearlyReport。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: '#/components/schemas/SuccessMeta'
+                      - type: object
+                        properties:
+                          data:
+                            $ref: '#/components/schemas/YearlyReport'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/yearly-reports/{id}/generate:
+    post:
+      tags: [年度运势]
+      operationId: appYearlyGenerate
+      summary: 生成年度报告
+      security:
+        - AppBearer: []
+      description: |
+        必须已抽完 12+6。走 interpret 供应商，按牌面生成报告，不编造。
+        已生成则原样返回。失败可重试，不改牌面。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
       responses:
         '200':
           description: data 为 YearlyReport。
@@ -2763,6 +2902,93 @@ components:
           type: boolean
         content_invented:
           type: boolean
+        step:
+          type: string
+          description: locked / profile / rhythm / domains / generate / generating / ready
+        profile:
+          type: object
+          properties:
+            birth_date:
+              type: string
+              nullable: true
+            gender:
+              type: string
+              nullable: true
+            completed:
+              type: boolean
+        rhythm_cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/YearlyCard'
+        domain_cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/YearlyCard'
+        report:
+          type: string
+          nullable: true
+        report_status:
+          type: string
+          enum: [pending, generating, ready, failed]
+        fail_reason:
+          type: string
+          nullable: true
+        generated_at:
+          type: string
+          format: date-time
+          nullable: true
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              title:
+                type: string
+              done:
+                type: boolean
+              required:
+                type: integer
+              drawn:
+                type: integer
+    YearlyCard:
+      type: object
+      properties:
+        position:
+          type: integer
+        position_name:
+          type: string
+        card_id:
+          type: integer
+        name:
+          type: string
+        orientation:
+          type: string
+        card_thumbnail:
+          type: string
+    YearlyProfileBody:
+      type: object
+      additionalProperties: false
+      required: [birth_date]
+      properties:
+        birth_date:
+          type: string
+          description: YYYY-MM-DD
+        gender:
+          type: string
+          enum: [女性, 男性, 不愿透露, '']
+    YearlyDrawBody:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: ['', normal, pick]
+        numbers:
+          type: array
+          items:
+            type: integer
     DeckPreference:
       type: object
       properties:

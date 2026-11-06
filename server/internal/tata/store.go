@@ -628,6 +628,18 @@ CREATE TABLE IF NOT EXISTS yearly_reports (
   unlocked_at TIMESTAMPTZ,
   PRIMARY KEY (user_id, year)
 );
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS profile_at TIMESTAMPTZ;
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS rhythm_cards TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS domain_cards TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS report TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS report_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS fail_reason TEXT;
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
+ALTER TABLE yearly_reports DROP CONSTRAINT IF EXISTS yearly_reports_report_status_chk;
+ALTER TABLE yearly_reports ADD CONSTRAINT yearly_reports_report_status_chk
+  CHECK (report_status IN ('pending','generating','ready','failed'));
 ALTER TABLE iap_skus ADD COLUMN IF NOT EXISTS reading_grant INT;
 ALTER TABLE iap_orders ADD COLUMN IF NOT EXISTS credited_readings INT;
 ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS followup_limit INT DEFAULT 5;
@@ -701,8 +713,12 @@ COMMENT ON COLUMN readings.cards IS 'JSON 牌面。灵数抽牌 numbers 映射 R
 COMMENT ON TABLE reading_messages IS '解读追问对话。对应 /readings/{id}/messages、followups。';
 
 COMMENT ON TABLE monthly_report_saves IS '月度报告「已保存」标记。对应 POST /monthly-reports/save。统计仍现查 readings。';
-COMMENT ON TABLE yearly_reports IS '年度运势解锁状态。对应 GET /yearly-reports/{year}。年卡免费；单独购买走 yearly_unlock SKU。';
-COMMENT ON COLUMN yearly_reports.unlock_source IS 'year_subscription 年卡免费，purchase 次单独买。';
+COMMENT ON TABLE yearly_reports IS '年度运势。解锁后按定稿四步：资料 → 12 张全年节奏 → 6 张六大领域 → 生成报告。';
+COMMENT ON COLUMN yearly_reports.unlock_source IS 'year_subscription 年卡免费，purchase 单独买。';
+COMMENT ON COLUMN yearly_reports.rhythm_cards IS '12 张全年节奏牌 JSON。空表示未抽。';
+COMMENT ON COLUMN yearly_reports.domain_cards IS '6 张六大领域牌 JSON（感情/事业/财运/健康/人际/成长）。空表示未抽。不与节奏牌重复。';
+COMMENT ON COLUMN yearly_reports.report IS '模型生成的年度报告正文。未生成前为空，不编造。';
+COMMENT ON COLUMN yearly_reports.report_status IS 'pending / generating / ready / failed。';
 
 COMMENT ON TABLE iap_skus IS '内购价位，三类对应三块屏：会员（月/年/次卡 593:1905）、塔塔币 6 档（565:1904）、年运单独解锁（574:2423）。种子已填设计价与 App Store 占位商品号；管理员改过的价与商品号 COALESCE 保留。对应 GET /iap/skus 与管理端价位页。';
 COMMENT ON COLUMN iap_skus.kind IS 'month_subscription 会员月卡；year_subscription 会员年卡；reading_pack 会员次卡；consumable_pack 塔塔币；yearly_unlock 年运解锁。';
