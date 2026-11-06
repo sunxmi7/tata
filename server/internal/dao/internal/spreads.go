@@ -28,6 +28,7 @@ type SpreadsColumns struct {
 	Positions   string //
 	Enabled     string //
 	Charged     string //
+	Recommended string //
 	CreatedAt   string //
 }
 
@@ -40,6 +41,7 @@ var spreadsColumns = SpreadsColumns{
 	Positions:   "positions",
 	Enabled:     "enabled",
 	Charged:     "charged",
+	Recommended: "recommended",
 	CreatedAt:   "created_at",
 }
 

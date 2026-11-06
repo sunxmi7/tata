@@ -9,6 +9,6 @@ import (
 
 func ListSpreads(ctx context.Context) ([]entity.Spreads, error) {
 	var rows []entity.Spreads
-	err := dao.Spreads.Ctx(ctx).OrderAsc(dao.Spreads.Columns().Id).Scan(&rows)
+	err := dao.Spreads.Ctx(ctx).OrderDesc(dao.Spreads.Columns().Recommended).OrderAsc(dao.Spreads.Columns().Id).Scan(&rows)
 	return rows, err
 }

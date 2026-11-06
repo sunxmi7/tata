@@ -1,6 +1,7 @@
 package tata
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -157,6 +158,7 @@ type spreadBody struct {
 	Positions   []position `json:"positions"`
 	Enabled     *bool      `json:"enabled"`
 	Charged     *bool      `json:"charged"`
+	Recommended *bool      `json:"recommended"`
 }
 
 func (b spreadBody) enabled() bool {
@@ -177,7 +179,7 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 		list = append(list, map[string]any{
 			"id": row.Id, "name": row.Name, "description": row.Description,
 			"card_count": row.CardCount, "positions": json.RawMessage(row.Positions),
-			"enabled": row.Enabled, "charged": row.Charged,
+			"enabled": row.Enabled, "charged": row.Charged, "recommended": row.Recommended,
 		})
 	}
 	writeOK(w, list)
@@ -197,9 +199,13 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var id int64
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged()).Scan(&id)
+	rec := req.Recommended != nil && *req.Recommended
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec).Scan(&id)
 	if err != nil {
+		return err
+	}
+	if err := a.exclusiveSpreadRecommended(r.Context(), id, rec); err != nil {
 		return err
 	}
 	a.Store.audit(r.Context(), act.id, "create", "spread", fmtID(id), req.Name)
@@ -232,7 +238,8 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	}
 	var oldCount int
 	var oldPos string
-	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos)
+	var oldRec bool
+	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, recommended FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldRec)
 	if err != nil {
 		return biz("牌阵不存在")
 	}
@@ -245,17 +252,32 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 			return biz("牌阵已被占卜使用，不能修改牌数或牌位")
 		}
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6 WHERE id=$7`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), id)
+	rec := oldRec
+	if req.Recommended != nil {
+		rec = *req.Recommended
+	}
+	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7 WHERE id=$8`,
+		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return biz("牌阵不存在")
 	}
+	if err := a.exclusiveSpreadRecommended(r.Context(), id, rec); err != nil {
+		return err
+	}
 	a.Store.audit(r.Context(), act.id, "update", "spread", fmtID(id), req.Name)
 	writeOK(w, true)
 	return nil
+}
+
+func (a *App) exclusiveSpreadRecommended(ctx context.Context, id int64, on bool) error {
+	if !on {
+		return nil
+	}
+	_, err := a.Store.Exec(ctx, `UPDATE spreads SET recommended=false WHERE recommended=true AND id<>$1`, id)
+	return err
 }
 
 func (a *App) adminDeleteSpread(w http.ResponseWriter, r *http.Request) error {

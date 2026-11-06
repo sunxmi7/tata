@@ -17,5 +17,6 @@ type Spreads struct {
 	Positions   string      `json:"positions"   orm:"positions"   description:""`
 	Enabled     bool        `json:"enabled"     orm:"enabled"     description:""`
 	Charged     bool        `json:"charged"     orm:"charged"     description:""`
+	Recommended bool        `json:"recommended" orm:"recommended" description:""`
 	CreatedAt   *gtime.Time `json:"created_at"  orm:"created_at"  description:""`
 }

@@ -18,7 +18,7 @@
 | 探索 | `565:997` | `GET /explore/topics` → `POST /readings`（客户端带 question / source=explore / 再选阵） | 已确认 |
 | 我的中心 | `565:1551` | 无独立 path，复用 profile / quota / 各入口 | 已确认 |
 | 抽牌 / 灵数 | `595:868`…`595:637` | `POST /readings` 及子资源；`draw` 接受 `mode=numerology` | 已确认 |
-| 牌阵 | `595:5054` | `GET /spreads` + `POST /readings/{id}/spread` | 已确认 |
+| 牌阵 | `595:95` / `595:5054` | `GET /spreads` 含 recommended；`POST /readings/{id}/spread` | 已确认 |
 | 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label）`GET/DELETE /readings/{id}` | 已确认 |
 | 日历筛选 | `574:306` | `GET /calendar?type=` | 已确认 |
 | 日历日详情 | `574:2` | `GET /calendar` 项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at | 已确认 |
@@ -55,3 +55,4 @@
 | 2026-11-06 | 年运按定稿 12+6 四步落地：profile / rhythm / domains / generate。 |
 | 2026-11-06 | 日历日详情按 `574:2` 补预览字段，不新开 path。 |
 | 2026-11-06 | 牌组介绍写入 `decks.description` / `decks.tags`，经 `GET /deck-preference` 与 `PUT /copy/decks` 暴露。 |
+| 2026-11-06 | 选阵「推荐牌阵」写入 `spreads.recommended`，经 `GET /spreads` 与管理端牌阵接口暴露。 |

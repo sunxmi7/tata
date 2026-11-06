@@ -1,6 +1,7 @@
 package tata
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -287,6 +288,58 @@ func TestPublicIDStableAndEmailFallback(t *testing.T) {
 	second := listOne(t, ts, token, "/api/app/v1/profile")
 	if second["public_id"] != id1 {
 		t.Fatalf("public_id changed %s -> %s", id1, second["public_id"])
+	}
+}
+
+func TestSpreadRecommended(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	token, _ := registerUser(t, ts, store, "spredrec")
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `DELETE FROM spreads WHERE name<>'时间流'`)
+		_, _ = store.Exec(context.Background(), `UPDATE spreads SET recommended=true, enabled=true WHERE name='时间流'`)
+	})
+
+	appList := list(t, ts, token, "/api/app/v1/spreads")
+	if len(appList) == 0 || appList[0]["name"] != "时间流" || appList[0]["recommended"] != true {
+		t.Fatalf("seed recommended: %#v", appList)
+	}
+
+	created := create(t, ts, admin.access, "/api/admin/v1/spreads", map[string]any{
+		"name": "多维解读", "description": "多个角度", "card_count": 1,
+		"positions":   []map[string]any{{"index": 1, "name": "核心", "meaning": ""}},
+		"recommended": true,
+	})
+	newID := asID(created["id"])
+
+	appList = list(t, ts, token, "/api/app/v1/spreads")
+	if appList[0]["name"] != "多维解读" || appList[0]["recommended"] != true {
+		t.Fatalf("new recommended first: %#v", appList)
+	}
+	foundTime := false
+	for _, s := range appList {
+		if s["name"] == "时间流" {
+			foundTime = true
+			if s["recommended"] != false {
+				t.Fatalf("old still recommended: %#v", s)
+			}
+		}
+	}
+	if !foundTime {
+		t.Fatalf("time flow missing: %#v", appList)
+	}
+
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", newID), map[string]any{
+		"name": "多维解读", "description": "多个角度", "card_count": 1,
+		"positions":   []map[string]any{{"index": 1, "name": "核心", "meaning": ""}},
+		"enabled":     false,
+		"recommended": true,
+	})
+	appList = list(t, ts, token, "/api/app/v1/spreads")
+	for _, s := range appList {
+		if s["recommended"] == true {
+			t.Fatalf("disabled recommended still listed: %#v", appList)
+		}
 	}
 }
 

@@ -675,6 +675,7 @@ CREATE TABLE IF NOT EXISTS decks (
 );
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS recommended BOOLEAN NOT NULL DEFAULT false;
 INSERT INTO decks(code, name, enabled, sort_order) VALUES ('rider-waite', '莱德韦特', true, 0)
 ON CONFLICT (code) DO NOTHING;
 `)
@@ -698,8 +699,9 @@ COMMENT ON COLUMN app_users.merged_into IS '并账后指向主账号 id。被合
 COMMENT ON TABLE refresh_tokens IS '刷新令牌。App 登录不签发；管理端会话用。';
 COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wechat/apple），删号后仍占坑防抢注。';
 
-COMMENT ON TABLE spreads IS '牌阵。对应 GET /spreads；抽牌 spread_id。种子含时间流等。';
+COMMENT ON TABLE spreads IS '牌阵。对应 GET /spreads；抽牌 spread_id。种子含时间流等。recommended 为选阵屏「推荐牌阵」角标。';
 COMMENT ON COLUMN spreads.positions IS 'JSON 牌位：index/name/meaning。';
+COMMENT ON COLUMN spreads.recommended IS '推荐牌阵。全表最多一张。App 列表推荐的排前面。';
 COMMENT ON TABLE tarotists IS '塔罗师。对应 GET /tarotists；会员权益 benefits.tarotists.count 统计 enabled=true。';
 COMMENT ON TABLE vendors IS '大模型供应商。api_key_enc 用 KEK 加密。';
 COMMENT ON TABLE bindings IS '任务到供应商+模型的绑定。task=detect/rewrite/recommend/interpret/tarotist。';
@@ -802,9 +804,18 @@ func (s *Store) seed(ctx context.Context) error {
 			{Index: 2, Name: "现在", Meaning: "当前处境、核心矛盾或主要影响因素"},
 			{Index: 3, Name: "未来", Meaning: "当前发展趋势及潜在走向，不代表必然发生"},
 		})
-		_, err := s.Exec(ctx, `INSERT INTO spreads(name, description, card_count, positions, enabled, charged) VALUES ($1,$2,$3,$4,true,false)`,
+		_, err := s.Exec(ctx, `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended) VALUES ($1,$2,$3,$4,true,false,true)`,
 			"时间流", "过去 / 现在 / 未来", 3, string(pos))
 		if err != nil {
+			return err
+		}
+	}
+	var rec int
+	if err := s.QueryRow(ctx, `SELECT count(*) FROM spreads WHERE recommended`).Scan(&rec); err != nil {
+		return err
+	}
+	if rec == 0 {
+		if _, err := s.Exec(ctx, `UPDATE spreads SET recommended=true WHERE name='时间流'`); err != nil {
 			return err
 		}
 	}

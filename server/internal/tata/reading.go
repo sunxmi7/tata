@@ -314,7 +314,7 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	if _, _, err := a.appActor(r); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged FROM spreads WHERE enabled=true ORDER BY id`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
 	}
@@ -324,11 +324,11 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 		var id int64
 		var name, desc, pos string
 		var count int
-		var charged bool
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged); err != nil {
+		var charged, recommended bool
+		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": id, "name": name, "description": desc, "card_count": count, "positions": json.RawMessage(pos), "charged": charged})
+		list = append(list, map[string]any{"id": id, "name": name, "description": desc, "card_count": count, "positions": json.RawMessage(pos), "charged": charged, "recommended": recommended})
 	}
 	writeOK(w, list)
 	return nil
