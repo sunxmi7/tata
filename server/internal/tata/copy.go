@@ -446,11 +446,13 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		a.Store.audit(r.Context(), act.id, "update", "copy", kind, req.CampaignID)
 	case "decks":
 		var req struct {
-			Code      string  `json:"code"`
-			Name      string  `json:"name"`
-			Thumbnail *string `json:"thumbnail"`
-			Enabled   *bool   `json:"enabled"`
-			SortOrder *int    `json:"sort_order"`
+			Code        string    `json:"code"`
+			Name        string    `json:"name"`
+			Thumbnail   *string   `json:"thumbnail"`
+			Description *string   `json:"description"`
+			Tags        *[]string `json:"tags"`
+			Enabled     *bool     `json:"enabled"`
+			SortOrder   *int      `json:"sort_order"`
 		}
 		if err := decode(r, &req); err != nil {
 			return err
@@ -459,11 +461,11 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		if !validContentID(code) {
 			return biz("牌面编码不正确")
 		}
-		var curName, curThumb string
+		var curName, curThumb, curDesc, curTags string
 		var curEnabled bool
 		var curSort int
-		err := a.Store.QueryRow(r.Context(), `SELECT name, thumbnail, enabled, sort_order FROM decks WHERE code=$1`, code).
-			Scan(&curName, &curThumb, &curEnabled, &curSort)
+		err := a.Store.QueryRow(r.Context(), `SELECT name, thumbnail, enabled, sort_order, description, tags FROM decks WHERE code=$1`, code).
+			Scan(&curName, &curThumb, &curEnabled, &curSort, &curDesc, &curTags)
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -478,6 +480,22 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		thumb := curThumb
 		if req.Thumbnail != nil {
 			thumb = strings.TrimSpace(*req.Thumbnail)
+		}
+		desc := curDesc
+		if req.Description != nil {
+			d, nerr := normalizeDeckDescription(*req.Description)
+			if nerr != nil {
+				return nerr
+			}
+			desc = d
+		}
+		tagJSON := curTags
+		if req.Tags != nil {
+			tags, nerr := normalizeDeckTags(*req.Tags)
+			if nerr != nil {
+				return nerr
+			}
+			tagJSON = encodeDeckTags(tags)
 		}
 		enabled := true
 		if exists {
@@ -500,13 +518,13 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		if exists {
-			if _, err := a.Store.Exec(r.Context(), `UPDATE decks SET name=$1, thumbnail=$2, enabled=$3, sort_order=$4, updated_at=now() WHERE code=$5`,
-				name, thumb, enabled, sortOrder, code); err != nil {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE decks SET name=$1, thumbnail=$2, enabled=$3, sort_order=$4, description=$5, tags=$6, updated_at=now() WHERE code=$7`,
+				name, thumb, enabled, sortOrder, desc, tagJSON, code); err != nil {
 				return err
 			}
 		} else {
-			if _, err := a.Store.Exec(r.Context(), `INSERT INTO decks(code, name, thumbnail, enabled, sort_order) VALUES ($1,$2,$3,$4,$5)`,
-				code, name, thumb, enabled, sortOrder); err != nil {
+			if _, err := a.Store.Exec(r.Context(), `INSERT INTO decks(code, name, thumbnail, enabled, sort_order, description, tags) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+				code, name, thumb, enabled, sortOrder, desc, tagJSON); err != nil {
 				return err
 			}
 		}

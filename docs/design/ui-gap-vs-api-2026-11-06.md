@@ -3,7 +3,7 @@
 **设计：** Pixso「手机界面」`619:7`（浅色主屏；深色 / 平板 / 折叠为同一流程的主题与设备变体）。  
 **代码：** `server/internal/tata/routes.go`，App **73** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
 
-**结论：** 定稿各模块 HTTP path 已对齐，下表标 **已确认**。还没对齐的只剩 §2。
+**结论：** 定稿各模块 HTTP path 与字段已对齐，下表标 **已确认**。运营填值见 content backlog。
 
 运营填文案/图见 [ui-content-backlog-2026-11-06.md](./ui-content-backlog-2026-11-06.md)。
 
@@ -14,12 +14,14 @@
 | 模块 | 定稿节点 | 接口 | 状态 |
 |------|----------|------|------|
 | 首页 | `565:33` / 未抽 `685:8` | `GET /banners` `GET /tarotists` `GET /spreads` `GET /quota` `POST /daily` `GET/PUT /deck-preference` | 已确认 |
+| 我的塔罗牌 | `693:39` | `GET/PUT /deck-preference`：`available[]` 含 description / tags；78 张预览客户端拼 | 已确认 |
 | 探索 | `565:997` | `GET /explore/topics` → `POST /readings`（客户端带 question / source=explore / 再选阵） | 已确认 |
 | 我的中心 | `565:1551` | 无独立 path，复用 profile / quota / 各入口 | 已确认 |
 | 抽牌 / 灵数 | `595:868`…`595:637` | `POST /readings` 及子资源；`draw` 接受 `mode=numerology` | 已确认 |
 | 牌阵 | `595:5054` | `GET /spreads` + `POST /readings/{id}/spread` | 已确认 |
 | 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label）`GET/DELETE /readings/{id}` | 已确认 |
 | 日历筛选 | `574:306` | `GET /calendar?type=` | 已确认 |
+| 日历日详情 | `574:2` | `GET /calendar` 项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at | 已确认 |
 | 今日一牌 | 首页 / `POST /daily` | `card_name` / `yi` / `card_thumbnail` / `short_text`；没配图出默认牌背 | 已确认 |
 | 塔塔币 / 会员 | `565:1904` / `593:1905` | `GET /iap/skus` 档位与权益结构已齐；价为种子/管理端值 | 已确认 |
 | 兑换码 | `565:2024` | `POST /redeem` `GET /redeem/records` | 已确认（记录行未定稿，可空） |
@@ -40,15 +42,7 @@
 
 ## 2. 未对齐
 
-### 日历日详情字段
-
-`574:2` 日详情要：今日一牌图 / 正逆位 / 短文、普通占卜多张缩略图、占卜师名、时分。  
-`GET /calendar` 只有 `id/type/question/status/business_date/progress`。历史列表已有预览字段，日历没有。不新开 path，差的是日历项字段。
-
-### 牌组介绍字段
-
-`693:39`「我的塔罗牌」有套装描述和标签。  
-`GET /deck-preference` 只有 code / 名称 / 预览图。78 张牌名客户端可本地拼缩略图，不必新开 path。
+无。接口字段已齐；还剩运营填文案/图与 Connect 商品号，见 [ui-content-backlog-2026-11-06.md](./ui-content-backlog-2026-11-06.md)。
 
 ---
 
@@ -59,3 +53,5 @@
 | 2026-11-06 | 对照 `619:7` 全模块；月报/年运/灵数等由「首版不做」改为补接口。 |
 | 2026-11-06 | 已对齐项标已确认。未对齐收成：年运生成流程、日历日详情字段、牌组介绍字段。11-03 过期 gap 文档已删。 |
 | 2026-11-06 | 年运按定稿 12+6 四步落地：profile / rhythm / domains / generate。 |
+| 2026-11-06 | 日历日详情按 `574:2` 补预览字段，不新开 path。 |
+| 2026-11-06 | 牌组介绍写入 `decks.description` / `decks.tags`，经 `GET /deck-preference` 与 `PUT /copy/decks` 暴露。 |

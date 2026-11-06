@@ -835,25 +835,95 @@ func attachDailyHome(item map[string]any, target, business string, yi, thumbnail
 	item["has_result"] = name != ""
 }
 
-func firstCardName(v any) string {
-	var raw []byte
+type previewCard struct {
+	Name        string `json:"name"`
+	Orientation string `json:"orientation"`
+}
+
+func cardsBytes(v any) []byte {
 	switch t := v.(type) {
 	case json.RawMessage:
-		raw = t
+		return t
 	case []byte:
-		raw = t
+		return t
 	case string:
-		raw = []byte(t)
+		if t == "" {
+			return nil
+		}
+		return []byte(t)
+	case *string:
+		if t == nil || *t == "" {
+			return nil
+		}
+		return []byte(*t)
 	default:
-		return ""
+		return nil
 	}
-	var cards []struct {
-		Name string `json:"name"`
+}
+
+func parsePreviewCards(v any) []previewCard {
+	raw := cardsBytes(v)
+	if len(raw) == 0 {
+		return nil
 	}
-	if json.Unmarshal(raw, &cards) != nil || len(cards) == 0 {
+	var cards []previewCard
+	if json.Unmarshal(raw, &cards) != nil {
+		return nil
+	}
+	return cards
+}
+
+func firstCardName(v any) string {
+	cards := parsePreviewCards(v)
+	if len(cards) == 0 {
 		return ""
 	}
 	return cards[0].Name
+}
+
+func readingTypeLabel(typ string) string {
+	switch typ {
+	case "daily":
+		return "今日一牌"
+	case "normal":
+		return "普通占卜"
+	case "tarotist":
+		return "占卜师"
+	case "explore":
+		return "探索"
+	default:
+		return ""
+	}
+}
+
+func attachCalendarPreview(item map[string]any, cfg map[string]string, tarotistName, tarotistAvatar string) {
+	attachReadingPreview(item)
+	cards := parsePreviewCards(item["cards"])
+	ori := ""
+	if len(cards) > 0 {
+		ori = cards[0].Orientation
+	}
+	item["orientation"] = ori
+	label := ""
+	if ori == "upright" || ori == "reversed" {
+		label = orientationLabel(ori)
+	}
+	item["orientation_label"] = label
+	thumbs := make([]any, 0, len(cards))
+	for _, c := range cards {
+		if u := resolveCardThumbnail(cfg, c.Name); u != nil {
+			thumbs = append(thumbs, u)
+		}
+	}
+	item["card_thumbnails"] = thumbs
+	name, _ := item["card_name"].(string)
+	item["card_thumbnail"] = resolveCardThumbnail(cfg, name)
+	typ, _ := item["type"].(string)
+	item["type_label"] = readingTypeLabel(typ)
+	item["tarotist_name"] = emptyAsNil(tarotistName)
+	item["tarotist_avatar"] = emptyAsNil(tarotistAvatar)
+	delete(item, "cards")
+	delete(item, "interpretation")
 }
 
 func interpText(v any) string {

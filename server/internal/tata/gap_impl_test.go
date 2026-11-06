@@ -155,6 +155,71 @@ func TestCalendarTypeFilter(t *testing.T) {
 	}
 }
 
+func TestCalendarDayPreviewFields(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, uid := registerUser(t, ts, store, "calprev")
+	tid := firstTarotist(t, ts, token)
+	day := time.Now().Format("2006-01-02")
+	at := time.Date(2026, 10, 19, 10, 24, 0, 0, time.UTC)
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, cards, interpretation, created_at, updated_at)
+		VALUES ($1,'daily','今日一牌','COMPLETED',$2,'[{"name":"女皇","orientation":"upright"}]','把温柔留给生活，也留一点给自己。',$3,$3)`, uid, day, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, cards, interpretation, created_at, updated_at)
+		VALUES ($1,'normal','我该如何面对最近的工作变化？','COMPLETED',$2,'[{"name":"愚者","orientation":"upright"},{"name":"魔术师","orientation":"reversed"},{"name":"女祭司","orientation":"upright"}]','先把选择看清楚。',$3,$3)`, uid, day, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, tarotist_id, created_at, updated_at)
+		VALUES ($1,'tarotist','怎样更好地表达自己的感受？','QUESTION_CREATED',$2,$3,$4,$4)`, uid, day, tid, at); err != nil {
+		t.Fatal(err)
+	}
+
+	tarotists := list(t, ts, token, "/api/app/v1/tarotists")
+	wantName := ""
+	for _, row := range tarotists {
+		if asID(row["id"]) == tid {
+			wantName = fmt.Sprint(row["name"])
+			break
+		}
+	}
+	if wantName == "" {
+		t.Fatalf("tarotist name: %#v", tarotists)
+	}
+
+	view := listOne(t, ts, token, "/api/app/v1/calendar")
+	days, _ := view["days"].([]any)
+	byType := map[string]map[string]any{}
+	for _, raw := range days {
+		row := raw.(map[string]any)
+		byType[fmt.Sprint(row["type"])] = row
+	}
+
+	daily := byType["daily"]
+	if daily["card_name"] != "女皇" || daily["orientation"] != "upright" || daily["orientation_label"] != "正位" || daily["type_label"] != "今日一牌" {
+		t.Fatalf("daily: %#v", daily)
+	}
+	if daily["card_thumbnail"] != defaultCardThumbnailPath {
+		t.Fatalf("daily thumb: %#v", daily["card_thumbnail"])
+	}
+	if !strings.Contains(fmt.Sprint(daily["short_text"]), "把温柔") {
+		t.Fatalf("daily text: %#v", daily)
+	}
+
+	normal := byType["normal"]
+	thumbs, _ := normal["card_thumbnails"].([]any)
+	if len(thumbs) != 3 || normal["type_label"] != "普通占卜" || normal["status_label"] != "已解读" {
+		t.Fatalf("normal: %#v", normal)
+	}
+
+	tar := byType["tarotist"]
+	if tar["type_label"] != "占卜师" || tar["status_label"] != "待继续" || tar["tarotist_name"] != wantName {
+		t.Fatalf("tarotist: %#v", tar)
+	}
+	if tar["created_at"] == nil || tar["card_thumbnails"] == nil {
+		t.Fatalf("time/thumbs: %#v", tar)
+	}
+}
+
 func TestDeckPreferenceAndIAPPacks(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, _ := registerUser(t, ts, store, "deckiap")

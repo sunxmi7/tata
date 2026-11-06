@@ -166,12 +166,12 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	t.Cleanup(func() {
 		_, _ = store.Exec(context.Background(), `DELETE FROM decks WHERE code<>'rider-waite'`)
-		_, _ = store.Exec(context.Background(), `UPDATE decks SET name='莱德韦特', thumbnail='', enabled=true, sort_order=0 WHERE code='rider-waite'`)
+		_, _ = store.Exec(context.Background(), `UPDATE decks SET name='莱德韦特', thumbnail='', description='', tags='', enabled=true, sort_order=0 WHERE code='rider-waite'`)
 	})
 	if _, err := store.Exec(t.Context(), `DELETE FROM decks WHERE code<>'rider-waite'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE decks SET name='莱德韦特', thumbnail='', enabled=true, sort_order=0 WHERE code='rider-waite'`); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE decks SET name='莱德韦特', thumbnail='', description='', tags='', enabled=true, sort_order=0 WHERE code='rider-waite'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,6 +184,12 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 	item := avail[0].(map[string]any)
 	if item["name"] != "莱德韦特" || item["thumbnail"] != defaultCardThumbnailPath || item["available"] != true {
 		t.Fatalf("seed preview: %#v", item)
+	}
+	if item["description"] != "" {
+		t.Fatalf("invented description: %#v", item)
+	}
+	if tags, _ := item["tags"].([]any); len(tags) != 0 {
+		t.Fatalf("invented tags: %#v", item)
 	}
 	msg, _ := call(t, ts, token, http.MethodPut, "/api/app/v1/deck-preference", map[string]any{"code": "marseille"})
 	if !strings.Contains(msg, "尚未开放") {
@@ -205,6 +211,8 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/decks", map[string]any{
 		"code": "test-deck", "thumbnail": "https://cdn.example.test/deck.png",
+		"description": "简约神秘的原创牌面，适合日常占卜与深度提问。",
+		"tags":        []string{"简约大气", "神秘平衡", "通用百搭"},
 	})
 	pref = listOne(t, ts, token, "/api/app/v1/deck-preference")
 	found := false
@@ -215,10 +223,28 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 			if row["thumbnail"] != "https://cdn.example.test/deck.png" {
 				t.Fatalf("deck thumb: %#v", row)
 			}
+			if row["description"] != "简约神秘的原创牌面，适合日常占卜与深度提问。" {
+				t.Fatalf("deck description: %#v", row)
+			}
+			tags, _ := row["tags"].([]any)
+			if len(tags) != 3 || tags[0] != "简约大气" || tags[2] != "通用百搭" {
+				t.Fatalf("deck tags: %#v", row)
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("missing test-deck: %#v", pref)
+	}
+	adminRow := copyDeckByCode(listOne(t, ts, admin.access, "/api/admin/v1/copy/decks")["items"], "test-deck")
+	if adminRow["description"] != "简约神秘的原创牌面，适合日常占卜与深度提问。" {
+		t.Fatalf("admin description: %#v", adminRow)
+	}
+
+	msg, _ = call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/decks", map[string]any{
+		"code": "test-deck", "tags": []string{"一", "二", "三", "四", "五", "六", "七", "八", "九"},
+	})
+	if !strings.Contains(msg, "标签过多") {
+		t.Fatalf("too many tags: %s", msg)
 	}
 
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/decks", map[string]any{
@@ -230,6 +256,17 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 	if !strings.Contains(msg, "至少保留") {
 		t.Fatalf("last deck: %s", msg)
 	}
+}
+
+func copyDeckByCode(raw any, code string) map[string]any {
+	items, _ := raw.([]any)
+	for _, item := range items {
+		row, _ := item.(map[string]any)
+		if row["code"] == code {
+			return row
+		}
+	}
+	return map[string]any{}
 }
 
 func copyCardByName(raw any, name string) map[string]any {

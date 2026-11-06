@@ -673,6 +673,8 @@ CREATE TABLE IF NOT EXISTS decks (
   sort_order INT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE decks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
 INSERT INTO decks(code, name, enabled, sort_order) VALUES ('rider-waite', '莱德韦特', true, 0)
 ON CONFLICT (code) DO NOTHING;
 `)
@@ -769,7 +771,9 @@ COMMENT ON TABLE help_categories IS '帮助中心分类。对应 GET /help/categ
 COMMENT ON TABLE help_articles IS '帮助文章。body_status=pending 时正文为「待确认」。管理端 PUT /copy/help 可改。';
 COMMENT ON COLUMN iap_skus.copy IS '价位附带运营文案。年卡用于专属活动权益；空则 benefits.campaign_perk.copy_status=pending。';
 COMMENT ON TABLE app_config IS '无独立表的运营配置。key 如 yearly.2026.theme、card.愚者.yi、card.愚者.thumbnail、card.thumbnail_template（{id}/{name}）、card.thumbnail_default。缩略图都未配时 App 返回内置 /uploads/card-default.png。对应 GET/PUT /copy/{kind}。';
-COMMENT ON TABLE decks IS '牌面风格。种子仅 rider-waite / 莱德韦特。预览图空则用内置默认牌背。管理端 PUT /copy/decks，App GET/PUT /deck-preference。';
+COMMENT ON TABLE decks IS '牌面风格。种子仅 rider-waite / 莱德韦特。预览图空则用内置默认牌背。介绍/标签空则 App 返回空串与空数组，不编造。管理端 PUT /copy/decks，App GET/PUT /deck-preference。';
+COMMENT ON COLUMN decks.description IS '套装一句介绍。对应定稿 693:39。空为未填。';
+COMMENT ON COLUMN decks.tags IS '套装标签 JSON 数组。空为未填。';
 COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist。';
 COMMENT ON TABLE feedback IS '反馈意见。category=使用问题/内容建议/其他。对应 POST /feedback。';
 

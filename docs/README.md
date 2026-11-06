@@ -28,15 +28,15 @@ App 路由现为 **73** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **账号**：`account_display` 优先脱敏手机号；新增 6 位 `public_id`。
 - **会员/塔塔币**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）；6 档消耗包 `pack_60`…`pack_3280` 已填设计价。追问上限管理端 `PUT /quota-params` 可改，null 不限制。
 - **历史列表**：每条带 `short_text` / `card_name` / `status_label` / `card_thumbnail`（单牌 URL → 模板 → 默认图 → 内置 `/uploads/card-default.png`；无牌名才为 null）。
-- **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。种子仅 `rider-waite` / 莱德韦特；管理端侧栏「牌面风格」（`PUT /copy/decks`）可加牌组。预览图未配用内置默认牌背。未上架 code 仍拒。
-- **日历**：`GET /calendar` 增加 `type` 过滤。
+- **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。`available[]` 含 `description` / `tags`（未填为空串与空数组，不编造）。种子仅 `rider-waite` / 莱德韦特；管理端 `PUT /copy/decks` 可改介绍、标签与预览图。未上架 code 仍拒。
+- **日历**：`GET /calendar` 增加 `type` 过滤；日详情项含牌名 / 正逆位 / 短文 / 多张缩略图 / 占卜师 / `created_at`。
 - **消息中心**：接口领先于 UI，先行落底。
 - **今日一牌宜 / 牌面缩略图**：`yi` 取 `card.{牌名}.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。
 - **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；其余无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。
 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 
-仍未对齐：日历日详情字段、牌组介绍字段。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。
+定稿 HTTP 字段已齐。还剩运营填文案/图与 Connect 商品号。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。
 
 ## 导入 Apifox
 

@@ -663,32 +663,46 @@ func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
 	if typ != "" && typ != "normal" && typ != "tarotist" && typ != "explore" && typ != "daily" {
 		return biz("type 不正确")
 	}
-	q := `SELECT id, type, question, status, business_date, updated_at FROM readings WHERE user_id=$1 AND deleted_at IS NULL AND business_date<>''`
+	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(t.name,''), COALESCE(t.avatar_url,'')
+FROM readings r
+LEFT JOIN tarotists t ON t.id = r.tarotist_id
+WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 	args := []any{uid}
 	if month != "" {
-		q += ` AND business_date LIKE $` + strconv.Itoa(len(args)+1)
+		q += ` AND r.business_date LIKE $` + strconv.Itoa(len(args)+1)
 		args = append(args, month+"%")
 	}
 	if typ != "" {
-		q += ` AND type=$` + strconv.Itoa(len(args)+1)
+		q += ` AND r.type=$` + strconv.Itoa(len(args)+1)
 		args = append(args, typ)
 	}
-	q += ` ORDER BY business_date, id`
+	q += ` ORDER BY r.business_date, r.id`
 	rows, err := a.Store.Query(r.Context(), q, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	list := []map[string]any{}
+	cfg := a.cardConfig(r.Context())
 	for rows.Next() {
 		var id int64
 		var typ, question, status, day string
-		var updated time.Time
-		if err := rows.Scan(&id, &typ, &question, &status, &day, &updated); err != nil {
+		var updated, created time.Time
+		var cards, interp *string
+		var tarotistID *int64
+		var tarotistName, tarotistAvatar string
+		if err := rows.Scan(&id, &typ, &question, &status, &day, &updated, &created, &cards, &interp, &tarotistID, &tarotistName, &tarotistAvatar); err != nil {
 			return err
 		}
 		label, next := progressOf(status)
-		list = append(list, map[string]any{"id": id, "type": typ, "question": question, "status": status, "business_date": day, "has_result": status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE", "progress": label, "continue": next, "updated_at": updated})
+		item := map[string]any{
+			"id": id, "type": typ, "question": question, "status": status, "business_date": day,
+			"has_result": status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE",
+			"progress":   label, "continue": next, "updated_at": updated, "created_at": created,
+			"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,
+		}
+		attachCalendarPreview(item, cfg, tarotistName, tarotistAvatar)
+		list = append(list, item)
 	}
 	cycle := a.userCycle(r, uid)
 	tomorrow, err := nextBusinessDate(cycle)

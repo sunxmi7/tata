@@ -61,7 +61,7 @@ tags:
   - name: 历史记录
     description: 我的占卜列表、详情、删除与追问消息。
   - name: 日历记录
-    description: 今日/明日一牌与日历月视图。
+    description: 今日/明日一牌与日历月视图。日详情项含牌名、正逆位、短文、多张缩略图、占卜师与时分。
   - name: 塔塔币购买
     description: 塔塔币（钻石）内购：SKU、验单、恢复购买、余额、流水与开关。价格/发放量未配置时为 null。
   - name: 会员中心
@@ -1135,8 +1135,11 @@ paths:
       summary: 日历
       security:
         - AppBearer: []
-      description: 必须登录。data 为 {days, cycle, tomorrow_date}。days 只含未删除且 business_date 非空的记录。month 按前缀匹配，例如
-        2026-10。type 可按 normal/tarotist/explore/daily 过滤。tomorrow_date 供首页明日运势预览。
+      description: |
+        必须登录。data 为 {days, cycle, tomorrow_date}。days 只含未删除且 business_date 非空的记录。
+        month 按前缀匹配，例如 2026-10。type 可按 normal/tarotist/explore/daily 过滤。
+        日详情字段与定稿 574:2 对齐：今日一牌含牌名/正逆位/短文/缩略图；普通占卜含多张缩略图；占卜师含姓名与头像；时分取 created_at。
+        不返回完整牌面 JSON 与解读正文，短文从 interpretation 截取，不编造。
       parameters:
         - name: month
           in: query
@@ -1152,7 +1155,7 @@ paths:
             enum: [normal, tarotist, explore, daily]
       responses:
         '200':
-          description: data 为日历条目，含 progress 与 continue。
+          description: data 为日历条目，含日详情预览字段。
           content:
             application/json:
               schema:
@@ -2148,7 +2151,10 @@ paths:
       summary: 牌面风格
       security:
         - AppBearer: []
-      description: 必须登录。available 来自已启用牌组；种子仅 rider-waite（莱德韦特）。预览图未配则用内置默认牌背。不编造未上架牌组。
+      description: |
+        必须登录。available 来自已启用牌组；种子仅 rider-waite（莱德韦特）。
+        每项含 name / thumbnail / description / tags。介绍与标签未填时为空串和空数组，不编造。
+        预览图未配则用内置默认牌背。78 张牌预览由客户端按牌名拼接，不另开 path。
       responses:
         '200':
           description: data 为 DeckPreference。
@@ -2769,10 +2775,17 @@ components:
           nullable: true
         type:
           type: string
+          description: normal、tarotist、explore、daily。
+        type_label:
+          type: string
+          description: 今日一牌 / 普通占卜 / 占卜师 / 探索。未知 type 为空。
         question:
           type: string
         status:
           type: string
+        status_label:
+          type: string
+          description: COMPLETED 为「已解读」，其余为「待继续」。与历史列表相同。
         business_date:
           type: string
           description: YYYY-MM-DD。
@@ -2780,11 +2793,48 @@ components:
           type: string
         continue:
           type: string
+        created_at:
+          type: string
+          format: date-time
+          description: 日详情时分取此字段。
         updated_at:
           type: string
           format: date-time
         has_result:
           type: boolean
+        card_name:
+          type: string
+          description: 第一张牌名。无牌时为空。
+        orientation:
+          type: string
+          description: 第一张牌 upright / reversed。无牌或未记录时为空。
+        orientation_label:
+          type: string
+          description: 正位 / 逆位。无 orientation 时为空。
+        short_text:
+          type: string
+          description: 从 interpretation 截取的一句预览，无解读时为空，不编造。
+        card_thumbnail:
+          type: string
+          nullable: true
+          description: 第一张牌缩略图。规则与历史列表相同。无牌名为 null。
+        card_thumbnails:
+          type: array
+          items:
+            type: string
+          description: 全部已抽牌的缩略图，按牌序。无牌时为空数组。
+        tarotist_id:
+          type: integer
+          format: int64
+          nullable: true
+        tarotist_name:
+          type: string
+          nullable: true
+          description: 占卜师姓名。非占卜师或未绑定为 null。
+        tarotist_avatar:
+          type: string
+          nullable: true
+          description: 占卜师头像。未配置为 null。
     CalendarView:
       type: object
       properties:
@@ -3008,6 +3058,14 @@ components:
                 description: 牌组预览图。未配置时为内置默认牌背 /uploads/card-default.png。
               available:
                 type: boolean
+              description:
+                type: string
+                description: 套装一句介绍。未填为空字符串，不编造。
+              tags:
+                type: array
+                items:
+                  type: string
+                description: 套装标签。未填为空数组，不编造。
     DeckPreferenceBody:
       type: object
       additionalProperties: false
