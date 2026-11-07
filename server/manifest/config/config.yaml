@@ -24,10 +24,11 @@ getui:
   baseUrl: "https://restapi.getui.com"
 
 # 邮箱验证码。enabled=false 或 host/from 为空时发码接口返回「邮件服务未配置」。
-# 阿里云邮件推送 SMTP：host=smtpdm.aliyun.com，port=465，username/from 为控制台发信地址，password 为 SMTP 密码。
+# 163 邮箱 SSL SMTP：host=smtp.163.com，port=465。username/from 填完整邮箱，password 填客户端授权码（不是登录密码）。
+# 发信只走 SMTP；POP3（pop.163.com）和 IMAP（imap.163.com）不使用。
 mail:
   enabled: false
-  host: ""
+  host: "smtp.163.com"
   port: 465
   username: ""
   password: ""

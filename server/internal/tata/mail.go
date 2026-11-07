@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// MailConfig 对应 config.yaml 的 mail。SMTP 发邮箱验证码，阿里云邮件推送填 smtpdm.aliyun.com:465 即可。
+// MailConfig 对应 config.yaml 的 mail。SMTP 发邮箱验证码；163 邮箱填 smtp.163.com:465（SSL）。
 type MailConfig struct {
 	Enabled  bool
 	Host     string

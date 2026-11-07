@@ -35,7 +35,7 @@ App 路由现为 **74** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **今日一牌宜 / 牌面缩略图**：`yi` 取 `card.{牌名}.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。
 - **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；其余无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。
 - **管理端上传**：`POST /api/admin/v1/uploads?folder=`。后台图片字段走 Vben Form 的 Upload。`folder` 分子目录：牌阵 `spreads`、风格 `decks`、单牌/默认图 `cards`，缺省 `misc`。存哪由 `upload.driver` 决定：`local` 或阿里云 OSS。
-- **邮箱验证码**：`POST /api/app/v1/auth/email/code`。注册 / 登录 / 绑邮箱都要先发码再带 `code`。SMTP 在 `config.yaml` 的 `mail`（阿里云邮件推送填 smtpdm.aliyun.com:465）。未配置返回「邮件服务未配置」。
+- **邮箱验证码**：`POST /api/app/v1/auth/email/code`。注册 / 登录 / 绑邮箱都要先发码再带 `code`。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 
