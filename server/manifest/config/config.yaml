@@ -22,3 +22,16 @@ getui:
   appSecret: ""
   masterSecret: ""
   baseUrl: "https://restapi.getui.com"
+
+# 图片上传。driver=local 写本机；driver=oss 传到阿里云 OSS。App 与管理端共用。
+# 模块分子目录：spreads / decks / cards / feedback / misc。OSS 时请保证桶或 CDN 可被 App 直接读取（建议填 publicBaseUrl）。凭证空则上传返回「OSS 未配置」。
+upload:
+  driver: local
+  localDir: ""
+  oss:
+    endpoint: ""
+    bucket: ""
+    accessKeyId: ""
+    accessKeySecret: ""
+    prefix: "uploads"
+    publicBaseUrl: ""

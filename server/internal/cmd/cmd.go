@@ -19,6 +19,28 @@ var Main = gcmd.Command{
 			return err
 		}
 		app := &tata.App{Store: store, JWTSecret: []byte("tata-demo-jwt-secret-change-me")}
+		app.Upload = tata.NewUploader(tata.UploadConfig{
+			Driver:   g.Cfg().MustGet(ctx, "upload.driver").String(),
+			LocalDir: g.Cfg().MustGet(ctx, "upload.localDir").String(),
+			OSS: tata.OSSConfig{
+				Endpoint:        g.Cfg().MustGet(ctx, "upload.oss.endpoint").String(),
+				Bucket:          g.Cfg().MustGet(ctx, "upload.oss.bucket").String(),
+				AccessKeyId:     g.Cfg().MustGet(ctx, "upload.oss.accessKeyId").String(),
+				AccessKeySecret: g.Cfg().MustGet(ctx, "upload.oss.accessKeySecret").String(),
+				Prefix:          g.Cfg().MustGet(ctx, "upload.oss.prefix").String(),
+				PublicBaseURL:   g.Cfg().MustGet(ctx, "upload.oss.publicBaseUrl").String(),
+			},
+		})
+		switch app.Upload.Driver() {
+		case "oss":
+			if app.Upload.OSSReady() {
+				g.Log().Info(ctx, "upload driver oss")
+			} else {
+				g.Log().Warning(ctx, "upload driver oss but unconfigured")
+			}
+		default:
+			g.Log().Info(ctx, "upload driver local")
+		}
 		app.Push = tata.NewPusher(tata.PushConfig{
 			AppID:        g.Cfg().MustGet(ctx, "getui.appId").String(),
 			AppKey:       g.Cfg().MustGet(ctx, "getui.appKey").String(),

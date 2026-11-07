@@ -11,6 +11,10 @@ export default defineConfig(async () => {
             target: 'http://127.0.0.1:8080',
             ws: true,
           },
+          '/uploads': {
+            changeOrigin: true,
+            target: 'http://127.0.0.1:8080',
+          },
         },
       },
     },

@@ -1044,11 +1044,6 @@ func (s *Store) seedIAP(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := s.Exec(ctx, `INSERT INTO iap_skus(code, kind, ledger_bucket, display_name, period_unit)
-		VALUES ('pack_consumable','consumable_pack','consumable','点数包','')
-		ON CONFLICT (code) DO NOTHING`); err != nil {
-		return err
-	}
 	_, err := s.Exec(ctx, `INSERT INTO iap_settings(id) VALUES (1) ON CONFLICT (id) DO NOTHING`)
 	return err
 }

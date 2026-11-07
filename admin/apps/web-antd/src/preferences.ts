@@ -1,5 +1,4 @@
 import {
-  appCopyrightPreferences,
   defineOverridesPreferences,
   definePreferencesExtension,
 } from '@vben/preferences';
@@ -21,7 +20,10 @@ export const overridesPreferences = defineOverridesPreferences({
     defaultHomePath: '/tata/spread',
     name: '塔塔运营后台',
   },
-  copyright: appCopyrightPreferences,
+  copyright: {
+    enable: false,
+    settingShow: false,
+  },
 });
 
 export const preferencesExtension =

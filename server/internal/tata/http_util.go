@@ -73,7 +73,7 @@ type App struct {
 	Store     *Store
 	JWTSecret []byte
 	Redis     redisLocker
-	UploadDir string
+	Upload    *Uploader
 	Push      *Pusher
 }
 

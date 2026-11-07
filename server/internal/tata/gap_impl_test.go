@@ -371,7 +371,7 @@ func TestSpreadRecommended(t *testing.T) {
 
 func seedIAPCode(code string) bool {
 	switch code {
-	case "sub_month", "sub_year", "sub_times", "pack_consumable", "pack_60", "pack_180", "pack_300", "pack_680", "pack_1280", "pack_3280", "unlock_yearly":
+	case "sub_month", "sub_year", "sub_times", "pack_60", "pack_180", "pack_300", "pack_680", "pack_1280", "pack_3280", "unlock_yearly":
 		return true
 	}
 	return false

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -297,6 +296,17 @@ func (a *App) appUploads(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能上传")
 	}
+	return a.writeUpload(w, r)
+}
+
+func (a *App) adminUploads(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, true); err != nil {
+		return err
+	}
+	return a.writeUpload(w, r)
+}
+
+func (a *App) writeUpload(w http.ResponseWriter, r *http.Request) error {
 	filename, contentType, data, err := readUpload(r)
 	if err != nil {
 		return err
@@ -315,15 +325,16 @@ func (a *App) appUploads(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	stored := name + ext
-	dir := a.uploadDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	folder, err := parseUploadFolder(r)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, stored), data, 0o644); err != nil {
+	stored := folder + "/" + name + ext
+	url, err := a.Upload.Save(r, stored, data, contentType)
+	if err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"url": publicAssetURL(r, stored)})
+	writeOK(w, map[string]any{"url": url})
 	return nil
 }
 
@@ -335,18 +346,15 @@ func (a *App) serveUpload(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(defaultCardPNG)
 		return
 	}
-	if !validUploadName(name) {
+	if !validUploadPath(name) {
 		http.NotFound(w, r)
 		return
 	}
-	http.ServeFile(w, r, filepath.Join(a.uploadDir(), name))
+	http.ServeFile(w, r, filepath.Join(a.uploadDir(), filepath.FromSlash(name)))
 }
 
 func (a *App) uploadDir() string {
-	if a.UploadDir != "" {
-		return a.UploadDir
-	}
-	return filepath.Join(os.TempDir(), "tata-uploads")
+	return a.Upload.localDir()
 }
 
 func readUpload(r *http.Request) (filename, contentType string, data []byte, err error) {
@@ -398,6 +406,39 @@ func uploadExt(filename, contentType string) (string, error) {
 		return ".gif", nil
 	}
 	return "", biz("只支持 jpg、png、webp、gif")
+}
+
+var uploadFolders = map[string]bool{
+	"spreads":  true,
+	"decks":    true,
+	"cards":    true,
+	"feedback": true,
+	"misc":     true,
+}
+
+func parseUploadFolder(r *http.Request) (string, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("folder"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.FormValue("folder"))
+	}
+	if raw == "" {
+		return "misc", nil
+	}
+	if !uploadFolders[raw] {
+		return "", biz("上传目录不正确")
+	}
+	return raw, nil
+}
+
+func validUploadPath(name string) bool {
+	if name == defaultCardThumbnailName {
+		return true
+	}
+	folder, file, ok := strings.Cut(name, "/")
+	if !ok || strings.Contains(file, "/") || !uploadFolders[folder] {
+		return false
+	}
+	return validUploadName(file)
 }
 
 func validUploadName(name string) bool {
@@ -669,7 +710,7 @@ func optionalAssetURL(raw string) error {
 	if utf8.RuneCountInString(raw) > 1024 {
 		return biz("图片地址过长")
 	}
-	if strings.HasPrefix(raw, "/uploads/") && validUploadName(strings.TrimPrefix(raw, "/uploads/")) {
+	if strings.HasPrefix(raw, "/uploads/") && validUploadPath(strings.TrimPrefix(raw, "/uploads/")) {
 		return nil
 	}
 	u, err := url.Parse(raw)

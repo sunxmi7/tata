@@ -53,6 +53,7 @@ func (a *App) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/admin/v1/copy/{kind}", a.h(a.adminGetCopy))
 	mux.HandleFunc("PUT /api/admin/v1/copy/{kind}", a.h(a.adminPutCopy))
+	mux.HandleFunc("POST /api/admin/v1/uploads", a.h(a.adminUploads))
 
 	mux.HandleFunc("GET /api/admin/v1/banners", a.h(a.adminListBanners))
 	mux.HandleFunc("POST /api/admin/v1/banners", a.h(a.adminCreateBanner))
@@ -141,7 +142,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/redeem", a.h(a.appRedeem))
 	mux.HandleFunc("GET /api/app/v1/wallet/ledger", a.h(a.appWalletLedger))
 	mux.HandleFunc("POST /api/app/v1/uploads", a.h(a.appUploads))
-	mux.HandleFunc("GET /uploads/{name}", a.serveUpload)
+	mux.HandleFunc("GET /uploads/{name...}", a.serveUpload)
 	mux.HandleFunc("POST /api/app/v1/wishlist", a.h(a.appWishlist))
 	mux.HandleFunc("POST /api/app/v1/feedback", a.h(a.appFeedback))
 	mux.HandleFunc("GET /api/app/v1/notification-preferences", a.h(a.appGetNotificationPrefs))
