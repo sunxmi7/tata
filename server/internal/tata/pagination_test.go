@@ -17,7 +17,7 @@ func TestReadingsPagination(t *testing.T) {
 	if err != nil {
 		t.Skipf("no database: %v", err)
 	}
-	app := &App{Store: store, JWTSecret: []byte("test-secret")}
+	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
 

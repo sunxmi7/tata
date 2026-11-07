@@ -86,6 +86,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/messages", a.h(a.adminListMessages))
 	mux.HandleFunc("GET /api/admin/v1/calendar", a.h(a.adminListCalendar))
 	mux.HandleFunc("POST /api/app/v1/auth/anonymous", a.appAnonymous)
+	mux.HandleFunc("POST /api/app/v1/auth/email/code", a.h(a.appSendEmailCode))
 	mux.HandleFunc("POST /api/app/v1/auth/register", a.appRegister)
 	mux.HandleFunc("POST /api/app/v1/auth/login", a.appLogin)
 	mux.HandleFunc("POST /api/app/v1/auth/wechat", a.appWechat)

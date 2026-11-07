@@ -1,7 +1,7 @@
 # 塔塔 App 定稿 UI ↔ HTTP（2026-11-06）
 
 **设计：** Pixso「手机界面」`619:7`（浅色主屏；深色 / 平板 / 折叠为同一流程的主题与设备变体）。  
-**代码：** `server/internal/tata/routes.go`，App **73** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
+**代码：** `server/internal/tata/routes.go`，App **74** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
 
 **结论：** 定稿各模块 HTTP path 与字段已对齐，下表标 **已确认**。运营填值见 content backlog。
 

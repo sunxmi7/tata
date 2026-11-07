@@ -1565,26 +1565,49 @@ components:
           type: string
           description: 省略或 today 为今日一牌；tomorrow 为明日运势。其他值拒绝。
           enum: ["", today, tomorrow]
+    EmailCodeBody:
+      type: object
+      additionalProperties: false
+      required: [email, scene]
+      properties:
+        email:
+          type: string
+        scene:
+          type: string
+          enum: [register, login, bind]
+    EmailCodeResult:
+      type: object
+      properties:
+        expires_in:
+          type: integer
+          description: 验证码有效秒数，固定 300。
     RegisterBody:
       type: object
       additionalProperties: false
-      required: [email, password]
+      required: [email, password, code]
       properties:
         email:
           type: string
         password:
           type: string
+        code:
+          type: string
+          description: 邮箱验证码。来自 POST /auth/email/code。
         anonymous_id:
           type: string
           description: 非空时把该匿名 id 下尚未归属的占卜记到新用户。
     LoginBody:
       type: object
       additionalProperties: false
+      required: [email, password, code]
       properties:
         email:
           type: string
         password:
           type: string
+        code:
+          type: string
+          description: 邮箱验证码。来自 POST /auth/email/code，scene=login。
         anonymous_id:
           type: string
     WechatBody:
@@ -1604,12 +1627,15 @@ components:
     EmailBindBody:
       type: object
       additionalProperties: false
-      required: [email, password]
+      required: [email, password, code]
       properties:
         email:
           type: string
         password:
           type: string
+        code:
+          type: string
+          description: 邮箱验证码。来自 POST /auth/email/code，scene=bind。
     PhoneBody:
       type: object
       additionalProperties: false
@@ -3040,13 +3066,46 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/AnonymousAuthOK"
                   - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/auth/email/code:
+    post:
+      tags: [登录绑定]
+      operationId: appSendEmailCode
+      summary: 发送邮箱验证码
+      description: |
+        注册、登录前不需要令牌。绑定邮箱时需要 AppBearer。
+        scene 为 register / login / bind。register 时已注册邮箱返回「邮箱已注册」；login 时未注册返回「该邮箱尚未注册」。
+        同一邮箱同一 scene 60 秒内只能发一次，同一邮箱每小时最多 10 次。验证码 6 位、5 分钟有效，校验成功后作废。
+        邮件走 config.yaml 的 mail SMTP；未配置返回「邮件服务未配置」。不在响应里回验证码。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailCodeBody"
+      responses:
+        "200":
+          description: code=0 时 data.expires_in 为秒；失败为 ErrorEnvelope。绑定未登录为 HTTP 401。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/EmailCodeResult"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/auth/register:
     post:
       tags: [登录绑定]
       operationId: appRegister
       summary: 邮箱注册
       description: |
-        邮箱和密码必填。邮箱冲突返回「邮箱已注册」。
+        邮箱、密码和验证码必填。先调 POST /auth/email/code，scene=register。
+        邮箱冲突返回「邮箱已注册」。
         该邮箱未在 identity_claims 出现过时发放注册奖励，到期为下一个北京时间 08:00。
         若带 anonymous_id，会把匿名占卜转给新用户。
         若该用户已有未结算的占卜，会按共享优先级立刻扣一次（一开始提问就消耗）。
@@ -3077,7 +3136,8 @@ paths:
       operationId: appLogin
       summary: 邮箱登录
       description: |
-        邮箱或密码错误、或账号已注销，均为 HTTP 200、code=1、「邮箱或密码错误」。
+        邮箱、密码和验证码必填。先调 POST /auth/email/code，scene=login。
+        验证码不对为「验证码不正确或已过期」。邮箱或密码错误、或账号已注销，均为 HTTP 200、code=1、「邮箱或密码错误」。
         成功时 needs_confirm 恒为 false。若未在登录时扣掉未结算占卜，且本周期已用过免费次数，quota_prompt 为「今日免费体验额度已用完，本次记录已保存到历史记录」。
       requestBody:
         required: true
@@ -3219,7 +3279,8 @@ paths:
       security:
         - AppBearer: []
       description: |
-        邮箱按小写比较。空闲则写入邮箱和密码哈希。
+        邮箱按小写比较。邮箱、密码和验证码必填。先调 POST /auth/email/code，scene=bind。
+        空闲则写入邮箱和密码哈希。
         冲突时同样只创建待确认合并，不立刻并账。已绑定过邮箱不能换绑。
       requestBody:
         required: true

@@ -12,7 +12,7 @@ func TestAdminSimulateUsesEinoWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &App{Store: store, JWTSecret: []byte("test-secret")}
+	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})

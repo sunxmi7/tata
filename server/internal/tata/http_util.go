@@ -73,6 +73,8 @@ type App struct {
 	Store     *Store
 	JWTSecret []byte
 	Redis     redisLocker
+	KV        kvStore
+	Mail      Mailer
 	Upload    *Uploader
 	Push      *Pusher
 }

@@ -375,7 +375,8 @@ func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 		t.Fatalf("anonymous charge rows %d", n)
 	}
 	email := fmt.Sprintf("anon-login-%d@tata.local", time.Now().UnixNano())
-	registered := create(t, ts, "", "/api/app/v1/auth/register", map[string]any{"email": email, "password": "demo1234", "anonymous_id": anonID})
+	code := sendEmailCode(t, ts, "", email, "register")
+	registered := create(t, ts, "", "/api/app/v1/auth/register", map[string]any{"email": email, "password": "demo1234", "code": code, "anonymous_id": anonID})
 	if registered["reward_consumed"] != true {
 		t.Fatalf("login before answer did not charge: %#v", registered)
 	}

@@ -138,6 +138,7 @@ func (a *App) appRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email       string `json:"email"`
 		Password    string `json:"password"`
+		Code        string `json:"code"`
 		AnonymousID string `json:"anonymous_id"`
 	}
 	if err := decode(r, &req); err != nil {
@@ -146,6 +147,10 @@ func (a *App) appRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Email == "" || req.Password == "" {
 		writeErr(w, http.StatusOK, "邮箱和密码必填")
+		return
+	}
+	if err := a.matchEmailCode(r.Context(), "register", req.Email, req.Code); err != nil {
+		writeErr(w, http.StatusOK, err.Error())
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -159,6 +164,7 @@ func (a *App) appRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusOK, "邮箱已注册")
 		return
 	}
+	a.consumeEmailCode(r.Context(), "register", req.Email)
 	exp := nextBeijingEight(time.Now())
 	if !a.claimed(r, "email", strings.ToLower(req.Email)) {
 		_, _ = a.Store.Exec(r.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at) VALUES ($1, now(), $2)`, id, exp)
@@ -177,10 +183,15 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email       string `json:"email"`
 		Password    string `json:"password"`
+		Code        string `json:"code"`
 		AnonymousID string `json:"anonymous_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusOK, "请求字段不正确")
+		return
+	}
+	if err := a.matchEmailCode(r.Context(), "login", req.Email, req.Code); err != nil {
+		writeErr(w, http.StatusOK, err.Error())
 		return
 	}
 	var id int64
@@ -191,6 +202,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusOK, "邮箱或密码错误")
 		return
 	}
+	a.consumeEmailCode(r.Context(), "login", req.Email)
 	if req.AnonymousID != "" {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, id, req.AnonymousID)
 	}

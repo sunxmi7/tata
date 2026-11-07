@@ -17,7 +17,7 @@ func TestPushAndInbox(t *testing.T) {
 	if err != nil {
 		t.Skipf("no database: %v", err)
 	}
-	app := &App{Store: store, JWTSecret: []byte("test-secret")} // Push nil: 个推禁用，仅落站内信
+	app := testApp(store) // Push nil: 个推禁用，仅落站内信
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
 

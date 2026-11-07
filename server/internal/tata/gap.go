@@ -137,6 +137,7 @@ func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
@@ -144,10 +145,14 @@ func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
 	if req.Email == "" || req.Password == "" {
 		return biz("邮箱和密码必填")
 	}
+	if err := a.matchEmailCode(r.Context(), "bind", req.Email, req.Code); err != nil {
+		return err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
+	a.consumeEmailCode(r.Context(), "bind", req.Email)
 	return a.bindWithConfirm(w, r, bindSpec{kind: "email", value: req.Email, passwordHash: string(hash)})
 }
 

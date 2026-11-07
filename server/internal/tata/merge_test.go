@@ -380,7 +380,8 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		_ = register(t, ts, emailB)
 		idB := userIDByEmail(t, store, emailB)
 		readingB := insertReadingWithMessage(t, store, idB, "邮箱冲突", "邮箱消息")
-		msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-email", map[string]string{"email": emailB, "password": "new-pass-123"})
+		bindCode := sendEmailCode(t, ts, tokenA, emailB, "bind")
+		msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-email", map[string]string{"email": emailB, "password": "new-pass-123", "code": bindCode})
 		conflict := decodeConflict(t, msg, raw)
 		if conflict.Merged || conflict.SecondaryUserID != float64(idB) {
 			t.Fatalf("email conflict: %+v", conflict)
@@ -397,7 +398,8 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		if got == nil || !strings.EqualFold(*got, emailB) {
 			t.Fatalf("email not moved: %v", got)
 		}
-		loginMsg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/login", map[string]string{"email": emailB, "password": "new-pass-123"})
+		loginCode := sendEmailCode(t, ts, "", emailB, "login")
+		loginMsg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/login", map[string]string{"email": emailB, "password": "new-pass-123", "code": loginCode})
 		if loginMsg != "" {
 			t.Fatalf("moved email login: %s", loginMsg)
 		}
@@ -446,7 +448,7 @@ func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &App{Store: store, JWTSecret: []byte("test-secret")}
+	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	t.Cleanup(ts.Close)
 	return store, ts

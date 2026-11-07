@@ -41,6 +41,20 @@ var Main = gcmd.Command{
 		default:
 			g.Log().Info(ctx, "upload driver local")
 		}
+		app.Mail = tata.NewSMTPMailer(tata.MailConfig{
+			Enabled:  g.Cfg().MustGet(ctx, "mail.enabled").Bool(),
+			Host:     g.Cfg().MustGet(ctx, "mail.host").String(),
+			Port:     g.Cfg().MustGet(ctx, "mail.port").Int(),
+			Username: g.Cfg().MustGet(ctx, "mail.username").String(),
+			Password: g.Cfg().MustGet(ctx, "mail.password").String(),
+			From:     g.Cfg().MustGet(ctx, "mail.from").String(),
+			FromName: g.Cfg().MustGet(ctx, "mail.fromName").String(),
+		})
+		if app.Mail.Ready() {
+			g.Log().Info(ctx, "mail smtp enabled")
+		} else {
+			g.Log().Info(ctx, "mail smtp disabled (unconfigured); email codes will not send")
+		}
 		app.Push = tata.NewPusher(tata.PushConfig{
 			AppID:        g.Cfg().MustGet(ctx, "getui.appId").String(),
 			AppKey:       g.Cfg().MustGet(ctx, "getui.appKey").String(),
@@ -55,9 +69,12 @@ var Main = gcmd.Command{
 			g.Log().Info(ctx, "getui push disabled (unconfigured); only in-app messages stored")
 		}
 		if _, err = g.Redis().Do(ctx, "PING"); err != nil {
-			g.Log().Warningf(ctx, "redis unavailable, generation lock falls back to database: %v", err)
+			app.KV = tata.MemoryKV()
+			g.Log().Warningf(ctx, "redis unavailable, generation lock and email codes stay in-process: %v", err)
 		} else {
-			app.Redis = tata.RedisFromFrame()
+			r := tata.RedisFromFrame()
+			app.Redis = r
+			app.KV = r
 			g.Log().Info(ctx, "redis lock enabled")
 		}
 		s := g.Server()

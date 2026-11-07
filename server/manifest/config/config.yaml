@@ -23,6 +23,17 @@ getui:
   masterSecret: ""
   baseUrl: "https://restapi.getui.com"
 
+# 邮箱验证码。enabled=false 或 host/from 为空时发码接口返回「邮件服务未配置」。
+# 阿里云邮件推送 SMTP：host=smtpdm.aliyun.com，port=465，username/from 为控制台发信地址，password 为 SMTP 密码。
+mail:
+  enabled: false
+  host: ""
+  port: 465
+  username: ""
+  password: ""
+  from: ""
+  fromName: "塔塔"
+
 # 图片上传。driver=local 写本机；driver=oss 传到阿里云 OSS。App 与管理端共用。
 # 模块分子目录：spreads / decks / cards / feedback / misc。OSS 时请保证桶或 CDN 可被 App 直接读取（建议填 publicBaseUrl）。凭证空则上传返回「OSS 未配置」。
 upload:

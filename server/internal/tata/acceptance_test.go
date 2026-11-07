@@ -22,7 +22,7 @@ func TestAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &App{Store: store, JWTSecret: []byte("test-secret")}
+	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
 
@@ -223,9 +223,20 @@ func login(t *testing.T, ts *httptest.Server, path string, body map[string]strin
 	return session{access: data["accessToken"].(string)}
 }
 
+func sendEmailCode(t *testing.T, ts *httptest.Server, token, email, scene string) string {
+	t.Helper()
+	create(t, ts, token, "/api/app/v1/auth/email/code", map[string]string{"email": email, "scene": scene})
+	code := testMail.Last(email)
+	if code == "" {
+		t.Fatalf("no email code for %s", email)
+	}
+	return code
+}
+
 func register(t *testing.T, ts *httptest.Server, email string) string {
 	t.Helper()
-	data := create(t, ts, "", "/api/app/v1/auth/register", map[string]string{"email": email, "password": "demo1234"})
+	code := sendEmailCode(t, ts, "", email, "register")
+	data := create(t, ts, "", "/api/app/v1/auth/register", map[string]string{"email": email, "password": "demo1234", "code": code})
 	return data["accessToken"].(string)
 }
 
