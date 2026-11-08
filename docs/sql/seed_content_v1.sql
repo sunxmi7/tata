@@ -6,6 +6,23 @@
 
 BEGIN;
 
+CREATE TABLE IF NOT EXISTS cards (
+  id INT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  name_zh_hant TEXT NOT NULL DEFAULT '',
+  name_en TEXT NOT NULL DEFAULT '',
+  name_ja TEXT NOT NULL DEFAULT '',
+  name_ko TEXT NOT NULL DEFAULT '',
+  arcana TEXT NOT NULL DEFAULT '',
+  suit TEXT NOT NULL DEFAULT '',
+  rank TEXT NOT NULL DEFAULT '',
+  yi TEXT NOT NULL DEFAULT '',
+  thumbnail TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS preset_questions (
   question_id TEXT PRIMARY KEY,
   pool TEXT NOT NULL,
@@ -14,6 +31,7 @@ CREATE TABLE IF NOT EXISTS preset_questions (
   sort_order INT NOT NULL DEFAULT 0,
   enabled BOOLEAN NOT NULL DEFAULT TRUE
 );
+ALTER TABLE preset_questions ADD COLUMN IF NOT EXISTS scene TEXT NOT NULL DEFAULT '';
 
 DELETE FROM preset_questions WHERE question_id LIKE 'featured_%' OR question_id LIKE 'backup_%';
 INSERT INTO preset_questions(question_id, pool, category, body, sort_order, enabled) VALUES ('featured_01','featured','','最近的我，最需要关注什么？',1,true);
@@ -68,7 +86,20 @@ INSERT INTO preset_questions(question_id, pool, category, body, sort_order, enab
 INSERT INTO preset_questions(question_id, pool, category, body, sort_order, enabled) VALUES ('backup_35','backup','生活与选择','接下来一个月，我的生活重心应该放在哪里？',35,true);
 INSERT INTO preset_questions(question_id, pool, category, body, sort_order, enabled) VALUES ('backup_36','backup','生活与选择','如果我想做出改变，第一步应该从哪里开始？',36,true);
 
--- 牌面缩略图与多语言名（app_config）。
+-- 首屏 15 条按文档六类打上场景；App 首屏仍混合排列，查询用 scene。
+UPDATE preset_questions SET category='自我成长' WHERE question_id IN ('featured_01','featured_04','featured_13','featured_15');
+UPDATE preset_questions SET category='感情关系' WHERE question_id IN ('featured_02','featured_05','featured_09');
+UPDATE preset_questions SET category='事业与工作' WHERE question_id IN ('featured_03','featured_08');
+UPDATE preset_questions SET category='生活与选择' WHERE question_id IN ('featured_06','featured_07','featured_10','featured_12','featured_14');
+UPDATE preset_questions SET category='人际关系' WHERE question_id='featured_11';
+UPDATE preset_questions SET scene='relationship' WHERE category='感情关系';
+UPDATE preset_questions SET scene='career' WHERE category='事业与工作';
+UPDATE preset_questions SET scene='study' WHERE category='学业与考试';
+UPDATE preset_questions SET scene='growth' WHERE category='自我成长';
+UPDATE preset_questions SET scene='social' WHERE category='人际关系';
+UPDATE preset_questions SET scene='life' WHERE category='生活与选择';
+
+-- 牌面缩略图与多语言名：先写入 app_config 兼容旧读，文末迁入 cards 表。
 INSERT INTO app_config(key, value, updated_at) VALUES ('card.愚者.thumbnail','/uploads/cards/rider_waite_tarot_big_the_fool_00.jpg',now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now();
 INSERT INTO app_config(key, value, updated_at) VALUES ('card.愚者.name_en','The Fool',now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now();
 INSERT INTO app_config(key, value, updated_at) VALUES ('card.愚者.name_ja','愚者',now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now();
@@ -387,4 +418,37 @@ INSERT INTO app_config(key, value, updated_at) VALUES ('deck.rider-waite.name_zh
 INSERT INTO app_config(key, value, updated_at) VALUES ('deck.rider-waite.name_en','Rider-Waite Tarot',now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now();
 INSERT INTO app_config(key, value, updated_at) VALUES ('deck.rider-waite.name_ja','クラシック・ライダー・ウェイト・タロット',now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now();
 INSERT INTO app_config(key, value, updated_at) VALUES ('deck.rider-waite.name_ko','클래식 라이더 웨이트 타로',now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now();
+
+-- 单牌目录。id 与代码 deck() 一致：大牌 0–21，小牌按 权杖/圣杯/宝剑/星币 × 王牌…国王。
+INSERT INTO cards(id, name, sort_order) VALUES
+(0,'愚者',0),(1,'魔术师',1),(2,'女祭司',2),(3,'女皇',3),(4,'皇帝',4),(5,'教皇',5),(6,'恋人',6),(7,'战车',7),
+(8,'力量',8),(9,'隐者',9),(10,'命运之轮',10),(11,'正义',11),(12,'倒吊人',12),(13,'死神',13),(14,'节制',14),(15,'恶魔',15),
+(16,'高塔',16),(17,'星星',17),(18,'月亮',18),(19,'太阳',19),(20,'审判',20),(21,'世界',21),
+(22,'权杖王牌',22),(23,'权杖二',23),(24,'权杖三',24),(25,'权杖四',25),(26,'权杖五',26),(27,'权杖六',27),(28,'权杖七',28),(29,'权杖八',29),(30,'权杖九',30),(31,'权杖十',31),(32,'权杖侍从',32),(33,'权杖骑士',33),(34,'权杖王后',34),(35,'权杖国王',35),
+(36,'圣杯王牌',36),(37,'圣杯二',37),(38,'圣杯三',38),(39,'圣杯四',39),(40,'圣杯五',40),(41,'圣杯六',41),(42,'圣杯七',42),(43,'圣杯八',43),(44,'圣杯九',44),(45,'圣杯十',45),(46,'圣杯侍从',46),(47,'圣杯骑士',47),(48,'圣杯王后',48),(49,'圣杯国王',49),
+(50,'宝剑王牌',50),(51,'宝剑二',51),(52,'宝剑三',52),(53,'宝剑四',53),(54,'宝剑五',54),(55,'宝剑六',55),(56,'宝剑七',56),(57,'宝剑八',57),(58,'宝剑九',58),(59,'宝剑十',59),(60,'宝剑侍从',60),(61,'宝剑骑士',61),(62,'宝剑王后',62),(63,'宝剑国王',63),
+(64,'星币王牌',64),(65,'星币二',65),(66,'星币三',66),(67,'星币四',67),(68,'星币五',68),(69,'星币六',69),(70,'星币七',70),(71,'星币八',71),(72,'星币九',72),(73,'星币十',73),(74,'星币侍从',74),(75,'星币骑士',75),(76,'星币王后',76),(77,'星币国王',77)
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE cards SET arcana = CASE WHEN id < 22 THEN 'major' ELSE 'minor' END
+WHERE arcana = '';
+UPDATE cards SET
+  thumbnail = COALESCE(NULLIF(thumbnail, ''), (SELECT value FROM app_config WHERE key = 'card.' || name || '.thumbnail'), ''),
+  name_en = COALESCE(NULLIF(name_en, ''), (SELECT value FROM app_config WHERE key = 'card.' || name || '.name_en'), ''),
+  name_ja = COALESCE(NULLIF(name_ja, ''), (SELECT value FROM app_config WHERE key = 'card.' || name || '.name_ja'), ''),
+  name_ko = COALESCE(NULLIF(name_ko, ''), (SELECT value FROM app_config WHERE key = 'card.' || name || '.name_ko'), '')
+WHERE id BETWEEN 0 AND 77;
+UPDATE cards SET suit = CASE
+  WHEN name LIKE '权杖%' THEN '权杖'
+  WHEN name LIKE '圣杯%' THEN '圣杯'
+  WHEN name LIKE '宝剑%' THEN '宝剑'
+  WHEN name LIKE '星币%' THEN '星币'
+  ELSE suit END,
+  rank = CASE
+  WHEN id >= 22 AND name LIKE '权杖%' THEN substr(name, length('权杖')+1)
+  WHEN id >= 22 AND name LIKE '圣杯%' THEN substr(name, length('圣杯')+1)
+  WHEN id >= 22 AND name LIKE '宝剑%' THEN substr(name, length('宝剑')+1)
+  WHEN id >= 22 AND name LIKE '星币%' THEN substr(name, length('星币')+1)
+  ELSE rank END
+WHERE id BETWEEN 22 AND 77 AND (suit = '' OR rank = '');
 COMMIT;

@@ -435,6 +435,7 @@ ERRORS = {
     "灵数不能重复": ("Numerology numbers cannot repeat", "霊数は重複できません", "영수는 중복될 수 없습니다"),
     "灵数个数必须与牌阵牌位数一致": ("Numerology count must match the spread size", "霊数の個数はスプレッド枚数と一致する必要があります", "영수 개수는 스프레드 장 수와 같아야 합니다"),
     "灵数须为 1 到 78 的整数": ("Numerology numbers must be integers from 1 to 78", "霊数は 1〜78 の整数です", "영수는 1부터 78까지의 정수여야 합니다"),
+    "场景不正确": ("Scene is invalid", "シーンが正しくありません", "장면이 올바르지 않습니다"),
     "牌名不正确": ("Card name is invalid", "カード名が正しくありません", "카드 이름이 올바르지 않습니다"),
     "牌组介绍过长": ("Deck description is too long", "デッキ紹介が長すぎます", "덱 소개가 너무 깁니다"),
     "牌阵不可用": ("This spread is unavailable", "このスプレッドは利用できません", "이 스프레드는 사용할 수 없습니다"),

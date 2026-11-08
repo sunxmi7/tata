@@ -13,8 +13,7 @@ redis:
     address: "127.0.0.1:63799"
     db: 0
 
-# 个推（GeTui）推送。消息类通知（优惠/活动）走服务端下发；今日/明日抽牌为 App 本地通知。
-# 凭证来自个推控制台；enabled=false 或凭证为空时只落站内信、不真连个推。
+# 个推（GeTui）。enabled=false 或凭证空时只落站内信、不真连个推。
 getui:
   enabled: false
   appId: ""
@@ -23,9 +22,7 @@ getui:
   masterSecret: ""
   baseUrl: "https://restapi.getui.com"
 
-# 邮箱验证码。enabled=false 或 host/from 为空时发码接口返回「邮件服务未配置」。
-# 163 邮箱 SSL SMTP：host=smtp.163.com，port=465。username/from 填完整邮箱，password 填客户端授权码（不是登录密码）。
-# 发信只走 SMTP；POP3（pop.163.com）和 IMAP（imap.163.com）不使用。
+# 邮箱验证码。163 SSL SMTP：host=smtp.163.com，port=465。password 填客户端授权码。
 mail:
   enabled: false
   host: "smtp.163.com"
@@ -35,11 +32,23 @@ mail:
   from: ""
   fromName: "塔塔"
 
-# 图片上传。driver=local 写本机；driver=oss 传到阿里云 OSS。App 与管理端共用。
-# 模块分子目录：spreads / decks / cards / feedback / misc。OSS 时请保证桶或 CDN 可被 App 直接读取（建议填 publicBaseUrl）。凭证空则上传返回「OSS 未配置」。
+# 微信登录。iOS / Android 共用开放平台同一个移动应用。
+# enabled=false 或凭证空时返回「微信登录未配置」。
+wechat:
+  enabled: false
+  appId: ""
+  appSecret: ""
+
+# 苹果登录，仅 iOS。clientId 为 Bundle ID。安卓没有苹果三方登录。
+# enabled=false 或 clientId 空时返回「苹果登录未配置」。
+apple:
+  enabled: false
+  clientId: ""
+
+# 图片上传。driver=local 写本机；driver=oss 传到阿里云 OSS。
 upload:
   driver: local
-  localDir: ""
+  localDir: "./uploads"
   oss:
     endpoint: ""
     bucket: ""

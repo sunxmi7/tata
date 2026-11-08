@@ -15,7 +15,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	token, _ := registerUser(t, ts, store, "p1")
 	other, _ := registerUser(t, ts, store, "p1b")
 
-	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/campaigns", nil); msg != "401" {
+	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/campaigns", nil); msg != "" {
 		t.Fatalf("campaigns no token: %s", msg)
 	}
 	anon := create(t, ts, "", "/api/app/v1/auth/anonymous", map[string]any{})
@@ -237,5 +237,30 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	}
 	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/help/articles/missing_article", nil); msg != "问题不存在" {
 		t.Fatalf("missing article: %s", msg)
+	}
+}
+
+func TestPublicCatalogNoToken(t *testing.T) {
+	_, ts := newMergeServer(t)
+	for _, path := range []string{
+		"/api/app/v1/preset-questions",
+		"/api/app/v1/spreads",
+		"/api/app/v1/banners",
+		"/api/app/v1/tarotists",
+		"/api/app/v1/explore/topics",
+		"/api/app/v1/campaigns",
+		"/api/app/v1/campaigns/friend_invite",
+		"/api/app/v1/help/categories",
+		"/api/app/v1/help/articles",
+		"/api/app/v1/help/articles/how_to_start",
+		"/api/app/v1/iap/skus",
+		"/api/app/v1/iap/config",
+	} {
+		if msg, raw := call(t, ts, "", http.MethodGet, path, nil); msg != "" {
+			t.Fatalf("%s still gated: %s %s", path, msg, raw)
+		}
+	}
+	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/quota", nil); msg != "401" {
+		t.Fatalf("quota should still require token: %s", msg)
 	}
 }

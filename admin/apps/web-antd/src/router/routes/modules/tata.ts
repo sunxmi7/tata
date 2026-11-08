@@ -17,10 +17,16 @@ const routes: RouteRecordRaw[] = [
         meta: { icon: 'lucide:layers', title: '牌阵' },
       },
       {
+        name: 'TataCard',
+        path: 'cards',
+        component: () => import('#/views/tata/cards/index.vue'),
+        meta: { icon: 'lucide:layout-grid', title: '牌面' },
+      },
+      {
         name: 'TataDeck',
         path: 'deck',
         component: () => import('#/views/tata/deck/index.vue'),
-        meta: { icon: 'lucide:layout-grid', title: '牌面' },
+        meta: { icon: 'lucide:layers-2', title: '牌组' },
       },
       {
         name: 'TataTarotist',

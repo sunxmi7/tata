@@ -21,7 +21,7 @@ func (a *App) generate(ctx context.Context, id int64, adminRetry bool) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	localizeReading(ctx, item)
+	a.localizeReading(ctx, item)
 	return item, nil
 }
 
@@ -125,6 +125,6 @@ func (a *App) loadReadingAbs(ctx context.Context, r *http.Request, id int64) (ma
 		return nil, biz("记录不存在")
 	}
 	a.applyCardThumbnails(ctx, r, item)
-	localizeReading(ctx, item)
+	a.localizeReading(ctx, item)
 	return item, nil
 }

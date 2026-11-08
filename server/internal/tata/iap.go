@@ -208,9 +208,6 @@ func (a *App) appIAPEntitlements(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appIAPSKUs(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	kind, err := parseIAPKindQuery(r)
 	if err != nil {
 		return err
@@ -224,9 +221,6 @@ func (a *App) appIAPSKUs(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appIAPConfig(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	out, err := iapConfigView(r.Context(), a.Store)
 	if err != nil {
 		return err

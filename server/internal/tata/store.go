@@ -691,6 +691,22 @@ ALTER TABLE spreads ADD COLUMN IF NOT EXISTS recommended BOOLEAN NOT NULL DEFAUL
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS thumbnail TEXT NOT NULL DEFAULT '';
 INSERT INTO decks(code, name, enabled, sort_order) VALUES ('rider-waite', '莱德韦特', true, 0)
 ON CONFLICT (code) DO NOTHING;
+CREATE TABLE IF NOT EXISTS cards (
+  id INT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  name_zh_hant TEXT NOT NULL DEFAULT '',
+  name_en TEXT NOT NULL DEFAULT '',
+  name_ja TEXT NOT NULL DEFAULT '',
+  name_ko TEXT NOT NULL DEFAULT '',
+  arcana TEXT NOT NULL DEFAULT '',
+  suit TEXT NOT NULL DEFAULT '',
+  rank TEXT NOT NULL DEFAULT '',
+  yi TEXT NOT NULL DEFAULT '',
+  thumbnail TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS ai_jobs (
   id BIGSERIAL PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -717,6 +733,8 @@ CREATE TABLE IF NOT EXISTS preset_questions (
   sort_order INT NOT NULL DEFAULT 0,
   enabled BOOLEAN NOT NULL DEFAULT TRUE
 );
+ALTER TABLE preset_questions ADD COLUMN IF NOT EXISTS scene TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS preset_questions_scene_idx ON preset_questions (scene, pool, sort_order);
 `)
 	if err != nil {
 		return err
@@ -755,8 +773,10 @@ COMMENT ON COLUMN readings.type IS 'normal 普通、tarotist 占卜师、explore
 COMMENT ON COLUMN readings.status IS '流程状态：QUESTION_CREATED → … → INTERPRETING → COMPLETED。INTERPRETING 时 interpretation 可能是未完成片段。';
 COMMENT ON COLUMN readings.interpretation IS '解读正文。任务进行中为已生成片段，完成后为全文。App 退出再进用 GET /readings/{id} 取。';
 COMMENT ON TABLE ai_jobs IS 'AI 生成任务。HTTP/SSE 断开后仍在跑；结果写入 readings 或 yearly_reports。';
-COMMENT ON TABLE preset_questions IS '问题输入页预设题库。pool=featured 首屏，pool=backup 更多问题。对应 GET /preset-questions。来源 docs/塔塔_预设问题库_V1.docx。';
+COMMENT ON TABLE preset_questions IS '问题输入页预设题库。pool=featured 首屏，pool=backup 更多问题。scene 为文档六类场景。对应 GET /preset-questions?scene=。来源 docs/塔塔_预设问题库_V1.docx。';
 COMMENT ON COLUMN preset_questions.pool IS 'featured 首屏混合 15 条；backup 备用题库。';
+COMMENT ON COLUMN preset_questions.scene IS '场景类型：relationship/career/study/growth/social/life。App 用 ?scene= 查询。';
+COMMENT ON COLUMN preset_questions.category IS '场景中文名，与文档一致：感情关系/事业与工作/学业与考试/自我成长/人际关系/生活与选择。';
 COMMENT ON COLUMN ai_jobs.kind IS 'interpret / detect / followup / yearly。';
 COMMENT ON COLUMN ai_jobs.status IS 'queued / running / succeeded / failed。';
 COMMENT ON COLUMN ai_jobs.partial_text IS '流式过程中的已产出文本，供重连回放。';
@@ -821,8 +841,12 @@ COMMENT ON TABLE app_message_reads IS '站内信已读。对应 POST /messages/{
 COMMENT ON TABLE help_categories IS '帮助中心分类。对应 GET /help/categories。';
 COMMENT ON TABLE help_articles IS '帮助文章。body_status=pending 时正文为「待确认」。管理端 PUT /copy/help 可改。';
 COMMENT ON COLUMN iap_skus.copy IS '价位附带运营文案。年卡用于专属活动权益；空则 benefits.campaign_perk.copy_status=pending。';
-COMMENT ON TABLE app_config IS '无独立表的运营配置。key 如 yearly.2026.theme、card.愚者.yi、card.愚者.thumbnail、card.thumbnail_template（{id}/{name}）、card.thumbnail_default。缩略图都未配时 App 返回内置 /uploads/card-default.png。对应 GET/PUT /copy/{kind}。';
-COMMENT ON TABLE decks IS '牌面风格。种子仅 rider-waite / 莱德韦特。预览图空则用内置默认牌背。介绍/标签空则 App 返回空串与空数组，不编造。管理端 PUT /copy/decks，App GET/PUT /deck-preference。';
+COMMENT ON TABLE app_config IS '无独立表的运营配置。key 如 yearly.2026.theme、card.thumbnail_template（{id}/{name}）、card.thumbnail_default。单牌名/宜/图在 cards 表。缩略图都未配时 App 返回内置 /uploads/card-default.png。对应 GET/PUT /copy/{kind}。';
+COMMENT ON TABLE cards IS '单牌目录。种子 78 张 Rider-Waite（id 0-77，愚者=0）。管理端 GET/POST /cards、PUT /cards/{id}；App 读缩略图/宜/多语言名。抽牌仍按 deck() 0-77。';
+COMMENT ON COLUMN cards.name IS '简体中文牌名，抽牌 JSON 与 i18n msgid 的稳定键。创建后不可改。';
+COMMENT ON COLUMN cards.yi IS '今日一牌「宜」。空则 App 返回 null。';
+COMMENT ON COLUMN cards.thumbnail IS '单牌图 URL。空则走模板/默认图/内置牌背。';
+COMMENT ON TABLE decks IS '牌组风格。种子仅 rider-waite / 莱德韦特。预览图空则用内置默认牌背。介绍/标签空则 App 返回空串与空数组，不编造。管理端 PUT /copy/decks，App GET/PUT /deck-preference。';
 COMMENT ON COLUMN decks.description IS '套装一句介绍。对应定稿 693:39。空为未填。';
 COMMENT ON COLUMN decks.tags IS '套装标签 JSON 数组。空为未填。';
 COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist。';
@@ -900,6 +924,9 @@ func (s *Store) seed(ctx context.Context) error {
 		return err
 	}
 	if err := s.seedContentV1(ctx); err != nil {
+		return err
+	}
+	if err := s.seedCards(ctx); err != nil {
 		return err
 	}
 	return s.seedTarotistPublic(ctx)

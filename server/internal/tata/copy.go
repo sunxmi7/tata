@@ -119,14 +119,6 @@ func (a *App) loadYearlySections(ctx context.Context, year int) ([]map[string]an
 	return out, allReady, nil
 }
 
-func (a *App) cardConfig(ctx context.Context) map[string]string {
-	cfg, err := a.Store.configMap(ctx, "card.")
-	if err != nil {
-		return map[string]string{}
-	}
-	return cfg
-}
-
 func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ...map[string]any) {
 	cfg := a.cardConfig(ctx)
 	for _, item := range items {
@@ -154,7 +146,7 @@ func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[str
 		thumb = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 	}
 	attachDailyHome(item, target, business, yi, thumb)
-	localizeReading(ctx, item)
+	a.localizeReading(ctx, item)
 }
 
 func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
@@ -179,10 +171,7 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 		writeOK(w, map[string]any{"kind": kind, "year": year, "sections": sections, "content_status": status})
 		return nil
 	case "cards":
-		cfg, err := a.Store.configMap(r.Context(), "card.")
-		if err != nil {
-			return err
-		}
+		cfg := a.cardConfig(r.Context())
 		list := []map[string]any{}
 		for _, card := range deck() {
 			list = append(list, map[string]any{
@@ -344,13 +333,8 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		if !knownCardName(name) {
 			return biz("牌名不正确")
 		}
-		if req.Yi != nil {
-			if err := a.Store.putConfig(r.Context(), cardYiKey(name), *req.Yi); err != nil {
-				return err
-			}
-		}
-		if req.Thumbnail != nil {
-			if err := a.Store.putConfig(r.Context(), cardThumbnailKey(name), *req.Thumbnail); err != nil {
+		if req.Yi != nil || req.Thumbnail != nil {
+			if err := a.Store.patchCardAssets(r.Context(), name, req.Yi, req.Thumbnail); err != nil {
 				return err
 			}
 		}

@@ -84,9 +84,6 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appCampaigns(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, status
 		FROM campaigns WHERE enabled=true ORDER BY sort_order, campaign_id`)
 	if err != nil {
@@ -127,9 +124,6 @@ func campaignCard(r *http.Request, id, title, subtitle, badge, status string) ma
 }
 
 func (a *App) appCampaign(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if !validContentID(id) {
 		return biz("活动不存在")
@@ -184,9 +178,6 @@ func placeholderList(r *http.Request, emptyTitle, note string) map[string]any {
 }
 
 func (a *App) appHelpCategories(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	rows, err := a.Store.Query(r.Context(), `SELECT category_id, title, articles_status, empty_note
 		FROM help_categories ORDER BY sort_order, category_id`)
 	if err != nil {
@@ -211,9 +202,6 @@ func (a *App) appHelpCategories(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appHelpArticles(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	category := strings.TrimSpace(r.URL.Query().Get("category"))
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if utf8.RuneCountInString(q) > helpQueryMax {
@@ -277,9 +265,6 @@ func (a *App) appHelpArticles(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appHelpArticle(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if !validContentID(id) {
 		return biz("问题不存在")

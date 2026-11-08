@@ -76,7 +76,7 @@ func TestWithAppLanguageContext(t *testing.T) {
 }
 
 func TestI18nHTTPHeaders(t *testing.T) {
-	store, ts := newMergeServer(t)
+	_, ts := newMergeServer(t)
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/app/v1/profile", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -102,12 +102,10 @@ func TestI18nHTTPHeaders(t *testing.T) {
 		t.Fatalf("en message: %q", env.Message)
 	}
 
-	token, _ := registerUser(t, ts, store, "i18n")
 	req, err = http.NewRequest(http.MethodGet, ts.URL+"/api/app/v1/preset-questions", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Language", "en")
 	res, err = http.DefaultClient.Do(req)
 	if err != nil {

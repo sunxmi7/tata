@@ -487,5 +487,6 @@
   "验证码必填": "Verification code is required",
   "骑士": "Knight",
   "高塔": "The Tower",
-  "魔术师": "The Magician"
+  "魔术师": "The Magician",
+  "场景不正确": "Scene is invalid"
 }

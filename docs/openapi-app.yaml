@@ -25,7 +25,7 @@ info:
     经 `decode` 的 JSON 会拒绝未知字段，失败文案为「请求字段不正确」。
 
     ## 鉴权
-    需要登录（或匿名令牌）的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。
+    公开目录不需要 token：`GET /preset-questions`、`/spreads`、`/banners`、`/tarotists`、`/explore/topics`、`/campaigns`、`/campaigns/{id}`、`/help/*`、`/iap/skus`、`/iap/config`。创建占卜、额度、档案、今日一牌等仍要登录或匿名令牌。其余需要登录（或匿名令牌）的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。
     token 来自登录 / 注册 / 匿名接口的 `data.accessToken`。不要放进请求体或 Query。
     Access token 为 HS256 JWT，`typ=access`，约 2 小时过期。`aud=app`。登录用户 `sub` 为 `app_users.id`；匿名令牌 `sub=0`，`anon` 为 anonymous_id。
     已合并账号（`merged_into` 非空）或不存在的用户会被拒绝。App 登录接口不签发 refresh token。漏带或无效返回 HTTP 401「未登录或令牌无效」。
@@ -534,10 +534,8 @@ paths:
       tags: [首页, 抽牌, 牌阵界面]
       operationId: appListSpreads
       summary: 可用牌阵
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
       description: |
-        只返回 enabled=true。recommended=true 的排前面，其余按 id。匿名令牌也可以读。
+        只返回 enabled=true。recommended=true 的排前面，其余按 id。公开，不需要登录或匿名令牌。
         recommended 对应选阵屏「推荐牌阵」角标。thumbnail 为牌阵示意图完整 URL（相对 /uploads/... 会拼当前请求的 scheme://host）；未配则为内置默认牌背。已是 http(s) 的 CDN 地址不改。
       responses:
         '200':
@@ -553,22 +551,43 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/Spread'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/preset-questions:
     get:
       tags: [抽牌]
       operationId: appPresetQuestions
       summary: 问题输入页预设题库
       parameters:
-        - $ref: '#/components/parameters/Authorization'
+        - name: scene
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [relationship, career, study, growth, social, life]
+          description: 按场景筛选。只传 scene 码，不传中文。非法值返回「场景不正确」。
       description: |
-        来源《塔塔_预设问题库_V1》：featured 首屏 15 条混合排列（不带分类标签）；backup 备用题库按感情/事业/学业/自我成长/人际/生活入库。
-        文档写备用 30 条，正文实际 36 条，按文档全量返回。more_per_page=5，供「更多问题」每次加载。
-        点击后填入输入框，不直接提交。匿名令牌可读。
+        来源《塔塔_预设问题库_V1》。点击后填入输入框，不直接提交。公开，不需要登录或匿名令牌。按场景查询只传 ?scene= 码。
+
+        **featured（首屏默认 15 条，单独数组，混合排列，UI 可不展示分类标签）：**
+        1. featured_01 growth 最近的我，最需要关注什么？
+        2. featured_02 relationship TA 对这段关系的真实态度是什么？
+        3. featured_03 career 接下来三个月，我的事业会有哪些新机会？
+        4. featured_04 growth 我现在的情绪困扰，背后隐藏着什么？
+        5. featured_05 relationship 我和 TA 接下来一个月的关系会如何发展？
+        6. featured_06 life 为了实现这个愿望，我接下来可以做些什么？
+        7. featured_07 life 最近有什么值得我留意的新机会？
+        8. featured_08 career 我目前的职业方向适合继续坚持吗？
+        9. featured_09 relationship 这段关系中，有哪些我还没有看清的事情？
+        10. featured_10 life 接下来三个月，我的财务状况会有什么变化？
+        11. featured_11 social 我应该如何改善目前的人际关系？
+        12. featured_12 life 如果我主动迈出一步，事情会有什么变化？
+        13. featured_13 growth 我身上有哪些尚未被发现的优势？
+        14. featured_14 life 接下来一个月，我的生活会出现什么新的可能？
+        15. featured_15 growth 现在的我，最需要听见什么样的提醒？
+
+        **backup：** 备用题库，文档写 30 条，正文实际 36 条，按文档全量返回。more_per_page=5。
       responses:
         '200':
-          description: data 含 featured、backup、more_per_page。
+          description: data 含 featured（首屏 15 条）、backup、scenes、more_per_page。
           content:
             application/json:
               schema:
@@ -578,16 +597,12 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/PresetQuestions'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/banners:
     get:
       tags: [首页]
       operationId: appListBanners
       summary: 当前首页提示窗
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
-      description: 只返回 start_at <= now < end_at，按 priority、id 降序。
+      description: 公开，不需要登录或匿名令牌。只返回 start_at <= now < end_at，按 priority、id 降序。
       responses:
         '200':
           description: data 为提示窗数组。
@@ -602,16 +617,12 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/Banner'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/tarotists:
     get:
       tags: [首页, 抽牌]
       operationId: appListTarotists
       summary: 可用塔罗师
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
-      description: 只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
+      description: 公开，不需要登录或匿名令牌。只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
       responses:
         '200':
           description: data 为塔罗师数组。
@@ -626,8 +637,6 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/TarotistPublic'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/quota:
     get:
       tags: [首页, 我的中心, 塔塔币购买]
@@ -1514,10 +1523,10 @@ paths:
       operationId: appIAPSKUs
       summary: 已启用的 SKU
       description: |
+        公开，不需要登录或匿名令牌。
         只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、reading_pack、consumable_pack、yearly_unlock。
         种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。
       parameters:
-        - $ref: '#/components/parameters/Authorization'
         - name: kind
           in: query
           required: false
@@ -1538,15 +1547,12 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/IAPSKU'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/iap/config:
     get:
       tags: [塔塔币购买]
       operationId: appIAPConfig
       summary: 恢复购买开关
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
+      description: 公开，不需要登录或匿名令牌。
       responses:
         '200':
           description: data 为 IAPConfig。
@@ -1559,16 +1565,12 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/IAPConfig'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/explore/topics:
     get:
       tags: [探索]
       operationId: appExploreTopics
       summary: 探索目录
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
-      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。匿名令牌可读取。
+      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。公开，不需要登录或匿名令牌。
       responses:
         '200':
           description: data.groups 非空。
@@ -1581,8 +1583,6 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/ExploreTopics'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/redeem:
     post:
       tags: [兑换码]
@@ -1885,10 +1885,8 @@ paths:
       tags: [参与活动]
       operationId: appCampaigns
       summary: 参与活动列表
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
       description: |
-        匿名令牌可读。条目含标题、副文、状态、角标和入口。
+        公开，不需要登录或匿名令牌。条目含标题、副文、状态、角标和入口。
         status=ongoing 时 entry_label=查看活动；status=ended 时角标为「已结束」、entry_label=活动已结束、entry_enabled=false。
         无启用活动时 items 为空，empty_title=暂时没有可参与的活动。不返回奖励数额。
         加载失败沿用 code=1，客户端展示「加载失败，请重试」并重试本接口。
@@ -1906,8 +1904,6 @@ paths:
                           data:
                             $ref: '#/components/schemas/CampaignList'
                   - $ref: '#/components/schemas/ErrorEnvelope'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/campaigns/participations:
     get:
       tags: [参与活动]
@@ -1962,10 +1958,9 @@ paths:
       operationId: appCampaign
       summary: 活动详情
       description: |
-        匿名令牌可读。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
+        公开，不需要登录或匿名令牌。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
         不预写奖励、条件、有效期数字、会员时长或领取门槛。未知 id 的 message=活动不存在。
       parameters:
-        - $ref: '#/components/parameters/Authorization'
         - name: id
           in: path
           required: true
@@ -1986,17 +1981,13 @@ paths:
                           data:
                             $ref: '#/components/schemas/CampaignDetail'
                   - $ref: '#/components/schemas/ErrorEnvelope'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/help/categories:
     get:
       tags: [帮助中心]
       operationId: appHelpCategories
       summary: 帮助中心分类
-      parameters:
-        - $ref: '#/components/parameters/Authorization'
       description: |
-        匿名令牌可读。固定三类：使用与占卜、会员与支付、账号与设置。
+        公开，不需要登录或匿名令牌。固定三类：使用与占卜、会员与支付、账号与设置。
         会员与支付 articles_status=pending，empty_note 为「这一类的问题还在整理，条目待确认。」
       responses:
         '200':
@@ -2010,20 +2001,17 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/HelpCategoryList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/help/articles:
     get:
       tags: [帮助中心]
       operationId: appHelpArticles
       summary: 帮助文章列表与搜索
       description: |
-        匿名令牌可读。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
+        公开，不需要登录或匿名令牌。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
         搜索无结果时 empty_title=暂时没有找到相关问题，empty_hint=换个关键词，或向我们反馈。
         未搜索且分类没有条目时，category_note 使用该分类 empty_note（会员与支付为条目待确认）。
         列表不含正文。未知分类 message=问题分类不正确。
       parameters:
-        - $ref: '#/components/parameters/Authorization'
         - name: category
           in: query
           required: false
@@ -2050,19 +2038,16 @@ paths:
                           data:
                             $ref: '#/components/schemas/HelpArticleList'
                   - $ref: '#/components/schemas/ErrorEnvelope'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/help/articles/{id}:
     get:
       tags: [帮助中心]
       operationId: appHelpArticle
       summary: 帮助文章详情
       description: |
-        匿名令牌可读。返回标题与正文。种子正文为「待确认」，body_status=pending。
+        公开，不需要登录或匿名令牌。返回标题与正文。种子正文为「待确认」，body_status=pending。
         不编写额度、退款或会员规则。反馈入口走已有 POST /api/app/v1/feedback，不在本文返回规则。
         未知 id 的 message=问题不存在。
       parameters:
-        - $ref: '#/components/parameters/Authorization'
         - name: id
           in: path
           required: true
@@ -2083,8 +2068,6 @@ paths:
                           data:
                             $ref: '#/components/schemas/HelpArticle'
                   - $ref: '#/components/schemas/ErrorEnvelope'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /api/app/v1/push/register:
     post:
       tags: [通知设置]
@@ -2760,7 +2743,7 @@ components:
         card_thumbnail:
           type: string
           nullable: true
-          description: 牌面缩略图完整 URL。优先 card.{牌名}.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。无牌名时为 null。
+          description: 牌面缩略图完整 URL。优先 cards.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。无牌名时为 null。
         target:
           type: string
           description: today 或 tomorrow。仅 daily 响应。
@@ -3658,18 +3641,110 @@ components:
       properties:
         featured:
           type: array
-          description: 首屏 15 条，混合排列，无分类标签。
+          description: |
+            首屏默认 15 条，与 backup 分开返回。混合排列。每条带 scene/category；首屏 UI 可不展示分类标签。
+            传 ?scene= 时只留下该场景的首屏题（条数会少于 15）。
           items:
             $ref: '#/components/schemas/PresetQuestion'
+          example:
+            - question_id: featured_01
+              scene: growth
+              category: 自我成长
+              body: 最近的我，最需要关注什么？
+              sort_order: 1
+            - question_id: featured_02
+              scene: relationship
+              category: 感情关系
+              body: TA 对这段关系的真实态度是什么？
+              sort_order: 2
+            - question_id: featured_03
+              scene: career
+              category: 事业与工作
+              body: 接下来三个月，我的事业会有哪些新机会？
+              sort_order: 3
+            - question_id: featured_04
+              scene: growth
+              category: 自我成长
+              body: 我现在的情绪困扰，背后隐藏着什么？
+              sort_order: 4
+            - question_id: featured_05
+              scene: relationship
+              category: 感情关系
+              body: 我和 TA 接下来一个月的关系会如何发展？
+              sort_order: 5
+            - question_id: featured_06
+              scene: life
+              category: 生活与选择
+              body: 为了实现这个愿望，我接下来可以做些什么？
+              sort_order: 6
+            - question_id: featured_07
+              scene: life
+              category: 生活与选择
+              body: 最近有什么值得我留意的新机会？
+              sort_order: 7
+            - question_id: featured_08
+              scene: career
+              category: 事业与工作
+              body: 我目前的职业方向适合继续坚持吗？
+              sort_order: 8
+            - question_id: featured_09
+              scene: relationship
+              category: 感情关系
+              body: 这段关系中，有哪些我还没有看清的事情？
+              sort_order: 9
+            - question_id: featured_10
+              scene: life
+              category: 生活与选择
+              body: 接下来三个月，我的财务状况会有什么变化？
+              sort_order: 10
+            - question_id: featured_11
+              scene: social
+              category: 人际关系
+              body: 我应该如何改善目前的人际关系？
+              sort_order: 11
+            - question_id: featured_12
+              scene: life
+              category: 生活与选择
+              body: 如果我主动迈出一步，事情会有什么变化？
+              sort_order: 12
+            - question_id: featured_13
+              scene: growth
+              category: 自我成长
+              body: 我身上有哪些尚未被发现的优势？
+              sort_order: 13
+            - question_id: featured_14
+              scene: life
+              category: 生活与选择
+              body: 接下来一个月，我的生活会出现什么新的可能？
+              sort_order: 14
+            - question_id: featured_15
+              scene: growth
+              category: 自我成长
+              body: 现在的我，最需要听见什么样的提醒？
+              sort_order: 15
         backup:
           type: array
           description: 备用题库。点击「更多问题」每次取 more_per_page 条。
           items:
             $ref: '#/components/schemas/PresetQuestion'
+        scenes:
+          type: array
+          description: 文档六类场景，供按场景筛选。title 随语言头翻译。
+          items:
+            $ref: '#/components/schemas/PresetScene'
         more_per_page:
           type: integer
           description: 「更多问题」每次加载条数，V1 为 5。
           example: 5
+    PresetScene:
+      type: object
+      properties:
+        scene:
+          type: string
+          description: relationship / career / study / growth / social / life。
+        title:
+          type: string
+          description: 场景展示名，如「感情关系」。
     PresetQuestion:
       type: object
       properties:
@@ -3678,9 +3753,12 @@ components:
         body:
           type: string
           description: 问题正文。点击后填入输入框，不直接提交。
+        scene:
+          type: string
+          description: 场景类型。relationship=感情关系，career=事业与工作，study=学业与考试，growth=自我成长，social=人际关系，life=生活与选择。
         category:
           type: string
-          description: 备用题分类。首屏条目不返回此字段。
+          description: 场景中文名（随语言头翻译）。首屏与备用题都返回。
         sort_order:
           type: integer
     DetectResult:

@@ -22,7 +22,7 @@ info:
     经 `decode` 的 JSON 会拒绝未知字段，失败文案为「请求字段不正确」。
 
     ## 鉴权
-    需要登录的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。不要放进请求体。
+    公开目录不需要 token：`GET /preset-questions`、`/spreads`、`/banners`、`/tarotists`、`/explore/topics`、`/campaigns`、`/campaigns/{id}`、`/help/*`、`/iap/skus`、`/iap/config`。创建占卜、额度、档案、今日一牌等仍要登录或匿名令牌。其余需要登录（或匿名令牌）的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。不要放进请求体。
     Access token 为 HS256 JWT，`typ=access`，约 2 小时过期。
     - App：`aud=app`。登录用户 `sub` 为 `app_users.id`，`anon` 为空。匿名令牌 `sub=0`，`anon` 为 anonymous_id。`role` 为空。
     - 管理端：`aud=admin`。`sub` 为 `operators.id`，`role` 为 `admin` 或 `readonly`。
@@ -117,6 +117,14 @@ components:
         type: integer
         format: int64
         minimum: 1
+    PathCardId:
+      name: id
+      in: path
+      required: true
+      description: 单牌 id。种子 Rider-Waite 为 0–77（愚者=0）。无法解析或小于 0 时 message 为「牌不存在」。
+      schema:
+        type: integer
+        minimum: 0
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -339,7 +347,7 @@ components:
         card_thumbnail:
           type: string
           nullable: true
-          description: 牌面缩略图完整 URL。优先 card.{牌名}.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。无牌名时为 null。
+          description: 牌面缩略图完整 URL。优先 cards.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。无牌名时为 null。
         target:
           type: string
           description: today 或 tomorrow。仅 daily 响应。
@@ -552,6 +560,103 @@ components:
           type: string
           nullable: true
           description: 牌阵示意图 URL。新建省略为空。更新省略保持原值。空字符串清除。
+    Card:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: 主键。种子 0–77，愚者=0。新建从 78 起。
+        card_id:
+          type: integer
+          description: 与 id 相同，兼容 copy/cards。
+        name:
+          type: string
+          description: 简体中文牌名。抽牌 JSON 与 i18n 的稳定键，创建后不可改。
+        card_name:
+          type: string
+          description: 与 name 相同。
+        name_zh_hant:
+          type: string
+          description: 繁体名。空则 App 回退 i18n 文件。
+        name_en:
+          type: string
+          description: 英文名。空则 App 回退 i18n 文件。
+        name_ja:
+          type: string
+          description: 日文名。空则 App 回退 i18n 文件。
+        name_ko:
+          type: string
+          description: 韩文名。空则 App 回退 i18n 文件。
+        arcana:
+          type: string
+          description: major 或 minor。
+        suit:
+          type: string
+          nullable: true
+          description: 小牌花色：权杖/圣杯/宝剑/星币。大牌为 null。
+        rank:
+          type: string
+          nullable: true
+          description: 小牌点数。大牌为 null。
+        yi:
+          type: string
+          nullable: true
+          description: 今日一牌「宜」。空为 null。
+        thumbnail:
+          type: string
+          nullable: true
+          description: 单牌图。空为 null，App 走模板/默认图/内置牌背。
+        card_thumbnail:
+          type: string
+          description: App 实际用的完整缩略图 URL。
+        enabled:
+          type: boolean
+        sort_order:
+          type: integer
+    CardBody:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: 新建必填。更新若与现名不同则拒绝（不能修改牌名）。
+        name_zh_hant:
+          type: string
+        name_en:
+          type: string
+        name_ja:
+          type: string
+        name_ko:
+          type: string
+        arcana:
+          type: string
+        suit:
+          type: string
+        rank:
+          type: string
+        yi:
+          type: string
+        thumbnail:
+          type: string
+        enabled:
+          type: boolean
+        sort_order:
+          type: integer
+    CardCatalog:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Card"
+        thumbnail_template:
+          type: string
+          nullable: true
+          description: 全套模板，可用 {id}/{name}。存在 app_config.card.thumbnail_template。
+        thumbnail_default:
+          type: string
+          nullable: true
+          description: 默认图。存在 app_config.card.thumbnail_default。
     Banner:
       type: object
       properties:
@@ -1665,7 +1770,9 @@ components:
       properties:
         featured:
           type: array
-          description: 首屏 15 条，混合排列，无分类标签。
+          description: |
+            首屏默认 15 条，与 backup 分开返回。混合排列。每条带 scene/category；首屏 UI 可不展示分类标签。
+            传 ?scene= 时只留下该场景的首屏题（条数会少于 15）。
           items:
             $ref: "#/components/schemas/PresetQuestion"
         backup:
@@ -1673,10 +1780,24 @@ components:
           description: 备用题库。点击「更多问题」每次取 more_per_page 条。
           items:
             $ref: "#/components/schemas/PresetQuestion"
+        scenes:
+          type: array
+          description: 文档六类场景，供按场景筛选。title 随语言头翻译。
+          items:
+            $ref: "#/components/schemas/PresetScene"
         more_per_page:
           type: integer
           description: 「更多问题」每次加载条数，V1 为 5。
           example: 5
+    PresetScene:
+      type: object
+      properties:
+        scene:
+          type: string
+          description: relationship / career / study / growth / social / life。
+        title:
+          type: string
+          description: 场景展示名，如「感情关系」。
     PresetQuestion:
       type: object
       properties:
@@ -1685,9 +1806,12 @@ components:
         body:
           type: string
           description: 问题正文。点击后填入输入框，不直接提交。
+        scene:
+          type: string
+          description: 场景类型。relationship=感情关系，career=事业与工作，study=学业与考试，growth=自我成长，social=人际关系，life=生活与选择。
         category:
           type: string
-          description: 备用题分类。首屏条目不返回此字段。
+          description: 场景中文名（随语言头翻译）。首屏与备用题都返回。
         sort_order:
           type: integer
     DetectResult:
@@ -3948,10 +4072,8 @@ paths:
       tags: [占卜解读]
       operationId: appListSpreads
       summary: 可用牌阵
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
       description: |
-        只返回 enabled=true。recommended=true 的排前面，其余按 id。匿名令牌也可以读。
+        只返回 enabled=true。recommended=true 的排前面，其余按 id。公开，不需要登录或匿名令牌。
         recommended 对应选阵屏「推荐牌阵」角标。thumbnail 为牌阵示意图完整 URL（相对 /uploads/... 会拼当前请求的 scheme://host）；未配则为内置默认牌背。已是 http(s) 的 CDN 地址不改。
       responses:
         "200":
@@ -3967,21 +4089,43 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/Spread"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/preset-questions:
     get:
       tags: [占卜解读]
       operationId: appPresetQuestions
       summary: 问题输入页预设题库
       parameters:
-        - $ref: "#/components/parameters/Authorization"
+        - name: scene
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [relationship, career, study, growth, social, life]
+          description: 按场景筛选。只传 scene 码，不传中文。非法值返回「场景不正确」。
       description: |
-        来源《塔塔_预设问题库_V1》：featured 首屏 15 条；backup 备用题库。more_per_page=5。
-        文档写备用 30 条，正文实际 36 条，按文档全量返回。匿名令牌可读。
+        来源《塔塔_预设问题库_V1》。点击后填入输入框，不直接提交。公开，不需要登录或匿名令牌。按场景查询只传 ?scene= 码。
+
+        **featured（首屏默认 15 条，单独数组，混合排列，UI 可不展示分类标签）：**
+        1. featured_01 growth 最近的我，最需要关注什么？
+        2. featured_02 relationship TA 对这段关系的真实态度是什么？
+        3. featured_03 career 接下来三个月，我的事业会有哪些新机会？
+        4. featured_04 growth 我现在的情绪困扰，背后隐藏着什么？
+        5. featured_05 relationship 我和 TA 接下来一个月的关系会如何发展？
+        6. featured_06 life 为了实现这个愿望，我接下来可以做些什么？
+        7. featured_07 life 最近有什么值得我留意的新机会？
+        8. featured_08 career 我目前的职业方向适合继续坚持吗？
+        9. featured_09 relationship 这段关系中，有哪些我还没有看清的事情？
+        10. featured_10 life 接下来三个月，我的财务状况会有什么变化？
+        11. featured_11 social 我应该如何改善目前的人际关系？
+        12. featured_12 life 如果我主动迈出一步，事情会有什么变化？
+        13. featured_13 growth 我身上有哪些尚未被发现的优势？
+        14. featured_14 life 接下来一个月，我的生活会出现什么新的可能？
+        15. featured_15 growth 现在的我，最需要听见什么样的提醒？
+
+        **backup：** 备用题库，文档写 30 条，正文实际 36 条，按文档全量返回。more_per_page=5。
       responses:
         "200":
-          description: data 含 featured、backup、more_per_page。
+          description: data 含 featured（首屏 15 条）、backup、scenes、more_per_page。
           content:
             application/json:
               schema:
@@ -3991,16 +4135,12 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/PresetQuestions"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/banners:
     get:
       tags: [占卜解读]
       operationId: appListBanners
       summary: 当前首页提示窗
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 只返回 start_at <= now < end_at，按 priority、id 降序。
+      description: 公开，不需要登录或匿名令牌。只返回 start_at <= now < end_at，按 priority、id 降序。
       responses:
         "200":
           description: data 为提示窗数组。
@@ -4015,16 +4155,12 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/Banner"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/tarotists:
     get:
       tags: [占卜解读]
       operationId: appListTarotists
       summary: 可用塔罗师
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
+      description: 公开，不需要登录或匿名令牌。只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
       responses:
         "200":
           description: data 为塔罗师数组。
@@ -4039,8 +4175,6 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/TarotistPublic"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/quota:
     get:
       tags: [额度钻石]
@@ -4917,10 +5051,10 @@ paths:
       operationId: appIAPSKUs
       summary: 已启用的 SKU
       description: |
+        公开，不需要登录或匿名令牌。
         只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、reading_pack、consumable_pack、yearly_unlock。
         种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。
       parameters:
-        - $ref: "#/components/parameters/Authorization"
         - name: kind
           in: query
           required: false
@@ -4941,15 +5075,12 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/IAPSKU"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/iap/config:
     get:
       tags: [内购]
       operationId: appIAPConfig
       summary: 恢复购买开关
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
+      description: 公开，不需要登录或匿名令牌。
       responses:
         "200":
           description: data 为 IAPConfig。
@@ -4962,16 +5093,12 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/IAPConfig"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/explore/topics:
     get:
       tags: [探索]
       operationId: appExploreTopics
       summary: 探索目录
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。匿名令牌可读取。
+      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。公开，不需要登录或匿名令牌。
       responses:
         "200":
           description: data.groups 非空。
@@ -4984,8 +5111,6 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/ExploreTopics"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/redeem:
     post:
       tags: [钱包兑换]
@@ -5373,10 +5498,8 @@ paths:
       tags: [活动]
       operationId: appCampaigns
       summary: 参与活动列表
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
       description: |
-        匿名令牌可读。条目含标题、副文、状态、角标和入口。
+        公开，不需要登录或匿名令牌。条目含标题、副文、状态、角标和入口。
         status=ongoing 时 entry_label=查看活动；status=ended 时角标为「已结束」、entry_label=活动已结束、entry_enabled=false。
         无启用活动时 items 为空，empty_title=暂时没有可参与的活动。不返回奖励数额。
         加载失败沿用 code=1，客户端展示「加载失败，请重试」并重试本接口。
@@ -5394,8 +5517,6 @@ paths:
                           data:
                             $ref: "#/components/schemas/CampaignList"
                   - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/campaigns/participations:
     get:
       tags: [活动]
@@ -5450,10 +5571,9 @@ paths:
       operationId: appCampaign
       summary: 活动详情
       description: |
-        匿名令牌可读。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
+        公开，不需要登录或匿名令牌。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
         不预写奖励、条件、有效期数字、会员时长或领取门槛。未知 id 的 message=活动不存在。
       parameters:
-        - $ref: "#/components/parameters/Authorization"
         - name: id
           in: path
           required: true
@@ -5474,17 +5594,13 @@ paths:
                           data:
                             $ref: "#/components/schemas/CampaignDetail"
                   - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/help/categories:
     get:
       tags: [帮助]
       operationId: appHelpCategories
       summary: 帮助中心分类
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
       description: |
-        匿名令牌可读。固定三类：使用与占卜、会员与支付、账号与设置。
+        公开，不需要登录或匿名令牌。固定三类：使用与占卜、会员与支付、账号与设置。
         会员与支付 articles_status=pending，empty_note 为「这一类的问题还在整理，条目待确认。」
       responses:
         "200":
@@ -5498,20 +5614,17 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/HelpCategoryList"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/help/articles:
     get:
       tags: [帮助]
       operationId: appHelpArticles
       summary: 帮助文章列表与搜索
       description: |
-        匿名令牌可读。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
+        公开，不需要登录或匿名令牌。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
         搜索无结果时 empty_title=暂时没有找到相关问题，empty_hint=换个关键词，或向我们反馈。
         未搜索且分类没有条目时，category_note 使用该分类 empty_note（会员与支付为条目待确认）。
         列表不含正文。未知分类 message=问题分类不正确。
       parameters:
-        - $ref: "#/components/parameters/Authorization"
         - name: category
           in: query
           required: false
@@ -5538,19 +5651,16 @@ paths:
                           data:
                             $ref: "#/components/schemas/HelpArticleList"
                   - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/help/articles/{id}:
     get:
       tags: [帮助]
       operationId: appHelpArticle
       summary: 帮助文章详情
       description: |
-        匿名令牌可读。返回标题与正文。种子正文为「待确认」，body_status=pending。
+        公开，不需要登录或匿名令牌。返回标题与正文。种子正文为「待确认」，body_status=pending。
         不编写额度、退款或会员规则。反馈入口走已有 POST /api/app/v1/feedback，不在本文返回规则。
         未知 id 的 message=问题不存在。
       parameters:
-        - $ref: "#/components/parameters/Authorization"
         - name: id
           in: path
           required: true
@@ -5571,8 +5681,6 @@ paths:
                           data:
                             $ref: "#/components/schemas/HelpArticle"
                   - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/monthly-reports:
     get:
       tags: [占卜解读]
@@ -6172,6 +6280,117 @@ paths:
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/cards:
+    get:
+      tags: [管理端内容]
+      operationId: adminListCards
+      summary: 单牌目录
+      description: |
+        读 `cards` 表，含停用项。种子 78 张 Rider-Waite（id 0–77）。
+        data 为对象：items[]、thumbnail_template、thumbnail_default。
+        只读角色可访问。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      responses:
+        "200":
+          description: data 为 CardCatalog。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CardCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [管理端内容]
+      operationId: adminCreateCard
+      summary: 新建单牌
+      description: 需要 role=admin。name 必填且唯一。id 从 78 起。抽牌仍只用 0–77。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardBody"
+      responses:
+        "200":
+          description: 成功 data.id 为新 id。重名「牌名已存在」，缺名「请填写牌名」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IdOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/cards/{id}:
+    put:
+      tags: [管理端内容]
+      operationId: adminUpdateCard
+      summary: 更新单牌
+      description: 需要 role=admin。可改多语言名、宜、图片、启停。不能改 name。id 允许 0。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - $ref: "#/components/parameters/PathCardId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardBody"
+      responses:
+        "200":
+          description: 成功 data=true。不存在「牌不存在」；改名「不能修改牌名」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/card-settings:
+    put:
+      tags: [管理端内容]
+      operationId: adminPutCardSettings
+      summary: 保存全套牌图设置
+      description: 需要 role=admin。写 app_config 的 thumbnail_template / thumbnail_default。至少一项。成功返回与 GET /cards 相同的 CardCatalog。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                thumbnail_template:
+                  type: string
+                thumbnail_default:
+                  type: string
+      responses:
+        "200":
+          description: 成功返回最新目录；都未传则「请填写牌图设置」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CardCatalog"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/tarotists:
     get:
       tags: [管理端内容]
@@ -6547,9 +6766,9 @@ paths:
       summary: 读取运营文案
       description: |
         kind 为 yearly、cards、help、campaigns、decks。
-        年运、今日一牌宜、牌面缩略图存在 app_config（yearly.{year}.{section}、card.{牌名}.yi、card.{牌名}.thumbnail、card.thumbnail_template、card.thumbnail_default）。
-        牌面风格在 decks 表（含 description / tags）；帮助、活动改已有表。会员专属活动文案在 iap_skus.copy，不走本接口。
-        cards 的 data 含 thumbnail_template、thumbnail_default 与 items[].thumbnail（单牌覆盖）、items[].card_thumbnail（App 实际 URL；都未配则为内置 /uploads/card-default.png）。
+        年运存在 app_config（yearly.{year}.{section}）。单牌目录在 cards 表；GET/PUT copy/cards 仍可用，写 yi/thumbnail 进 cards，模板/默认图仍在 app_config。
+        牌组风格在 decks 表（含 description / tags）；帮助、活动改已有表。会员专属活动文案在 iap_skus.copy，不走本接口。
+        cards 的 data 含 thumbnail_template、thumbnail_default 与固定 78 张 items（deck() 顺序）。完整目录含新建项见 GET /api/admin/v1/cards。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind
@@ -6582,7 +6801,7 @@ paths:
       tags: [管理端内容]
       operationId: adminPutCopy
       summary: 保存运营文案
-      description: 需要 role=admin。yearly/cards 写 app_config；decks 写牌面风格表（name/thumbnail/description/tags，至少保留一套启用）；help/campaigns 更新已有表。
+      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格表（name/thumbnail/description/tags，至少保留一套启用）；help/campaigns 更新已有表。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind

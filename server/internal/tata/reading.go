@@ -55,7 +55,7 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 	items := scanReadings(rows)
 	a.applyCardThumbnails(r.Context(), r, items...)
 	for _, item := range items {
-		localizeReading(r.Context(), item)
+		a.localizeReading(r.Context(), item)
 	}
 	writeOK(w, items)
 	return nil
@@ -327,9 +327,6 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended, thumbnail FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
@@ -355,9 +352,6 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appBanners(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	now := time.Now()
 	rows, err := a.Store.Query(r.Context(), `SELECT id, copy, start_at, end_at, priority, target FROM banners WHERE start_at<=$1 AND end_at>$1 ORDER BY priority DESC, id DESC`, now)
 	if err != nil {
@@ -369,9 +363,6 @@ func (a *App) appBanners(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appTarotists(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	rows, err := a.Store.Query(r.Context(), `SELECT id, name, display_copy, avatar_url, tags, blurb FROM tarotists WHERE enabled=true ORDER BY id`)
 	if err != nil {
 		return err
@@ -838,7 +829,7 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 	items := scanReadings(rows)
 	a.applyCardThumbnails(r.Context(), r, items...)
 	for _, item := range items {
-		localizeReading(r.Context(), item)
+		a.localizeReading(r.Context(), item)
 	}
 	hasMore := false
 	var nextCursor int64

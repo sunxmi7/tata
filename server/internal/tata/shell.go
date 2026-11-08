@@ -33,9 +33,6 @@ var feedbackCategories = map[string]bool{
 }
 
 func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
-		return err
-	}
 	rows, err := a.Store.Query(r.Context(), `SELECT topic_id, group_key, group_title, title, subtitle, illustration, spread_id, sort_order
 		FROM explore_topics ORDER BY sort_order, topic_id`)
 	if err != nil {
@@ -1007,7 +1004,7 @@ func attachCalendarPreview(r *http.Request, item map[string]any, cfg map[string]
 	delete(item, "cards")
 	delete(item, "interpretation")
 	if r != nil {
-		localizeReading(r.Context(), item)
+		localizeReadingCfg(r.Context(), cfg, item)
 	}
 }
 

@@ -34,6 +34,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/spreads/{id}", a.h(a.adminUpdateSpread))
 	mux.HandleFunc("DELETE /api/admin/v1/spreads/{id}", a.h(a.adminDeleteSpread))
 
+	mux.HandleFunc("GET /api/admin/v1/cards", a.h(a.adminListCards))
+	mux.HandleFunc("POST /api/admin/v1/cards", a.h(a.adminCreateCard))
+	mux.HandleFunc("PUT /api/admin/v1/cards/{id}", a.h(a.adminUpdateCard))
+	mux.HandleFunc("PUT /api/admin/v1/card-settings", a.h(a.adminPutCardSettings))
+
 	mux.HandleFunc("GET /api/admin/v1/tarotists", a.h(a.adminListTarotists))
 	mux.HandleFunc("POST /api/admin/v1/tarotists", a.h(a.adminCreateTarotist))
 	mux.HandleFunc("PUT /api/admin/v1/tarotists/{id}", a.h(a.adminUpdateTarotist))

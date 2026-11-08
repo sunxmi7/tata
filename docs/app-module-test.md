@@ -6,17 +6,17 @@
 
 **鉴权：** Apifox 在 **Headers** 加参数 `Authorization`，值 `Bearer <accessToken>`（Bearer 后有空格）。不要放进请求体。`Content-Type: application/json`
 
-**包络：** 成功 `code=0`；业务失败仍是 HTTP 200、`code=1`、看 `message`；没带令牌是 HTTP 401「未登录或令牌无效」。
+**包络：** 成功 `code=0`；业务失败仍是 HTTP 200、`code=1`、看 `message`；需要令牌却没带是 HTTP 401「未登录或令牌无效」。
 
-先调 `POST /api/app/v1/auth/anonymous` 拿匿名令牌，首页 / 探索 / 帮助等读接口才能过。写档案、今日一牌、兑换、年运必须换成登录令牌。
+公开目录（预设问题、牌阵、塔罗师、提示窗、探索、活动列表/详情、帮助、SKU）**不带 token 就能过**。创建占卜、额度、档案要先调 `POST /api/app/v1/auth/anonymous` 拿匿名令牌。写档案、今日一牌、兑换、年运必须换成登录令牌。
 
 ---
 
 ## 建议顺序
 
 - [ ] 1 登录注册（无依赖，最先测）
-- [ ] 2 首页（匿名或登录令牌）
-- [ ] 3 探索（令牌）
+- [ ] 2 首页（目录公开；额度/今日一牌要令牌）
+- [ ] 3 探索（目录公开；开局要令牌）
 - [ ] 4 抽牌（令牌；选阵要用牌阵 id）
 - [ ] 5 牌阵界面（跟抽牌同一条记录）
 - [ ] 6 历史记录（至少有一条占卜）
@@ -26,12 +26,12 @@
 - [ ] 10 塔塔币购买（登录）
 - [ ] 11 会员中心（登录）
 - [ ] 12 兑换码（登录）
-- [ ] 13 参与活动（令牌即可）
+- [ ] 13 参与活动（列表/详情公开；参与记录/奖励记录要登录）
 - [ ] 14 月度报告（登录；当月有占卜更好）
 - [ ] 15 年度运势（登录；解锁依赖年卡或年运 SKU）
 - [ ] 16 功能心愿单（登录）
 - [ ] 17 反馈意见（登录）
-- [ ] 18 帮助中心（令牌即可）
+- [ ] 18 帮助中心（公开）
 - [ ] 19 通知设置（登录）
 - [ ] 20 我的小组件（同日历，复用今日一牌）
 - [ ] 21 语言（无独立接口）
@@ -135,9 +135,9 @@
 
 ## 2. 首页
 
-令牌：ANON 或 USER 均可。
+`banners` / `tarotists` / `spreads` 公开，可不带令牌。`quota` / `deck-preference` / `daily` 要 ANON 或 USER。
 
-- [ ] `GET /api/app/v1/banners`：当前有效提示窗，没有就空数组
+- [ ] `GET /api/app/v1/banners`：当前有效提示窗，没有就空数组；不带 token 也能过
 - [ ] `GET /api/app/v1/tarotists`：至少有知晚 / 明序 / 隐川 / 照野；记下要用的 id（种子知晚一般是 9）
 - [ ] `GET /api/app/v1/spreads`：有「时间流」，recommended=true，card_count=3；记下 spread_id（一般是 1）
 - [ ] `GET /api/app/v1/quota`：匿名次数/钻石为 0；登录用户能看到注册奖励或今日免费
@@ -150,7 +150,9 @@
 
 ## 3. 探索
 
-- [ ] `GET /api/app/v1/explore/topics`：两组，此刻抉择（是否、二选一）、主题占卜（感情/事业等）
+目录公开。开局 `POST /readings` 要令牌。
+
+- [ ] `GET /api/app/v1/explore/topics`：两组，此刻抉择（是否、二选一）、主题占卜（感情/事业等）；不带 token 也能过
 - [ ] 条目里 spread.spread_id 应对时间流
 
 点进主题后开局走抽牌，不要另找探索专用创建接口。
@@ -174,7 +176,9 @@
 
 ## 4. 抽牌
 
-用登录令牌走一条完整「普通占卜」。时间流 3 张。
+用登录令牌走一条完整「普通占卜」。时间流 3 张。提问页预设题库公开。
+
+- [ ] `GET /api/app/v1/preset-questions`：不带 token；`featured` 15 条、`backup` 36 条
 
 ### 4.1 创建
 
@@ -369,9 +373,9 @@
 
 ## 13. 参与活动
 
-令牌即可。
+列表/详情公开。参与记录、奖励记录必须登录。
 
-- [ ] `GET /api/app/v1/campaigns`：种子两条 friend_invite、membership_benefit
+- [ ] `GET /api/app/v1/campaigns`：种子两条 friend_invite、membership_benefit；不带 token 也能过
 - [ ] `GET /api/app/v1/campaigns/friend_invite`：详情 detail_status=pending，不要期望完整规则
 - [ ] `GET /api/app/v1/campaigns/participations`：空列表 + 占位说明
 - [ ] `GET /api/app/v1/campaigns/rewards`：空列表 + 占位说明
@@ -458,7 +462,7 @@ JSON 示例（1×1 png）：
 
 ## 18. 帮助中心
 
-匿名令牌可读。
+公开，不带 token 可读。
 
 - [ ] `GET /api/app/v1/help/categories`：三类；「会员与支付」articles_status=pending
 - [ ] `GET /api/app/v1/help/articles?category=reading`

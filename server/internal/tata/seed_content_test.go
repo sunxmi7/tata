@@ -1,13 +1,13 @@
 package tata
 
 import (
+	"net/http"
 	"testing"
 )
 
 func TestPresetQuestionsAndCardThumbs(t *testing.T) {
-	store, ts := newMergeServer(t)
-	token, _ := registerUser(t, ts, store, "presetq")
-	data := listOne(t, ts, token, "/api/app/v1/preset-questions")
+	_, ts := newMergeServer(t)
+	data := listOne(t, ts, "", "/api/app/v1/preset-questions")
 	featured, _ := data["featured"].([]any)
 	backup, _ := data["backup"].([]any)
 	if len(featured) != 15 {
@@ -23,8 +23,33 @@ func TestPresetQuestionsAndCardThumbs(t *testing.T) {
 	if first["body"] != "最近的我，最需要关注什么？" {
 		t.Fatalf("first featured: %#v", first)
 	}
-	if _, ok := first["category"]; ok {
-		t.Fatalf("featured should not show category: %#v", first)
+	if first["scene"] != "growth" || first["category"] != "自我成长" {
+		t.Fatalf("featured scene: %#v", first)
+	}
+	scenes, _ := data["scenes"].([]any)
+	if len(scenes) != 6 {
+		t.Fatalf("scenes %d %#v", len(scenes), data["scenes"])
+	}
+	love := listOne(t, ts, "", "/api/app/v1/preset-questions?scene=relationship")
+	loveF, _ := love["featured"].([]any)
+	loveB, _ := love["backup"].([]any)
+	if len(loveF) != 3 || len(loveB) != 6 {
+		t.Fatalf("relationship counts featured=%d backup=%d", len(loveF), len(loveB))
+	}
+	for _, raw := range append(append([]any{}, loveF...), loveB...) {
+		row, _ := raw.(map[string]any)
+		if row["scene"] != "relationship" {
+			t.Fatalf("filtered row: %#v", row)
+		}
+	}
+	career := listOne(t, ts, "", "/api/app/v1/preset-questions?scene=career")
+	careerB, _ := career["backup"].([]any)
+	if len(careerB) != 6 || careerB[0].(map[string]any)["scene"] != "career" {
+		t.Fatalf("career filter: %#v", career)
+	}
+	msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/preset-questions?scene=unknown", nil)
+	if msg != "场景不正确" {
+		t.Fatalf("bad scene: %s", msg)
 	}
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	copyCards := listOne(t, ts, admin.access, "/api/admin/v1/copy/cards")

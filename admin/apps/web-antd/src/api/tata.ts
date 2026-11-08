@@ -141,6 +141,43 @@ export function listGrants(userId?: string) {
 export function createGrant(data: Record<string, unknown>) {
   return requestClient.post<Record<string, unknown>>('/grants', data);
 }
+export interface TataCard {
+  id: number;
+  card_id: number;
+  name: string;
+  card_name: string;
+  name_zh_hant?: string;
+  name_en?: string;
+  name_ja?: string;
+  name_ko?: string;
+  arcana?: string;
+  suit?: string | null;
+  rank?: string | null;
+  yi?: string | null;
+  thumbnail?: string | null;
+  card_thumbnail?: string;
+  enabled: boolean;
+  sort_order?: number;
+}
+
+export interface TataCardList {
+  items: TataCard[];
+  thumbnail_template?: string | null;
+  thumbnail_default?: string | null;
+}
+
+export function listCards() {
+  return requestClient.get<TataCardList>('/cards');
+}
+export function createCard(data: Record<string, unknown>) {
+  return requestClient.post<Record<string, unknown>>('/cards', data);
+}
+export function updateCard(id: number, data: Record<string, unknown>) {
+  return requestClient.put<Record<string, unknown>>(`/cards/${id}`, data);
+}
+export function updateCardSettings(data: Record<string, unknown>) {
+  return requestClient.put<TataCardList>('/card-settings', data);
+}
 export function getCopy(kind: string, year?: number) {
   const query = year ? `?year=${year}` : '';
   return requestClient.get<Record<string, unknown>>(`/copy/${kind}${query}`);

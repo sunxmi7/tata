@@ -80,7 +80,42 @@ func localizeString(ctx context.Context, v any) any {
 	return T(ctx, s)
 }
 
+func localizeCardName(ctx context.Context, cfg map[string]string, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return name
+	}
+	if cfg != nil {
+		lang := AppLanguageFromContext(ctx)
+		key := ""
+		switch lang {
+		case "en":
+			key = "card." + name + ".name_en"
+		case "ja":
+			key = "card." + name + ".name_ja"
+		case "ko":
+			key = "card." + name + ".name_ko"
+		case "zh-Hant":
+			key = "card." + name + ".name_zh_hant"
+		}
+		if key != "" {
+			if v := strings.TrimSpace(cfg[key]); v != "" {
+				return v
+			}
+		}
+	}
+	return T(ctx, name)
+}
+
+func (a *App) localizeReading(ctx context.Context, item map[string]any) {
+	localizeReadingCfg(ctx, a.cardConfig(ctx), item)
+}
+
 func localizeReading(ctx context.Context, item map[string]any) {
+	localizeReadingCfg(ctx, nil, item)
+}
+
+func localizeReadingCfg(ctx context.Context, cfg map[string]string, item map[string]any) {
 	if item == nil {
 		return
 	}
@@ -91,21 +126,32 @@ func localizeReading(ctx context.Context, item map[string]any) {
 		switch v := item[key].(type) {
 		case string:
 			if v != "" {
-				item[key] = T(ctx, v)
+				if key == "card_name" {
+					item[key] = localizeCardName(ctx, cfg, v)
+				} else {
+					item[key] = T(ctx, v)
+				}
 			}
 		case *string:
 			if v != nil && *v != "" {
 				s := T(ctx, *v)
+				if key == "card_name" {
+					s = localizeCardName(ctx, cfg, *v)
+				}
 				item[key] = s
 			}
 		}
 	}
 	if raw, ok := item["cards"].(json.RawMessage); ok {
-		item["cards"] = localizeJSONFields(ctx, raw, "name", "position_name")
+		item["cards"] = localizeJSONFieldsCfg(ctx, cfg, raw, "name", "position_name")
 	}
 }
 
 func localizeJSONFields(ctx context.Context, raw json.RawMessage, fields ...string) json.RawMessage {
+	return localizeJSONFieldsCfg(ctx, nil, raw, fields...)
+}
+
+func localizeJSONFieldsCfg(ctx context.Context, cfg map[string]string, raw json.RawMessage, fields ...string) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
 	}
@@ -113,7 +159,7 @@ func localizeJSONFields(ctx context.Context, raw json.RawMessage, fields ...stri
 	if json.Unmarshal(raw, &v) != nil {
 		return raw
 	}
-	walkLocalizeFields(ctx, v, fields)
+	walkLocalizeFields(ctx, cfg, v, fields)
 	out, err := json.Marshal(v)
 	if err != nil {
 		return raw
@@ -121,16 +167,20 @@ func localizeJSONFields(ctx context.Context, raw json.RawMessage, fields ...stri
 	return out
 }
 
-func walkLocalizeFields(ctx context.Context, v any, fields []string) {
+func walkLocalizeFields(ctx context.Context, cfg map[string]string, v any, fields []string) {
 	switch t := v.(type) {
 	case []any:
 		for _, x := range t {
-			walkLocalizeFields(ctx, x, fields)
+			walkLocalizeFields(ctx, cfg, x, fields)
 		}
 	case map[string]any:
 		for _, f := range fields {
 			if s, ok := t[f].(string); ok && s != "" {
-				t[f] = T(ctx, s)
+				if f == "name" || f == "card_name" {
+					t[f] = localizeCardName(ctx, cfg, s)
+				} else {
+					t[f] = T(ctx, s)
+				}
 			}
 		}
 	}

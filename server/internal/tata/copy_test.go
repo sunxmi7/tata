@@ -16,6 +16,8 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = store.Exec(context.Background(), `UPDATE iap_skus SET copy='' WHERE code='sub_year'`)
 		_, _ = store.Exec(context.Background(), `DELETE FROM app_config WHERE key LIKE 'yearly.2026.%' OR key LIKE 'card.愚者.%' OR key LIKE 'card.魔术师.%' OR key='card.thumbnail_template' OR key='card.thumbnail_default'`)
+		_, _ = store.Exec(context.Background(), `UPDATE cards SET yi='', thumbnail='' WHERE name IN ('愚者','魔术师')`)
+		_ = store.seedCards(context.Background())
 		_, _ = store.Exec(context.Background(), `UPDATE help_articles SET body='待确认', body_status='pending' WHERE article_id='how_to_start'`)
 		_, _ = store.Exec(context.Background(), `UPDATE campaigns SET detail_body='详情页不在本次交付范围。奖励、条件与有效期以活动配置为准。', detail_status='pending', enabled=true WHERE campaign_id='friend_invite'`)
 	})
@@ -85,18 +87,15 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	if cards["thumbnail_template"] != nil {
 		t.Fatalf("template invented: %#v", cards["thumbnail_template"])
 	}
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{"card_name": "愚者", "yi": "换一件浅色外套"})
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{"card_name": "魔术师", "thumbnail": ""})
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{"card_name": "愚者", "yi": "换一件浅色外套", "thumbnail": ""})
 	day := time.Now().In(time.FixedZone("CST", 8*3600)).Format("2006-01-02")
-	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, cards, interpretation, business_date)
-		VALUES ($1,'daily','今日一牌','COMPLETED','[{"name":"愚者"}]','ok',$2)`, uid, day); err != nil {
+	var rid int64
+	if err := store.QueryRow(t.Context(), `INSERT INTO readings(user_id, type, question, status, cards, interpretation, business_date)
+		VALUES ($1,'daily','今日一牌','COMPLETED','[{"name":"愚者"}]','ok',$2) RETURNING id`, uid, day).Scan(&rid); err != nil {
 		t.Fatal(err)
 	}
-	msg, raw := call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
-	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "已有结果") {
-		t.Fatalf("daily reuse: %s %s", msg, raw)
-	}
-	reused := decodeData(t, raw)
-	reading, _ := reused["reading"].(map[string]any)
+	reading := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
 	if reading["yi"] != "换一件浅色外套" {
 		t.Fatalf("daily yi: %#v", reading)
 	}
@@ -123,11 +122,7 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	if magician["thumbnail"] != nil || magician["card_thumbnail"] != "https://cdn.example.test/rw/1.png" {
 		t.Fatalf("magician template: %#v", magician)
 	}
-	msg, raw = call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
-	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "已有结果") {
-		t.Fatalf("daily reuse after thumb: %s %s", msg, raw)
-	}
-	reading, _ = decodeData(t, raw)["reading"].(map[string]any)
+	reading = listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
 	if reading["card_thumbnail"] != "https://cdn.example.test/fool.png" || reading["yi"] != "换一件浅色外套" {
 		t.Fatalf("daily thumbnail: %#v", reading)
 	}

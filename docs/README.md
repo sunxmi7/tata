@@ -17,9 +17,11 @@
 - **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
 - **错误码（有界）**：错误包络 `error_code` 供客户端按码分支，不随语言变化。`message` 按 `Accept-Language` / `X-Language` 读 `server/internal/tata/i18n/*.json`，缺省简体中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
 
-App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 **135** 条，与 `routes.go` 仍 1:1。
+App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 **139** 条，与 `routes.go` 仍 1:1。
 
-内容导入：`GET /api/app/v1/preset-questions` 读预设题库；78 张韦特牌图写入 `app_config` 的 `card.{中文名}.thumbnail`（文件在 `server/uploads/cards/`）。SQL 见 [sql/seed_content_v1.sql](./sql/seed_content_v1.sql)。App 文案 i18n 见 `server/internal/tata/i18n/*.json`，请求头 `Accept-Language` / `X-Language`。
+内容导入：`GET /api/app/v1/preset-questions` 读预设题库，**公开，不需要 token**。`featured` 为首屏默认 15 条（与 backup 分开返回，混合排列）；`backup` 为备用题库。`?scene=` 只传场景码（relationship/career/study/growth/social/life）。同样公开的还有牌阵、塔罗师、提示窗、探索目录、活动列表/详情、帮助中心、SKU 目录。创建占卜、额度、档案、今日一牌仍要登录或匿名令牌。78 张韦特单牌写入 `cards` 表（图文件在 `server/uploads/cards/`）。SQL 见 [sql/seed_content_v1.sql](./sql/seed_content_v1.sql)。管理端 `GET/POST /api/admin/v1/cards`、`PUT /cards/{id}`、`PUT /card-settings`。App 文案 i18n 见 `server/internal/tata/i18n/*.json`，请求头 `Accept-Language` / `X-Language`；牌名优先读 `cards` 表多语言列。
+
+首屏 15 条（`featured`，文档《塔塔_预设问题库_V1》02 节）：最近的我最需要关注什么；TA 对这段关系的真实态度；三个月事业新机会；情绪困扰背后隐藏着什么；和 TA 接下来一个月；为了实现这个愿望可以做些什么；最近值得留意的新机会；职业方向是否继续坚持；这段关系还没看清的事；三个月财务变化；如何改善人际关系；主动迈出一步会怎样；尚未被发现的优势；一个月生活新可能；最需要听见什么样的提醒。详细 id/scene 见 `docs/openapi-app.yaml` 该接口说明。
 
 管理端价位三类：会员（`month_subscription` / `year_subscription` / `reading_pack`）、塔塔币（`consumable_pack`）、年运解锁（`yearly_unlock`）。种子已填设计价（分）和 App Store 占位商品号（`iap_skus.app_store_product_id`，如 `tata.membership.month`）；管理员改过的值保留。次卡用 `reading_grant` 发解读次数。App `GET /iap/skus?kind=` 按类型过滤。年运解锁价取已启用且已定价的 `yearly_unlock` SKU。
 
@@ -34,8 +36,8 @@ App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **牌阵推荐 / 示意图**：`GET /spreads` 含 `recommended` 与 `thumbnail`。种子「时间流」为推荐；示意图未配用内置默认牌背。管理端勾选推荐时全表最多一张。
 - **日历**：`GET /calendar` 增加 `type` 过滤；日详情项含牌名 / 正逆位 / 短文 / 多张缩略图 / 占卜师 / `created_at`。
 - **消息中心**：接口领先于 UI，先行落底。
-- **今日一牌宜 / 牌面缩略图**：`yi` 取 `card.{牌名}.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。
-- **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；其余无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。
+- **今日一牌宜 / 牌面缩略图**：`yi` 取 `cards.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。管理端独立模块「牌面」维护 `cards` 表。
+- **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；年运等无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。单牌目录以 `/api/admin/v1/cards` 为准。
 - **管理端上传**：`POST /api/admin/v1/uploads?folder=`。后台图片字段走 Vben Form 的 Upload。`folder` 分子目录：牌阵 `spreads`、风格 `decks`、单牌/默认图 `cards`，缺省 `misc`。存哪由 `upload.driver` 决定：`local` 或阿里云 OSS。
 - **邮箱验证码**：`POST /api/app/v1/auth/email/code`。注册 / 绑邮箱要先发码再带 `code`。邮箱登录只验密码，不发码。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
 - **微信 / 苹果登录**：`POST /auth/wechat`、`/auth/apple` 以及对应 bind。微信填 `wechat.appId/appSecret`（iOS/Android 共用），客户端传 SDK `code`。苹果登录仅 iOS，填 `apple.clientId`（Bundle ID），传 `identity_token`。凭证空、`enabled=false` 即可先上代码；填上并把 `enabled` 设为 true 后直接可用。未配置分别返回「微信登录未配置」「苹果登录未配置」。
@@ -50,6 +52,6 @@ App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 **分组口径（2026-11-06）：** `openapi-app.yaml` 的 tag 按 Pixso 定稿「手机界面」`619:7` 的 UI 模块划分。导入 Apifox 后文件夹即 UI 模块：登录注册、首页、探索、我的中心、抽牌、牌阵界面、历史记录、日历记录、塔塔币购买、会员中心、兑换码、参与活动、月度报告、年度运势、功能心愿单、帮助中心、反馈意见、通知设置、账号、语言、关于塔塔、我的小组件。共用接口（如 `GET /quota`、`POST /uploads`）会挂到多个模块下；`月度报告`、`年度运势` 已有专用 path，`语言`、`关于塔塔` 仍为空分组（Q-B2 + 客户端静态）。路径、方法、请求/响应形状与 `routes.go` 1:1。
 
-导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。需要登录的接口在 **Headers** 加 `Authorization`，值 `Bearer <accessToken>`（登录/注册/匿名返回的 token）。不要把 token 放进请求体。
+导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。公开目录（预设问题、牌阵、塔罗师、提示窗、探索、活动、帮助、SKU）不用带 token。其余需要登录（或匿名令牌）的接口在 **Headers** 加 `Authorization`，值 `Bearer <accessToken>`（登录/注册/匿名返回的 token）。不要把 token 放进请求体。
 
 管理端只出现在完整契约里。登录后同样在 Headers 加 `Authorization: Bearer <accessToken>`。本地种子：`admin` / `admin123`（可写），`readonly` / `readonly123`（只读）。只读角色调用写接口会得到 `code=1`、`message=只读账号不能修改`。

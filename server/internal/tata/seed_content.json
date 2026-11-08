@@ -629,111 +629,127 @@
     {
       "question_id": "featured_01",
       "pool": "featured",
-      "category": "",
+      "scene": "growth",
+      "category": "自我成长",
       "body": "最近的我，最需要关注什么？",
       "sort_order": 1
     },
     {
       "question_id": "featured_02",
       "pool": "featured",
-      "category": "",
+      "scene": "relationship",
+      "category": "感情关系",
       "body": "TA 对这段关系的真实态度是什么？",
       "sort_order": 2
     },
     {
       "question_id": "featured_03",
       "pool": "featured",
-      "category": "",
+      "scene": "career",
+      "category": "事业与工作",
       "body": "接下来三个月，我的事业会有哪些新机会？",
       "sort_order": 3
     },
     {
       "question_id": "featured_04",
       "pool": "featured",
-      "category": "",
+      "scene": "growth",
+      "category": "自我成长",
       "body": "我现在的情绪困扰，背后隐藏着什么？",
       "sort_order": 4
     },
     {
       "question_id": "featured_05",
       "pool": "featured",
-      "category": "",
+      "scene": "relationship",
+      "category": "感情关系",
       "body": "我和 TA 接下来一个月的关系会如何发展？",
       "sort_order": 5
     },
     {
       "question_id": "featured_06",
       "pool": "featured",
-      "category": "",
+      "scene": "life",
+      "category": "生活与选择",
       "body": "为了实现这个愿望，我接下来可以做些什么？",
       "sort_order": 6
     },
     {
       "question_id": "featured_07",
       "pool": "featured",
-      "category": "",
+      "scene": "life",
+      "category": "生活与选择",
       "body": "最近有什么值得我留意的新机会？",
       "sort_order": 7
     },
     {
       "question_id": "featured_08",
       "pool": "featured",
-      "category": "",
+      "scene": "career",
+      "category": "事业与工作",
       "body": "我目前的职业方向适合继续坚持吗？",
       "sort_order": 8
     },
     {
       "question_id": "featured_09",
       "pool": "featured",
-      "category": "",
+      "scene": "relationship",
+      "category": "感情关系",
       "body": "这段关系中，有哪些我还没有看清的事情？",
       "sort_order": 9
     },
     {
       "question_id": "featured_10",
       "pool": "featured",
-      "category": "",
+      "scene": "life",
+      "category": "生活与选择",
       "body": "接下来三个月，我的财务状况会有什么变化？",
       "sort_order": 10
     },
     {
       "question_id": "featured_11",
       "pool": "featured",
-      "category": "",
+      "scene": "social",
+      "category": "人际关系",
       "body": "我应该如何改善目前的人际关系？",
       "sort_order": 11
     },
     {
       "question_id": "featured_12",
       "pool": "featured",
-      "category": "",
+      "scene": "life",
+      "category": "生活与选择",
       "body": "如果我主动迈出一步，事情会有什么变化？",
       "sort_order": 12
     },
     {
       "question_id": "featured_13",
       "pool": "featured",
-      "category": "",
+      "scene": "growth",
+      "category": "自我成长",
       "body": "我身上有哪些尚未被发现的优势？",
       "sort_order": 13
     },
     {
       "question_id": "featured_14",
       "pool": "featured",
-      "category": "",
+      "scene": "life",
+      "category": "生活与选择",
       "body": "接下来一个月，我的生活会出现什么新的可能？",
       "sort_order": 14
     },
     {
       "question_id": "featured_15",
       "pool": "featured",
-      "category": "",
+      "scene": "growth",
+      "category": "自我成长",
       "body": "现在的我，最需要听见什么样的提醒？",
       "sort_order": 15
     },
     {
       "question_id": "backup_01",
       "pool": "backup",
+      "scene": "relationship",
       "category": "感情关系",
       "body": "TA 现在是如何看待我们的关系的？",
       "sort_order": 1
@@ -741,6 +757,7 @@
     {
       "question_id": "backup_02",
       "pool": "backup",
+      "scene": "relationship",
       "category": "感情关系",
       "body": "我们之间最大的阻碍是什么？",
       "sort_order": 2
@@ -748,6 +765,7 @@
     {
       "question_id": "backup_03",
       "pool": "backup",
+      "scene": "relationship",
       "category": "感情关系",
       "body": "这段关系还有继续发展的空间吗？",
       "sort_order": 3
@@ -755,6 +773,7 @@
     {
       "question_id": "backup_04",
       "pool": "backup",
+      "scene": "relationship",
       "category": "感情关系",
       "body": "我应该主动表达自己的感受吗？",
       "sort_order": 4
@@ -762,6 +781,7 @@
     {
       "question_id": "backup_05",
       "pool": "backup",
+      "scene": "relationship",
       "category": "感情关系",
       "body": "我在这段感情中真正需要的是什么？",
       "sort_order": 5
@@ -769,6 +789,7 @@
     {
       "question_id": "backup_06",
       "pool": "backup",
+      "scene": "relationship",
       "category": "感情关系",
       "body": "接下来三个月，我的感情生活会有什么变化？",
       "sort_order": 6
@@ -776,6 +797,7 @@
     {
       "question_id": "backup_07",
       "pool": "backup",
+      "scene": "career",
       "category": "事业与工作",
       "body": "我目前的职业选择适合长期发展吗？",
       "sort_order": 7
@@ -783,6 +805,7 @@
     {
       "question_id": "backup_08",
       "pool": "backup",
+      "scene": "career",
       "category": "事业与工作",
       "body": "如果我考虑换工作，应该关注哪些方面？",
       "sort_order": 8
@@ -790,6 +813,7 @@
     {
       "question_id": "backup_09",
       "pool": "backup",
+      "scene": "career",
       "category": "事业与工作",
       "body": "接下来三个月，我的事业发展重点是什么？",
       "sort_order": 9
@@ -797,6 +821,7 @@
     {
       "question_id": "backup_10",
       "pool": "backup",
+      "scene": "career",
       "category": "事业与工作",
       "body": "我应该如何提升自己在工作中的竞争力？",
       "sort_order": 10
@@ -804,6 +829,7 @@
     {
       "question_id": "backup_11",
       "pool": "backup",
+      "scene": "career",
       "category": "事业与工作",
       "body": "目前有哪些职业机会值得我关注？",
       "sort_order": 11
@@ -811,6 +837,7 @@
     {
       "question_id": "backup_12",
       "pool": "backup",
+      "scene": "career",
       "category": "事业与工作",
       "body": "我现在的努力会在哪些方面带来改变？",
       "sort_order": 12
@@ -818,6 +845,7 @@
     {
       "question_id": "backup_13",
       "pool": "backup",
+      "scene": "study",
       "category": "学业与考试",
       "body": "我接下来的学习状态会如何变化？",
       "sort_order": 13
@@ -825,6 +853,7 @@
     {
       "question_id": "backup_14",
       "pool": "backup",
+      "scene": "study",
       "category": "学业与考试",
       "body": "我应该如何调整目前的学习方法？",
       "sort_order": 14
@@ -832,6 +861,7 @@
     {
       "question_id": "backup_15",
       "pool": "backup",
+      "scene": "study",
       "category": "学业与考试",
       "body": "这段时间，我最需要突破的学习瓶颈是什么？",
       "sort_order": 15
@@ -839,6 +869,7 @@
     {
       "question_id": "backup_16",
       "pool": "backup",
+      "scene": "study",
       "category": "学业与考试",
       "body": "面对即将到来的考试，我应该重点准备什么？",
       "sort_order": 16
@@ -846,6 +877,7 @@
     {
       "question_id": "backup_17",
       "pool": "backup",
+      "scene": "study",
       "category": "学业与考试",
       "body": "我适合继续目前的专业方向吗？",
       "sort_order": 17
@@ -853,6 +885,7 @@
     {
       "question_id": "backup_18",
       "pool": "backup",
+      "scene": "study",
       "category": "学业与考试",
       "body": "如何才能更好地平衡学习与生活？",
       "sort_order": 18
@@ -860,6 +893,7 @@
     {
       "question_id": "backup_19",
       "pool": "backup",
+      "scene": "growth",
       "category": "自我成长",
       "body": "我为什么总是容易陷入自我怀疑？",
       "sort_order": 19
@@ -867,6 +901,7 @@
     {
       "question_id": "backup_20",
       "pool": "backup",
+      "scene": "growth",
       "category": "自我成长",
       "body": "我现在最需要放下的是什么？",
       "sort_order": 20
@@ -874,6 +909,7 @@
     {
       "question_id": "backup_21",
       "pool": "backup",
+      "scene": "growth",
       "category": "自我成长",
       "body": "我有哪些尚未发现的潜在优势？",
       "sort_order": 21
@@ -881,6 +917,7 @@
     {
       "question_id": "backup_22",
       "pool": "backup",
+      "scene": "growth",
       "category": "自我成长",
       "body": "我应该如何建立更稳定的内心状态？",
       "sort_order": 22
@@ -888,6 +925,7 @@
     {
       "question_id": "backup_23",
       "pool": "backup",
+      "scene": "growth",
       "category": "自我成长",
       "body": "最近反复出现的情绪在提醒我什么？",
       "sort_order": 23
@@ -895,6 +933,7 @@
     {
       "question_id": "backup_24",
       "pool": "backup",
+      "scene": "growth",
       "category": "自我成长",
       "body": "未来三个月，我最值得投入精力的方向是什么？",
       "sort_order": 24
@@ -902,6 +941,7 @@
     {
       "question_id": "backup_25",
       "pool": "backup",
+      "scene": "social",
       "category": "人际关系",
       "body": "我应该如何处理目前的人际关系困扰？",
       "sort_order": 25
@@ -909,6 +949,7 @@
     {
       "question_id": "backup_26",
       "pool": "backup",
+      "scene": "social",
       "category": "人际关系",
       "body": "身边哪些关系值得我花更多精力维护？",
       "sort_order": 26
@@ -916,6 +957,7 @@
     {
       "question_id": "backup_27",
       "pool": "backup",
+      "scene": "social",
       "category": "人际关系",
       "body": "我在人际交往中容易忽略什么？",
       "sort_order": 27
@@ -923,6 +965,7 @@
     {
       "question_id": "backup_28",
       "pool": "backup",
+      "scene": "social",
       "category": "人际关系",
       "body": "我应该如何表达自己的真实想法？",
       "sort_order": 28
@@ -930,6 +973,7 @@
     {
       "question_id": "backup_29",
       "pool": "backup",
+      "scene": "social",
       "category": "人际关系",
       "body": "这段友谊接下来会如何发展？",
       "sort_order": 29
@@ -937,6 +981,7 @@
     {
       "question_id": "backup_30",
       "pool": "backup",
+      "scene": "social",
       "category": "人际关系",
       "body": "我该如何面对与他人的意见分歧？",
       "sort_order": 30
@@ -944,6 +989,7 @@
     {
       "question_id": "backup_31",
       "pool": "backup",
+      "scene": "life",
       "category": "生活与选择",
       "body": "如果我选择另一条道路，会有哪些不同？",
       "sort_order": 31
@@ -951,6 +997,7 @@
     {
       "question_id": "backup_32",
       "pool": "backup",
+      "scene": "life",
       "category": "生活与选择",
       "body": "目前摆在我面前的两个选择，哪个更值得考虑？",
       "sort_order": 32
@@ -958,6 +1005,7 @@
     {
       "question_id": "backup_33",
       "pool": "backup",
+      "scene": "life",
       "category": "生活与选择",
       "body": "我现在最应该优先处理的事情是什么？",
       "sort_order": 33
@@ -965,6 +1013,7 @@
     {
       "question_id": "backup_34",
       "pool": "backup",
+      "scene": "life",
       "category": "生活与选择",
       "body": "最近有什么值得我留意的新机会？",
       "sort_order": 34
@@ -972,6 +1021,7 @@
     {
       "question_id": "backup_35",
       "pool": "backup",
+      "scene": "life",
       "category": "生活与选择",
       "body": "接下来一个月，我的生活重心应该放在哪里？",
       "sort_order": 35
@@ -979,6 +1029,7 @@
     {
       "question_id": "backup_36",
       "pool": "backup",
+      "scene": "life",
       "category": "生活与选择",
       "body": "如果我想做出改变，第一步应该从哪里开始？",
       "sort_order": 36
