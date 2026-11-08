@@ -100,7 +100,7 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	if reading["yi"] != "换一件浅色外套" {
 		t.Fatalf("daily yi: %#v", reading)
 	}
-	if reading["card_thumbnail"] != defaultCardThumbnailPath {
+	if reading["card_thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
 		t.Fatalf("daily default thumbnail: %#v", reading["card_thumbnail"])
 	}
 
@@ -182,7 +182,7 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 		t.Fatalf("seed deck: %#v", pref)
 	}
 	item := avail[0].(map[string]any)
-	if item["name"] != "莱德韦特" || item["thumbnail"] != defaultCardThumbnailPath || item["available"] != true {
+	if item["name"] != "莱德韦特" || item["thumbnail"] != absAsset(ts, defaultCardThumbnailPath) || item["available"] != true {
 		t.Fatalf("seed preview: %#v", item)
 	}
 	if item["description"] != "" {

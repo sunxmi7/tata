@@ -59,7 +59,7 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		unit := "diamond"
-		var label any = displayLabelTataCoin
+		var label any = T(r.Context(), displayLabelTataCoin)
 		if kind == "free_count" {
 			unit = "count"
 			label = nil
@@ -77,8 +77,8 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, map[string]any{
-		"items": items, "empty_title": redeemEmptyTitle,
-		"placeholder_note": redeemPendingNote, "fields_confirmed": false,
+		"items": items, "empty_title": T(r.Context(), redeemEmptyTitle),
+		"placeholder_note": T(r.Context(), redeemPendingNote), "fields_confirmed": false,
 	})
 	return nil
 }
@@ -99,20 +99,20 @@ func (a *App) appCampaigns(w http.ResponseWriter, r *http.Request) error {
 		if err := rows.Scan(&id, &title, &subtitle, &badge, &status); err != nil {
 			return err
 		}
-		items = append(items, campaignCard(id, title, subtitle, badge, status))
+		items = append(items, campaignCard(r, id, title, subtitle, badge, status))
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	writeOK(w, map[string]any{
 		"items":       items,
-		"empty_title": campaignEmptyTitle, "empty_hint": campaignEmptyHint,
-		"footnote": campaignFootnote,
+		"empty_title": T(r.Context(), campaignEmptyTitle), "empty_hint": T(r.Context(), campaignEmptyHint),
+		"footnote": T(r.Context(), campaignFootnote),
 	})
 	return nil
 }
 
-func campaignCard(id, title, subtitle, badge, status string) map[string]any {
+func campaignCard(r *http.Request, id, title, subtitle, badge, status string) map[string]any {
 	entry := campaignEntryOpen
 	entryEnabled := true
 	if status == "ended" {
@@ -122,7 +122,7 @@ func campaignCard(id, title, subtitle, badge, status string) map[string]any {
 	}
 	return map[string]any{
 		"id": id, "title": title, "subtitle": subtitle, "status": status,
-		"badge": badge, "entry_label": entry, "entry_enabled": entryEnabled,
+		"badge": T(r.Context(), badge), "entry_label": T(r.Context(), entry), "entry_enabled": entryEnabled,
 	}
 }
 
@@ -160,7 +160,7 @@ func (a *App) appCampaignParticipations(w http.ResponseWriter, r *http.Request) 
 	if uid == 0 {
 		return biz("登录后才能查看参与记录")
 	}
-	writeOK(w, placeholderList(participationEmptyTitle, participationPendingNote))
+	writeOK(w, placeholderList(r, participationEmptyTitle, participationPendingNote))
 	return nil
 }
 
@@ -172,14 +172,14 @@ func (a *App) appCampaignRewards(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能查看奖励记录")
 	}
-	writeOK(w, placeholderList(rewardEmptyTitle, rewardPendingNote))
+	writeOK(w, placeholderList(r, rewardEmptyTitle, rewardPendingNote))
 	return nil
 }
 
-func placeholderList(emptyTitle, note string) map[string]any {
+func placeholderList(r *http.Request, emptyTitle, note string) map[string]any {
 	return map[string]any{
-		"items": []map[string]any{}, "empty_title": emptyTitle,
-		"placeholder_note": note, "fields_confirmed": false,
+		"items": []map[string]any{}, "empty_title": T(r.Context(), emptyTitle),
+		"placeholder_note": T(r.Context(), note), "fields_confirmed": false,
 	}
 }
 
@@ -261,8 +261,8 @@ func (a *App) appHelpArticles(w http.ResponseWriter, r *http.Request) error {
 	}
 	emptyTitle, emptyHint := "", ""
 	if q != "" && len(items) == 0 {
-		emptyTitle = helpSearchEmptyTitle
-		emptyHint = helpSearchEmptyHint
+		emptyTitle = T(r.Context(), helpSearchEmptyTitle)
+		emptyHint = T(r.Context(), helpSearchEmptyHint)
 		categoryNote = ""
 	}
 	if q == "" && len(items) > 0 {
@@ -295,8 +295,8 @@ func (a *App) appHelpArticle(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(body) == "" {
-		body = helpBodyPending
+	if strings.TrimSpace(body) == "" || body == helpBodyPending {
+		body = T(r.Context(), helpBodyPending)
 		bodyStatus = "pending"
 	}
 	writeOK(w, map[string]any{

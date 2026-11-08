@@ -13,11 +13,13 @@
 2026-11-06 重启推送（Q-B1 作废）：新增 `POST /api/app/v1/push/register`（上报个推 CID）、`GET /api/app/v1/messages`（消息中心/站内信）、`POST /api/app/v1/messages/{id}/read`，以及管理端 `POST /api/admin/v1/push/broadcast`（群发）。今日/明日抽牌仍走 App 本地通知；优惠/活动走个推（GeTui）服务端下发，只推给 `messages_enabled=true` 的设备。个推凭证在 `server/manifest/config/config.yaml` 的 `getui`（`enabled=false` 时只落站内信、不真连）。
 
 2026-11-06 接口完善（进行中）：
-- **解读/追问 SSE 流式**：新增 `POST /api/app/v1/readings/{id}/interpret/stream` 与 `.../followups/stream`。额度门槛与落库同非流式；拦截仍返回普通 JSON 的 QuotaBlockEnvelope，通过后以 `text/event-stream` 下发 `delta`/`done`/`error` 事件，供打字机效果。原非流式接口保留。demo 供应商（`/demo/openai`）已支持 `stream:true` 便于本地联调。
+- **解读/追问 SSE 流式**：`POST /api/app/v1/readings/{id}/interpret/stream` 与 `.../followups/stream`。另有 `POST /daily/stream`、`POST /readings/{id}/detect/stream`、`POST /yearly-reports/{id}/generate/stream`。非流式 JSON 仍等完整结果；同一条 URL 也可带 `Accept: text/event-stream` 或 `?stream=1` 切到 SSE。事件为 `delta` / `done` / `error`。生成先落 `ai_jobs` 后台任务，SSE 断开不取消；App 再进用 `GET /readings/{id}` 取 INTERPRETING 片段或 COMPLETED 全文。
 - **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
-- **错误码（有界）**：错误包络新增 `error_code` 字段供客户端按码分支，message 仍为中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
+- **错误码（有界）**：错误包络 `error_code` 供客户端按码分支，不随语言变化。`message` 按 `Accept-Language` / `X-Language` 读 `server/internal/tata/i18n/*.json`，缺省简体中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
 
-App 路由现为 **74** 条（含公开 `GET /uploads/{name}`）、完整契约 **132** 条，与 `routes.go` 仍 1:1。
+App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 **135** 条，与 `routes.go` 仍 1:1。
+
+内容导入：`GET /api/app/v1/preset-questions` 读预设题库；78 张韦特牌图写入 `app_config` 的 `card.{中文名}.thumbnail`（文件在 `server/uploads/cards/`）。SQL 见 [sql/seed_content_v1.sql](./sql/seed_content_v1.sql)。App 文案 i18n 见 `server/internal/tata/i18n/*.json`，请求头 `Accept-Language` / `X-Language`。
 
 管理端价位三类：会员（`month_subscription` / `year_subscription` / `reading_pack`）、塔塔币（`consumable_pack`）、年运解锁（`yearly_unlock`）。种子已填设计价（分）和 App Store 占位商品号（`iap_skus.app_store_product_id`，如 `tata.membership.month`）；管理员改过的值保留。次卡用 `reading_grant` 发解读次数。App `GET /iap/skus?kind=` 按类型过滤。年运解锁价取已启用且已定价的 `yearly_unlock` SKU。
 
@@ -25,7 +27,7 @@ App 路由现为 **74** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **月度报告**：`GET /api/app/v1/monthly-reports`、`POST /api/app/v1/monthly-reports/save`。统计来自当月 readings；寄语截取已完成解读，不编造。
 - **年度运势**：`GET /yearly-reports/{id}`、`POST .../unlock`、`PUT .../profile`、`POST .../rhythm`（12 张全年节奏）、`POST .../domains`（6 张：感情/事业/财运/健康/人际/成长）、`POST .../generate`。年卡免费解锁；单独购买价取 `yearly_unlock` SKU。生成走 interpret 供应商，不编造。
 - **灵数抽牌**：`POST /readings/{id}/draw` 接受 `mode=numerology` + `numbers`（1–78 不重复，映射 Rider-Waite）。
-- **账号**：`account_display` 优先脱敏手机号；新增 6 位 `public_id`。
+- **账号**：`account_display` 脱敏邮箱，无则微信/Apple；新增 6 位 `public_id`。App 不绑、不展示手机号。
 - **会员/塔塔币**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）；6 档消耗包 `pack_60`…`pack_3280` 已填设计价。追问上限管理端 `PUT /quota-params` 可改，null 不限制。
 - **历史列表**：每条带 `short_text` / `card_name` / `status_label` / `card_thumbnail`（单牌 URL → 模板 → 默认图 → 内置 `/uploads/card-default.png`；无牌名才为 null）。
 - **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。`available[]` 含 `description` / `tags`（未填为空串与空数组，不编造）。种子仅 `rider-waite` / 莱德韦特；管理端 `PUT /copy/decks` 可改介绍、标签与预览图。未上架 code 仍拒。
@@ -35,7 +37,8 @@ App 路由现为 **74** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **今日一牌宜 / 牌面缩略图**：`yi` 取 `card.{牌名}.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。
 - **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；其余无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。
 - **管理端上传**：`POST /api/admin/v1/uploads?folder=`。后台图片字段走 Vben Form 的 Upload。`folder` 分子目录：牌阵 `spreads`、风格 `decks`、单牌/默认图 `cards`，缺省 `misc`。存哪由 `upload.driver` 决定：`local` 或阿里云 OSS。
-- **邮箱验证码**：`POST /api/app/v1/auth/email/code`。注册 / 登录 / 绑邮箱都要先发码再带 `code`。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
+- **邮箱验证码**：`POST /api/app/v1/auth/email/code`。注册 / 绑邮箱要先发码再带 `code`。邮箱登录只验密码，不发码。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
+- **微信 / 苹果登录**：`POST /auth/wechat`、`/auth/apple` 以及对应 bind。微信填 `wechat.appId/appSecret`（iOS/Android 共用），客户端传 SDK `code`。苹果登录仅 iOS，填 `apple.clientId`（Bundle ID），传 `identity_token`。凭证空、`enabled=false` 即可先上代码；填上并把 `enabled` 设为 true 后直接可用。未配置分别返回「微信登录未配置」「苹果登录未配置」。
 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 
@@ -47,6 +50,6 @@ App 路由现为 **74** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 **分组口径（2026-11-06）：** `openapi-app.yaml` 的 tag 按 Pixso 定稿「手机界面」`619:7` 的 UI 模块划分。导入 Apifox 后文件夹即 UI 模块：登录注册、首页、探索、我的中心、抽牌、牌阵界面、历史记录、日历记录、塔塔币购买、会员中心、兑换码、参与活动、月度报告、年度运势、功能心愿单、帮助中心、反馈意见、通知设置、账号、语言、关于塔塔、我的小组件。共用接口（如 `GET /quota`、`POST /uploads`）会挂到多个模块下；`月度报告`、`年度运势` 已有专用 path，`语言`、`关于塔塔` 仍为空分组（Q-B2 + 客户端静态）。路径、方法、请求/响应形状与 `routes.go` 1:1。
 
-导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。App 接口使用安全方案 **AppBearer**（JWT `aud=app`）。
+导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。需要登录的接口在 **Headers** 加 `Authorization`，值 `Bearer <accessToken>`（登录/注册/匿名返回的 token）。不要把 token 放进请求体。
 
-管理端账号与 **AdminBearer** 只出现在完整契约里。本地种子：`admin` / `admin123`（可写），`readonly` / `readonly123`（只读）。只读角色调用写接口会得到 `code=1`、`message=只读账号不能修改`。
+管理端只出现在完整契约里。登录后同样在 Headers 加 `Authorization: Bearer <accessToken>`。本地种子：`admin` / `admin123`（可写），`readonly` / `readonly123`（只读）。只读角色调用写接口会得到 `code=1`、`message=只读账号不能修改`。

@@ -3,6 +3,7 @@ package tata
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 )
 
@@ -104,10 +105,17 @@ func (s *Store) listDecks(ctx context.Context, onlyEnabled bool) ([]deckRow, err
 	return out, rows.Err()
 }
 
-func (d deckRow) public() map[string]any {
+func (d deckRow) public(r *http.Request) map[string]any {
+	name, desc := d.Name, d.Description
+	if r != nil {
+		name = T(r.Context(), d.Name)
+		if d.Description != "" {
+			desc = T(r.Context(), d.Description)
+		}
+	}
 	return map[string]any{
-		"code": d.Code, "name": d.Name, "thumbnail": deckPreviewURL(d.Thumbnail), "available": d.Enabled,
-		"description": d.Description, "tags": parseDeckTags(d.Tags),
+		"code": d.Code, "name": name, "thumbnail": absoluteAssetURL(r, deckPreviewURL(d.Thumbnail)), "available": d.Enabled,
+		"description": desc, "tags": parseDeckTags(d.Tags),
 	}
 }
 
@@ -119,10 +127,10 @@ func (d deckRow) admin() map[string]any {
 	}
 }
 
-func publicDeckList(rows []deckRow) []map[string]any {
+func publicDeckList(r *http.Request, rows []deckRow) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, d := range rows {
-		out = append(out, d.public())
+		out = append(out, d.public(r))
 	}
 	return out
 }
@@ -141,7 +149,7 @@ func (a *App) enabledDeck(ctx context.Context, code string) (deckRow, bool, erro
 	return deckRow{}, false, nil
 }
 
-func (a *App) resolveUserDeck(ctx context.Context, uid int64) (string, []map[string]any, error) {
+func (a *App) resolveUserDeck(ctx context.Context, uid int64, r *http.Request) (string, []map[string]any, error) {
 	available, err := a.Store.listDecks(ctx, true)
 	if err != nil {
 		return "", nil, err
@@ -162,5 +170,5 @@ func (a *App) resolveUserDeck(ctx context.Context, uid int64) (string, []map[str
 	if !ok {
 		code = available[0].Code
 	}
-	return code, publicDeckList(available), nil
+	return code, publicDeckList(r, available), nil
 }

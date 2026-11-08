@@ -94,6 +94,9 @@ func TestYearlyFlowTwelvePlusSix(t *testing.T) {
 		t.Fatalf("overlap with rhythm: %#v %#v", dCards[0], rCards[0])
 	}
 
+	if _, err := store.Exec(t.Context(), `DELETE FROM bindings WHERE task='interpret'`); err != nil {
+		t.Fatal(err)
+	}
 	msg, _ = call(t, ts, token, http.MethodPost, "/api/app/v1/yearly-reports/2026/generate", map[string]any{})
 	if !strings.Contains(msg, "未绑定") && !strings.Contains(msg, "解读失败") {
 		t.Fatalf("generate without vendor: %s", msg)

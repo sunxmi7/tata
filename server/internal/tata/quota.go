@@ -257,14 +257,59 @@ func takeDailyFree(ctx context.Context, tx Tx, uid int64, cycle string, readingI
 		if !consumed {
 			return false, nil
 		}
-		_, _ = tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, readingID)
+		_, _ = tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT (reading_id) DO NOTHING`, uid, cycle, readingID)
 		return true, nil
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, uid, cycle, readingID)
+	limit, err := loadDailyFreeCount(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, quotaCycleLock(uid, cycle)); err != nil {
+		return false, err
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM quota_use WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&n); err != nil {
+		return false, err
+	}
+	if n >= limit {
+		return false, nil
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3) ON CONFLICT (reading_id) DO NOTHING`, uid, cycle, readingID)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+func quotaCycleLock(uid int64, cycle string) int64 {
+	h := int64(0)
+	for _, r := range cycle {
+		h = h*33 + int64(r)
+	}
+	return uid*1_000_003 + h
+}
+
+func loadDailyFreeCount(ctx context.Context, ex execer) (int, error) {
+	return loadPositiveSetting(ctx, ex, `SELECT daily_free_count FROM quota_settings WHERE id=1`, 1)
+}
+
+func loadDailySlotCount(ctx context.Context, ex execer) (int, error) {
+	return loadPositiveSetting(ctx, ex, `SELECT daily_slot_count FROM quota_settings WHERE id=1`, 1)
+}
+
+func loadPositiveSetting(ctx context.Context, ex execer, query string, fallback int) (int, error) {
+	var n sql.NullInt64
+	err := ex.QueryRow(ctx, query).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fallback, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !n.Valid || n.Int64 <= 0 {
+		return fallback, nil
+	}
+	return int(n.Int64), nil
 }
 
 func consumeAdminGrant(ctx context.Context, ex execer, uid int64) (bool, error) {
@@ -440,14 +485,18 @@ func (a *App) gatePlay(w http.ResponseWriter, r *http.Request, action string) (b
 	if decision.Continue {
 		return false, nil
 	}
-	writeQuotaBlock(w, decision, id)
+	writeQuotaBlock(w, r, decision, id)
 	return true, nil
 }
 
-func writeQuotaBlock(w http.ResponseWriter, d quotaDecision, readingID int64) {
+func writeQuotaBlock(w http.ResponseWriter, r *http.Request, d quotaDecision, readingID int64) {
+	ctx := context.Background()
+	if r != nil {
+		ctx = r.Context()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"code":    1,
-		"message": d.Message,
+		"message": T(ctx, d.Message),
 		"data": map[string]any{
 			"reading_id":                readingID,
 			"quota_outcome":             d.Status,

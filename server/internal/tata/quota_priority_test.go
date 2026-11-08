@@ -224,6 +224,9 @@ func TestFollowupReentersSharedQuota(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
 	token, uid := registerUser(t, ts, store, "follow")
+	if _, err := store.Exec(t.Context(), `DELETE FROM bindings WHERE task='tarotist'`); err != nil {
+		t.Fatal(err)
+	}
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "原问题", "type": "normal"})
 	id := asID(reading["id"])
 	completeReading(t, store, id)
@@ -388,7 +391,7 @@ func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 		t.Fatalf("settled entitlement %s", ent)
 	}
 
-	_, wxRaw := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/wechat", map[string]any{"openid": fmt.Sprintf("wx-quota-%d", time.Now().UnixNano())})
+	_, wxRaw := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/wechat", map[string]any{"code": fmt.Sprintf("wx-quota-%d", time.Now().UnixNano())})
 	if strings.Contains(string(wxRaw), "未闭合") || strings.Contains(string(wxRaw), "算力") {
 		t.Fatalf("wechat wording: %s", wxRaw)
 	}
@@ -507,6 +510,78 @@ func registerUser(t *testing.T, ts *httptest.Server, store *Store, prefix string
 	email := fmt.Sprintf("%s-%d@tata.local", prefix, time.Now().UnixNano())
 	token := register(t, ts, email)
 	return token, userIDByEmail(t, store, email)
+}
+
+func TestDailyQuotaCountsConfigurable(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	resetDailyCounts(t, store)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 2, "daily_slot_count": 2})
+	params := listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	if params["daily_free_count"] != float64(2) || params["daily_slot_count"] != float64(2) {
+		t.Fatalf("admin counts: %#v", params)
+	}
+
+	token, uid := registerUser(t, ts, store, "dailycfg")
+	quota := listOne(t, ts, token, "/api/app/v1/quota")
+	if quota["daily_free_count"] != float64(2) || quota["daily_slot_count"] != float64(2) || quota["daily_free_remaining"].(float64) != 2 {
+		t.Fatalf("app quota counts: %#v", quota)
+	}
+
+	first := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "先扣注册奖励", "type": "normal"})
+	if first["entitlement"] != entReward {
+		t.Fatalf("reward first: %#v", first)
+	}
+	second := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "今日免费1", "type": "normal"})
+	if second["entitlement"] != entDaily {
+		t.Fatalf("daily 1: %#v", second)
+	}
+	third := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "今日免费2", "type": "normal"})
+	if third["entitlement"] != entDaily {
+		t.Fatalf("daily 2: %#v", third)
+	}
+	if n := quotaUseCount(t, store, uid); n != 2 {
+		t.Fatalf("daily uses %d", n)
+	}
+	fourth := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "免费用完", "type": "normal"})
+	if fourth["quota_outcome"] != quotaUnconfig && fourth["paywall"] != true {
+		t.Fatalf("after daily cap: %#v", fourth)
+	}
+
+	slotToken, _ := registerUser(t, ts, store, "dailyslot")
+	msg, raw := call(t, ts, slotToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
+	if msg != "" {
+		t.Fatalf("first daily slot: %s %s", msg, raw)
+	}
+	firstDaily := decodeData(t, raw)
+	msg, raw = call(t, ts, slotToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
+	if msg != "" {
+		t.Fatalf("second daily slot: %s %s", msg, raw)
+	}
+	secondDaily := decodeData(t, raw)
+	if asID(firstDaily["id"]) == asID(secondDaily["id"]) {
+		t.Fatalf("expected a new daily draw: %#v %#v", firstDaily, secondDaily)
+	}
+	msg, raw = call(t, ts, slotToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
+	if !strings.Contains(msg, "已占用") {
+		t.Fatalf("third daily slot: %s %s", msg, raw)
+	}
+	reused := decodeData(t, raw)
+	reading, _ := reused["reading"].(map[string]any)
+	if asID(reading["id"]) != asID(secondDaily["id"]) {
+		t.Fatalf("reuse latest: %#v", reused)
+	}
+}
+
+func resetDailyCounts(t *testing.T, store *Store) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET daily_free_count=1, daily_slot_count=1 WHERE id=1`)
+	})
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET daily_free_count=1, daily_slot_count=1 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func resetDiamondCost(t *testing.T, store *Store) {

@@ -347,7 +347,7 @@ func TestMergeFoldsDiamondBalances(t *testing.T) {
 	}
 	beforeOrder := orderFingerprint(t, store, orderID)
 
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
+	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	conflict := decodeConflict(t, msg, raw)
 	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
 	if merged["merged"] != true || merged["reward_remaining"].(float64) != 2 {

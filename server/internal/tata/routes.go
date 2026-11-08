@@ -94,18 +94,19 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/auth/bind-wechat", a.h(a.appBindWechat))
 	mux.HandleFunc("POST /api/app/v1/auth/bind-apple", a.h(a.appBindApple))
 	mux.HandleFunc("POST /api/app/v1/auth/bind-email", a.h(a.appBindEmail))
-	mux.HandleFunc("POST /api/app/v1/auth/bind-phone", a.h(a.appBindPhone))
 	mux.HandleFunc("POST /api/app/v1/auth/merge-confirm", a.h(a.appMergeConfirm))
 	mux.HandleFunc("POST /api/app/v1/auth/cancel", a.h(a.appCancel))
 	mux.HandleFunc("GET /api/app/v1/profile", a.h(a.appGetProfile))
 	mux.HandleFunc("PUT /api/app/v1/profile", a.h(a.appPutProfile))
 	mux.HandleFunc("GET /api/app/v1/spreads", a.h(a.appSpreads))
+	mux.HandleFunc("GET /api/app/v1/preset-questions", a.h(a.appPresetQuestions))
 	mux.HandleFunc("GET /api/app/v1/banners", a.h(a.appBanners))
 	mux.HandleFunc("GET /api/app/v1/tarotists", a.h(a.appTarotists))
 	mux.HandleFunc("GET /api/app/v1/quota", a.h(a.appQuota))
 	mux.HandleFunc("POST /api/app/v1/readings", a.h(a.appCreateReading))
 	mux.HandleFunc("PUT /api/app/v1/readings/{id}/question", a.h(a.appEditQuestion))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/detect", a.h(a.appDetect))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/detect/stream", a.h(a.appDetectStream))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/spread", a.h(a.appSelectSpread))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/shuffle", a.h(a.appShuffle))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/cut", a.h(a.appCut))
@@ -123,6 +124,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/readings/{id}", a.h(a.appGetReading))
 	mux.HandleFunc("DELETE /api/app/v1/readings/{id}", a.h(a.appDeleteReading))
 	mux.HandleFunc("POST /api/app/v1/daily", a.h(a.appDaily))
+	mux.HandleFunc("POST /api/app/v1/daily/stream", a.h(a.appDailyStream))
 	mux.HandleFunc("GET /api/app/v1/calendar", a.h(a.appCalendar))
 	mux.HandleFunc("GET /api/app/v1/monthly-reports", a.h(a.appMonthlyReports))
 	mux.HandleFunc("POST /api/app/v1/monthly-reports/save", a.h(a.appSaveMonthlyReport))
@@ -132,6 +134,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/rhythm", a.h(a.appYearlyRhythm))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/domains", a.h(a.appYearlyDomains))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/generate", a.h(a.appYearlyGenerate))
+	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/generate/stream", a.h(a.appYearlyGenerateStream))
 	mux.HandleFunc("GET /api/app/v1/deck-preference", a.h(a.appGetDeckPreference))
 	mux.HandleFunc("PUT /api/app/v1/deck-preference", a.h(a.appPutDeckPreference))
 	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
@@ -163,7 +166,7 @@ func (a *App) Handler() http.Handler {
 
 	return withAppLanguage(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept-Language, X-Language")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept-Language, X-Language, Accept")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -202,16 +205,16 @@ func (a *App) h(fn func(http.ResponseWriter, *http.Request) error) http.HandlerF
 		}
 		var ae authFail
 		if errors.As(err, &ae) {
-			writeErrCode(w, http.StatusUnauthorized, "unauthorized", "未登录或令牌无效")
+			writeErrCodeLang(w, r.Context(), http.StatusUnauthorized, "unauthorized", "未登录或令牌无效")
 			return
 		}
 		var be *bizError
 		if errors.As(err, &be) {
-			writeErrCode(w, http.StatusOK, be.code, be.msg)
+			writeErrCodeLang(w, r.Context(), http.StatusOK, be.code, be.msg)
 			return
 		}
 		log.Printf("internal: %v", err)
-		writeErrCode(w, http.StatusOK, "internal", "内部错误")
+		writeErrCodeLang(w, r.Context(), http.StatusOK, "internal", "内部错误")
 	}
 }
 

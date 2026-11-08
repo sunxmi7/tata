@@ -155,8 +155,7 @@ CREATE TABLE IF NOT EXISTS ledger (
 CREATE TABLE IF NOT EXISTS quota_use (
   user_id BIGINT NOT NULL,
   cycle TEXT NOT NULL,
-  reading_id BIGINT NOT NULL,
-  PRIMARY KEY (user_id, cycle)
+  reading_id BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rewards (
   user_id BIGINT PRIMARY KEY,
@@ -401,10 +400,14 @@ CREATE TABLE IF NOT EXISTS quota_settings (
   id INT PRIMARY KEY,
   diamond_cost INT,
   followup_limit INT DEFAULT 5,
+  daily_free_count INT NOT NULL DEFAULT 1,
+  daily_slot_count INT NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT quota_settings_singleton CHECK (id = 1),
   CONSTRAINT quota_settings_cost_chk CHECK (diamond_cost IS NULL OR diamond_cost > 0),
-  CONSTRAINT quota_settings_followup_chk CHECK (followup_limit IS NULL OR followup_limit > 0)
+  CONSTRAINT quota_settings_followup_chk CHECK (followup_limit IS NULL OR followup_limit > 0),
+  CONSTRAINT quota_settings_daily_free_chk CHECK (daily_free_count > 0),
+  CONSTRAINT quota_settings_daily_slot_chk CHECK (daily_slot_count > 0)
 );
 INSERT INTO quota_settings(id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS quota_charges (
@@ -646,6 +649,15 @@ ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS followup_limit INT DEFAULT 5
 ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_followup_chk;
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_followup_chk
   CHECK (followup_limit IS NULL OR followup_limit > 0);
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS daily_free_count INT NOT NULL DEFAULT 1;
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS daily_slot_count INT NOT NULL DEFAULT 1;
+ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_daily_free_chk;
+ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_daily_free_chk CHECK (daily_free_count > 0);
+ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_daily_slot_chk;
+ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_daily_slot_chk CHECK (daily_slot_count > 0);
+ALTER TABLE quota_use DROP CONSTRAINT IF EXISTS quota_use_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS quota_use_reading_uidx ON quota_use(reading_id);
+CREATE INDEX IF NOT EXISTS quota_use_user_cycle_idx ON quota_use(user_id, cycle);
 ALTER TABLE iap_skus DROP CONSTRAINT IF EXISTS iap_skus_kind_chk;
 ALTER TABLE iap_skus DROP CONSTRAINT IF EXISTS iap_skus_bucket_kind_chk;
 ALTER TABLE iap_skus ADD CONSTRAINT iap_skus_kind_chk
@@ -679,6 +691,32 @@ ALTER TABLE spreads ADD COLUMN IF NOT EXISTS recommended BOOLEAN NOT NULL DEFAUL
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS thumbnail TEXT NOT NULL DEFAULT '';
 INSERT INTO decks(code, name, enabled, sort_order) VALUES ('rider-waite', '莱德韦特', true, 0)
 ON CONFLICT (code) DO NOTHING;
+CREATE TABLE IF NOT EXISTS ai_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  kind TEXT NOT NULL,
+  reading_id BIGINT,
+  yearly_year INT,
+  user_id BIGINT,
+  followup_turn INT,
+  status TEXT NOT NULL,
+  partial_text TEXT NOT NULL DEFAULT '',
+  result_text TEXT,
+  error_text TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ai_jobs_reading_kind_idx ON ai_jobs (reading_id, kind, id DESC);
+CREATE INDEX IF NOT EXISTS ai_jobs_yearly_idx ON ai_jobs (user_id, yearly_year, kind, id DESC);
+CREATE TABLE IF NOT EXISTS preset_questions (
+  question_id TEXT PRIMARY KEY,
+  pool TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
 `)
 	if err != nil {
 		return err
@@ -693,7 +731,7 @@ COMMENT ON COLUMN operators.role IS 'admin 或 readonly。';
 
 COMMENT ON TABLE app_users IS 'App 用户。对应 /api/app/v1/auth/*、/profile。merged_into 非空表示已并入另一账号。';
 COMMENT ON COLUMN app_users.public_id IS '对外短 ID，6 位。对应「我的」短码，首次读 profile 生成。';
-COMMENT ON COLUMN app_users.phone IS '手机号。接口 account_display 优先脱敏手机，没有再退回邮箱。';
+COMMENT ON COLUMN app_users.phone IS '历史列，App 不再绑定或展示手机号。注销/合并时仍会清空。';
 COMMENT ON COLUMN app_users.deck_code IS '当前牌面风格 code，须对应 decks 中已启用项。对应 GET/PUT /deck-preference。';
 COMMENT ON COLUMN app_users.merged_into IS '并账后指向主账号 id。被合并账号不可再登录。';
 
@@ -714,7 +752,14 @@ COMMENT ON TABLE explore_topics IS '探索主题占卜条目。对应 GET /explo
 
 COMMENT ON TABLE readings IS '一次解读。对应 /readings*。type=normal/tarotist/explore/daily。';
 COMMENT ON COLUMN readings.type IS 'normal 普通、tarotist 占卜师、explore 主题、daily 今日一牌。';
-COMMENT ON COLUMN readings.status IS '流程状态：QUESTION_CREATED → … → INTERPRETED / 付费墙等。';
+COMMENT ON COLUMN readings.status IS '流程状态：QUESTION_CREATED → … → INTERPRETING → COMPLETED。INTERPRETING 时 interpretation 可能是未完成片段。';
+COMMENT ON COLUMN readings.interpretation IS '解读正文。任务进行中为已生成片段，完成后为全文。App 退出再进用 GET /readings/{id} 取。';
+COMMENT ON TABLE ai_jobs IS 'AI 生成任务。HTTP/SSE 断开后仍在跑；结果写入 readings 或 yearly_reports。';
+COMMENT ON TABLE preset_questions IS '问题输入页预设题库。pool=featured 首屏，pool=backup 更多问题。对应 GET /preset-questions。来源 docs/塔塔_预设问题库_V1.docx。';
+COMMENT ON COLUMN preset_questions.pool IS 'featured 首屏混合 15 条；backup 备用题库。';
+COMMENT ON COLUMN ai_jobs.kind IS 'interpret / detect / followup / yearly。';
+COMMENT ON COLUMN ai_jobs.status IS 'queued / running / succeeded / failed。';
+COMMENT ON COLUMN ai_jobs.partial_text IS '流式过程中的已产出文本，供重连回放。';
 COMMENT ON COLUMN readings.cards IS 'JSON 牌面。灵数抽牌 numbers 映射 Rider-Waite 后写入。';
 COMMENT ON TABLE reading_messages IS '解读追问对话。对应 /readings/{id}/messages、followups。';
 
@@ -753,11 +798,13 @@ COMMENT ON TABLE rewards IS '免费次数账本。remaining=注册奖励；admin
 COMMENT ON COLUMN rewards.remaining IS '注册/过期型免费次数。每日免费不在此列。';
 COMMENT ON COLUMN rewards.admin_grant_remaining IS '可扣的解读次数：管理端补发、兑换码 free_count、次卡 reading_pack。';
 
-COMMENT ON TABLE quota_settings IS '共用额度。id=1。diamond_cost 为单次解读钻石成本，未配置为 null。followup_limit 为每条解读可追问次数，null 表示不限制。';
+COMMENT ON TABLE quota_settings IS '共用额度。id=1。diamond_cost 为单次解读钻石成本，未配置为 null。followup_limit 为每条解读可追问次数，null 表示不限制。daily_free_count 为每日免费次数。daily_slot_count 为每日今日一牌次数。';
 COMMENT ON COLUMN quota_settings.followup_limit IS '每条解读追问上限。管理端 PUT /quota-params 可改；null 不限制。种子默认 5（设计稿）。';
+COMMENT ON COLUMN quota_settings.daily_free_count IS '每个业务日的共用免费次数。管理端可改，默认 1。';
+COMMENT ON COLUMN quota_settings.daily_slot_count IS '每个业务日可抽今日一牌（含明日运势）的次数。管理端可改，默认 1。';
 COMMENT ON TABLE quota_charges IS '单次解读实际扣费记录。entitlement=daily_free/reward/admin_grant/diamond。';
 COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume。';
-COMMENT ON TABLE quota_use IS '每日免费占用（user_id+cycle 唯一）。并账后写入 daily_free_*。';
+COMMENT ON TABLE quota_use IS '每日免费占用（同一 reading 唯一）。条数受 quota_settings.daily_free_count 限制。并账后写入 daily_free_*。';
 COMMENT ON TABLE daily_free_balance IS '并账后的每日免费余额快照。';
 COMMENT ON TABLE daily_free_uses IS '并账后每日免费消耗明细。';
 COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 钻石不写入此表。';
@@ -850,6 +897,9 @@ func (s *Store) seed(ctx context.Context) error {
 		return err
 	}
 	if err := s.seedHelp(ctx); err != nil {
+		return err
+	}
+	if err := s.seedContentV1(ctx); err != nil {
 		return err
 	}
 	return s.seedTarotistPublic(ctx)

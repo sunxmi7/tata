@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,7 +17,7 @@ import (
 
 type bizError struct {
 	msg  string
-	code string // 稳定错误码（error_code）。空表示尚未归类的业务错误，仅凭中文 message。
+	code string // 稳定错误码（error_code）。空表示尚未归类的业务错误，仅凭 message。
 }
 
 func (e *bizError) Error() string { return e.msg }
@@ -37,13 +38,21 @@ func writeOK(w http.ResponseWriter, data any) {
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "data": data, "message": ""})
 }
 
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeErrCode(w, status, "", msg)
+func writeErr(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	ctx := context.Background()
+	if r != nil {
+		ctx = r.Context()
+	}
+	writeErrCode(w, status, "", T(ctx, msg))
 }
 
-// writeErrCode 带 error_code 的错误包络。error_code 为稳定分类码，message 仍为中文原因。
+// writeErrCode 带 error_code 的错误包络。error_code 为稳定分类码，message 按请求语言本地化。
 func writeErrCode(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"code": 1, "data": nil, "message": msg, "error_code": code})
+}
+
+func writeErrCodeLang(w http.ResponseWriter, ctx context.Context, status int, code, msg string) {
+	writeErrCode(w, status, code, T(ctx, msg))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -75,8 +84,13 @@ type App struct {
 	Redis     redisLocker
 	KV        kvStore
 	Mail      Mailer
+	WeChat    wechatExchanger
+	Apple     appleVerifier
 	Upload    *Uploader
 	Push      *Pusher
+
+	jobsOnce sync.Once
+	jobsHub  *jobHub
 }
 
 type redisLocker interface {

@@ -14,21 +14,19 @@ const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8B
 
 func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	store, ts := newMergeServer(t)
-	token, uid := registerUser(t, ts, store, "shell")
-	phone := fmt.Sprintf("13%09d", time.Now().UnixNano()%1_000_000_000)
-	if _, err := store.Exec(t.Context(), `UPDATE app_users SET phone=$1 WHERE id=$2`, phone, uid); err != nil {
-		t.Fatal(err)
-	}
+	token, _ := registerUser(t, ts, store, "shell")
 
 	profile := listOne(t, ts, token, "/api/app/v1/profile")
 	if profile["name"] != "" || profile["bio"] != "" || profile["avatar_url"] != nil {
 		t.Fatalf("empty profile: %#v", profile)
 	}
+	if _, ok := profile["phone"]; ok {
+		t.Fatalf("profile should not expose phone: %#v", profile)
+	}
 	display, _ := profile["account_display"].(string)
 	email, _ := profile["email"].(string)
-	wantPhone := maskPhone(phone)
-	if display != wantPhone || display == phone || strings.Contains(display, email) {
-		t.Fatalf("account_display should be masked phone, got %#v phone=%s email=%s", profile["account_display"], phone, email)
+	if display == "" || display == email || !strings.Contains(display, "***") {
+		t.Fatalf("account_display should be masked email, got %#v email=%s", profile["account_display"], email)
 	}
 	publicID, _ := profile["public_id"].(string)
 	if len(publicID) != 6 {

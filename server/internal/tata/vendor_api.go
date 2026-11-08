@@ -1,6 +1,7 @@
 package tata
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -90,6 +91,11 @@ func (a *App) adminCreateVendor(w http.ResponseWriter, r *http.Request) error {
 		detail = "密钥已设置"
 	}
 	a.Store.audit(r.Context(), act.id, "create", "vendor", fmtID(id), detail)
+	if enabled {
+		if err := a.applyVendorToAllTasks(r.Context(), id, req.Models); err != nil {
+			return err
+		}
+	}
 	writeOK(w, map[string]any{"id": id})
 	return nil
 }
@@ -134,7 +140,8 @@ func (a *App) adminUpdateVendor(w http.ResponseWriter, r *http.Request) error {
 	}
 	var old []byte
 	var was bool
-	err = a.Store.QueryRow(r.Context(), `SELECT api_key_enc, enabled FROM vendors WHERE id=$1`, id).Scan(&old, &was)
+	var oldTimeout *int
+	err = a.Store.QueryRow(r.Context(), `SELECT api_key_enc, enabled, timeout_sec FROM vendors WHERE id=$1`, id).Scan(&old, &was, &oldTimeout)
 	if err != nil {
 		return biz("供应商不存在")
 	}
@@ -142,7 +149,7 @@ func (a *App) adminUpdateVendor(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if !enabled {
+	if was && !enabled {
 		var n int
 		if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM bindings WHERE vendor_id=$1`, id).Scan(&n); err != nil {
 			return err
@@ -151,8 +158,12 @@ func (a *App) adminUpdateVendor(w http.ResponseWriter, r *http.Request) error {
 			return biz("供应商仍被调用绑定引用，先改绑定再停用")
 		}
 	}
+	timeout := oldTimeout
+	if req.TimeoutSec != nil {
+		timeout = req.TimeoutSec
+	}
 	_, err = a.Store.Exec(r.Context(), `UPDATE vendors SET name=$1, base_url=$2, api_key_enc=$3, models=$4, timeout_sec=$5, enabled=$6 WHERE id=$7`,
-		req.Name, strings.TrimRight(req.BaseURL, "/"), enc, mustJSON(req.Models), req.TimeoutSec, enabled, id)
+		req.Name, strings.TrimRight(req.BaseURL, "/"), enc, mustJSON(req.Models), timeout, enabled, id)
 	if err != nil {
 		return err
 	}
@@ -161,7 +172,33 @@ func (a *App) adminUpdateVendor(w http.ResponseWriter, r *http.Request) error {
 		detail = "密钥已更新"
 	}
 	a.Store.audit(r.Context(), act.id, "update", "vendor", fmtID(id), detail)
+	if enabled {
+		if err := a.applyVendorToAllTasks(r.Context(), id, req.Models); err != nil {
+			return err
+		}
+	}
 	writeOK(w, true)
+	return nil
+}
+
+func (a *App) applyVendorToAllTasks(ctx context.Context, vendorID int64, models []string) error {
+	model := ""
+	for _, item := range models {
+		if s := strings.TrimSpace(item); s != "" {
+			model = s
+			break
+		}
+	}
+	if vendorID <= 0 || model == "" {
+		return nil
+	}
+	for _, task := range tasks {
+		if _, err := a.Store.Exec(ctx, `INSERT INTO bindings(task, vendor_id, model, updated_at) VALUES ($1,$2,$3,now())
+			ON CONFLICT (task) DO UPDATE SET vendor_id=EXCLUDED.vendor_id, model=EXCLUDED.model, updated_at=now()`,
+			task, vendorID, model); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

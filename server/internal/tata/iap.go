@@ -1059,7 +1059,7 @@ func diamondView(ctx context.Context, q rowQuery, uid int64) (map[string]any, er
 	}
 	return map[string]any{
 		"unit":                    "diamond",
-		"display_label":           displayLabelTataCoin,
+		"display_label":           T(ctx, displayLabelTataCoin),
 		"balance":                 sub + pack,
 		"subscription_diamonds":   sub,
 		"pack_diamonds":           pack,
@@ -1114,24 +1114,24 @@ func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool, kind string) ([
 			"price_amount_minor": nullInt(price), "price_currency": nullString(currency),
 			"diamond_grant": nullInt(grant), "reading_grant": nullInt(readingGrant),
 			"period_unit": periodUnit, "period_count": nullInt(periodCount),
-			"copy": copyText, "enabled": enabled, "unit": "diamond", "display_label": displayLabelTataCoin,
-			"benefits": skuBenefits(kind, tarotistCount, followupLimit, followupReady, copyText),
+			"copy": copyText, "enabled": enabled, "unit": "diamond", "display_label": T(ctx, displayLabelTataCoin),
+			"benefits": skuBenefits(ctx, kind, tarotistCount, followupLimit, followupReady, copyText),
 		})
 	}
 	return list, rows.Err()
 }
 
-func skuBenefits(kind string, tarotistCount, followupLimit int, followupReady bool, skuCopy string) []map[string]any {
+func skuBenefits(ctx context.Context, kind string, tarotistCount, followupLimit int, followupReady bool, skuCopy string) []map[string]any {
 	if kind == iapKindPack || kind == iapKindYearlyUnlock || kind == iapKindReadingPack {
 		return []map[string]any{}
 	}
 	year := kind == "year_subscription"
-	followup := map[string]any{"key": "followup", "title": "深入追问", "count": nil, "included": true, "copy_status": "pending"}
+	followup := map[string]any{"key": "followup", "title": T(ctx, "深入追问"), "count": nil, "included": true, "copy_status": "pending"}
 	if followupReady {
 		followup["count"] = followupLimit
 		followup["copy_status"] = "ready"
 	}
-	perk := map[string]any{"key": "campaign_perk", "title": "专属活动权益", "count": nil, "included": year, "body": nil, "copy_status": "pending"}
+	perk := map[string]any{"key": "campaign_perk", "title": T(ctx, "专属活动权益"), "count": nil, "included": year, "body": nil, "copy_status": "pending"}
 	if year {
 		if body := strings.TrimSpace(skuCopy); body != "" {
 			perk["body"] = body
@@ -1139,10 +1139,10 @@ func skuBenefits(kind string, tarotistCount, followupLimit int, followupReady bo
 		}
 	}
 	return []map[string]any{
-		{"key": "daily_reading", "title": "每日塔罗解读", "count": 1, "included": true},
+		{"key": "daily_reading", "title": T(ctx, "每日塔罗解读"), "count": 1, "included": true},
 		followup,
-		{"key": "tarotists", "title": "塔罗师", "count": tarotistCount, "included": true},
-		{"key": "yearly_report", "title": "年度运势解锁", "count": nil, "included": year},
+		{"key": "tarotists", "title": T(ctx, "塔罗师"), "count": tarotistCount, "included": true},
+		{"key": "yearly_report", "title": T(ctx, "年度运势解锁"), "count": nil, "included": year},
 		perk,
 	}
 }

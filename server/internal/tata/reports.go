@@ -84,7 +84,7 @@ func (a *App) appYearlyReport(w http.ResponseWriter, r *http.Request) error {
 	if year < 2000 || year > 2100 {
 		return biz("年份不正确")
 	}
-	view, err := a.buildYearlyReport(r.Context(), uid, int(year))
+	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 		uid, year); err != nil {
 		return err
 	}
-	view, err := a.buildYearlyReport(r.Context(), uid, int(year))
+	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
 	if err != nil {
 		return err
 	}
@@ -289,7 +289,7 @@ func (a *App) monthlyMonthList(ctx context.Context, uid int64, loc *time.Locatio
 	return out, nil
 }
 
-func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int) (map[string]any, error) {
+func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int, r *http.Request) (map[string]any, error) {
 	yearSub, err := a.hasYearSubscription(ctx, uid)
 	if err != nil {
 		return nil, err
@@ -340,7 +340,7 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int) (map[s
 		"fields_confirmed":      true,
 		"content_invented":      false,
 	}
-	if err := a.attachYearlyFlow(ctx, uid, year, view); err != nil {
+	if err := a.attachYearlyFlow(ctx, r, uid, year, view); err != nil {
 		return nil, err
 	}
 	return view, nil
@@ -400,7 +400,7 @@ func (a *App) appGetDeckPreference(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	code, available, err := a.resolveUserDeck(r.Context(), uid)
+	code, available, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {
 		return err
 	}
@@ -428,7 +428,7 @@ func (a *App) appPutDeckPreference(w http.ResponseWriter, r *http.Request) error
 	if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET deck_code=$1 WHERE id=$2`, code, uid); err != nil {
 		return err
 	}
-	_, available, err := a.resolveUserDeck(r.Context(), uid)
+	_, available, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {
 		return err
 	}

@@ -55,6 +55,25 @@ var Main = gcmd.Command{
 		} else {
 			g.Log().Info(ctx, "mail smtp disabled (unconfigured); email codes will not send")
 		}
+		app.WeChat = tata.NewWeChatClient(tata.WeChatConfig{
+			Enabled:   g.Cfg().MustGet(ctx, "wechat.enabled").Bool(),
+			AppID:     g.Cfg().MustGet(ctx, "wechat.appId").String(),
+			AppSecret: g.Cfg().MustGet(ctx, "wechat.appSecret").String(),
+		})
+		if app.WeChat.Ready() {
+			g.Log().Info(ctx, "wechat login enabled")
+		} else {
+			g.Log().Info(ctx, "wechat login disabled (unconfigured)")
+		}
+		app.Apple = tata.NewAppleVerifier(tata.AppleConfig{
+			Enabled:  g.Cfg().MustGet(ctx, "apple.enabled").Bool(),
+			ClientID: g.Cfg().MustGet(ctx, "apple.clientId").String(),
+		})
+		if app.Apple.Ready() {
+			g.Log().Info(ctx, "apple login enabled")
+		} else {
+			g.Log().Info(ctx, "apple login disabled (unconfigured)")
+		}
 		app.Push = tata.NewPusher(tata.PushConfig{
 			AppID:        g.Cfg().MustGet(ctx, "getui.appId").String(),
 			AppKey:       g.Cfg().MustGet(ctx, "getui.appKey").String(),

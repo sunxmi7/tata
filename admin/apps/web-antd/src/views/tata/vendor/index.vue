@@ -8,7 +8,7 @@ import { useAccessStore } from '@vben/stores';
 
 import { Button, Card, Form, Input, Modal, Select, Switch, Table, Tag, message } from 'ant-design-vue';
 
-import { createVendor, listBindings, listVendors, probeVendor, putBinding } from '#/api/tata';
+import { createVendor, listBindings, listVendors, probeVendor, putBinding, updateVendor } from '#/api/tata';
 
 import {
   modelSelectOptions,
@@ -31,13 +31,38 @@ const access = useAccessStore();
 const vendors = ref<Vendor[]>([]);
 const bindings = ref<Binding[]>([]);
 const open = ref(false);
-const form = ref({
-  name: '演示模型',
-  base_url: 'http://127.0.0.1:8080/demo/openai/v1',
-  api_key: 'demo',
-  models: 'demo',
-  enabled: true,
-});
+const editingId = ref<number | null>(null);
+const form = ref(emptyVendorForm());
+
+function emptyVendorForm() {
+  return {
+    name: 'DeepSeek Flash',
+    base_url: 'https://api.deepseek.com',
+    api_key: '',
+    models: 'deepseek-flash',
+    timeout_sec: 60,
+    enabled: false,
+  };
+}
+
+function openCreate() {
+  editingId.value = null;
+  form.value = emptyVendorForm();
+  open.value = true;
+}
+
+function openEdit(record: Vendor) {
+  editingId.value = record.id;
+  form.value = {
+    name: record.name,
+    base_url: record.base_url,
+    api_key: '',
+    models: Array.isArray(record.models) ? record.models.join(',') : String(record.models ?? ''),
+    timeout_sec: record.timeout_sec ?? 60,
+    enabled: record.enabled,
+  };
+  open.value = true;
+}
 const bind = ref({ task: 'interpret', vendor_id: undefined as number | undefined, model: '' });
 
 const vendorNameById = computed(() => {
@@ -108,18 +133,27 @@ function canWrite() {
   return access.accessCodes.includes('write');
 }
 async function save() {
-  const created = await createVendor({
+  const payload = {
     name: form.value.name,
     base_url: form.value.base_url,
     api_key: form.value.api_key,
     models: form.value.models.split(',').map((item) => item.trim()).filter(Boolean),
+    timeout_sec: form.value.timeout_sec,
     enabled: form.value.enabled,
-  });
-  message.success('已保存，密钥不会回显');
+  };
+  if (editingId.value) {
+    await updateVendor(editingId.value, payload);
+  } else {
+    const created = await createVendor(payload);
+    bind.value.vendor_id = created.id;
+    bind.value.model = '';
+  }
+  message.success(form.value.enabled ? '已保存，并应用到全部调用' : '已保存，密钥不会回显');
   open.value = false;
-  bind.value.vendor_id = created.id;
-  bind.value.model = '';
   await load();
+  if (form.value.enabled) {
+    applyBinding(bind.value.task);
+  }
 }
 async function bindTask() {
   if (!bind.value.vendor_id) {
@@ -147,9 +181,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="OpenAI 兼容接口。密钥保存后不明文回显。" title="模型供应商">
+  <Page description="启用并保存后立即用于问题检测、改写、推荐、解读、塔罗师。密钥保存后不明文回显。" title="模型供应商">
     <template #extra>
-      <Button v-if="canWrite()" type="primary" @click="open = true">新建</Button>
+      <Button v-if="canWrite()" type="primary" @click="openCreate">新建</Button>
     </template>
     <Table
       :columns="[
@@ -169,7 +203,10 @@ onMounted(async () => {
         <Tag v-else-if="column.dataIndex === 'enabled'" :color="record.enabled ? 'green' : 'default'">
           {{ record.enabled ? '启用' : '停用' }}
         </Tag>
-        <Button v-else-if="column.dataIndex === 'action' && canWrite()" type="link" @click="probe(record.id)">探测</Button>
+        <template v-else-if="column.dataIndex === 'action' && canWrite()">
+          <Button type="link" @click="openEdit(record as Vendor)">编辑</Button>
+          <Button type="link" @click="probe(record.id)">探测</Button>
+        </template>
       </template>
     </Table>
     <Card class="mt-4" title="调用绑定">
@@ -235,11 +272,16 @@ onMounted(async () => {
         </Form>
       </div>
     </Card>
-    <Modal v-model:open="open" title="供应商" @ok="save">
+    <Modal v-model:open="open" :title="editingId ? '编辑供应商' : '新建供应商'" @ok="save">
       <Form layout="vertical">
         <Form.Item label="名称"><Input v-model:value="form.name" /></Form.Item>
         <Form.Item label="Base URL"><Input v-model:value="form.base_url" /></Form.Item>
-        <Form.Item label="密钥"><Input.Password v-model:value="form.api_key" /></Form.Item>
+        <Form.Item label="密钥">
+          <Input.Password
+            v-model:value="form.api_key"
+            :placeholder="editingId ? '留空则不改已有密钥' : '稍后填入 DeepSeek API Key'"
+          />
+        </Form.Item>
         <Form.Item label="模型，逗号分隔"><Input v-model:value="form.models" /></Form.Item>
         <Form.Item label="启用"><Switch v-model:checked="form.enabled" /></Form.Item>
       </Form>

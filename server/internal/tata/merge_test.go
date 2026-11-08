@@ -71,18 +71,18 @@ func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]any{"openid": openID, "confirm": true})
+	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]any{"code": openID, "confirm": true})
 	if !strings.Contains(msg, "请求字段不正确") {
 		t.Fatalf("confirm flag on bind must not be accepted: %s %s", msg, raw)
 	}
 	assertNotMerged(t, store, idA, idB, readingB)
 
-	msg, raw = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
+	msg, raw = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	conflict := decodeConflict(t, msg, raw)
 	if conflict.MergeRequestID == 0 || conflict.PrimaryUserID != float64(idA) || conflict.SecondaryUserID != float64(idB) || conflict.Merged || !conflict.ConfirmRequired {
 		t.Fatalf("conflict payload: %+v", conflict)
 	}
-	msg, raw = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
+	msg, raw = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	again := decodeConflict(t, msg, raw)
 	if again.MergeRequestID != conflict.MergeRequestID {
 		t.Fatalf("second conflict created another request: %v vs %v", again.MergeRequestID, conflict.MergeRequestID)
@@ -121,7 +121,7 @@ func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
 	if againMerged["reward_remaining"].(float64) != 2 {
 		t.Fatalf("second confirm changed balances: %#v", againMerged)
 	}
-	must(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
+	must(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	var rewardLeft int
 	if err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, idA).Scan(&rewardLeft); err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestMergeDailyFlagsSum(t *testing.T) {
 	if _, err := store.Exec(t.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3)`, idB, cycle, readingB); err != nil {
 		t.Fatal(err)
 	}
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
+	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	conflict := decodeConflict(t, msg, raw)
 	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
 	if merged["daily_used_flags"].(float64) != 1 || merged["daily_free_remaining"].(float64) != 1 {
@@ -309,7 +309,7 @@ func TestMergeSubscriptionTiePrompts(t *testing.T) {
 	if err := store.QueryRow(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at) VALUES ($1,'year','active',now(),$2) RETURNING id`, idB, exp).Scan(&subB); err != nil {
 		t.Fatal(err)
 	}
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": openID})
+	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	conflict := decodeConflict(t, msg, raw)
 	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
 	if merged["subscription_prompt_required"] != true || merged["subscription_resolution"] != "prompt_required" {
@@ -340,9 +340,8 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		field string
 		value string
 	}{
-		{kind: "apple", path: "/api/app/v1/auth/bind-apple", field: "sub", value: fmt.Sprintf("apple-%d", stamp)},
-		{kind: "phone", path: "/api/app/v1/auth/bind-phone", field: "phone", value: fmt.Sprintf("15%09d", stamp%1_000_000_000)},
-		{kind: "wechat", path: "/api/app/v1/auth/bind-wechat", field: "openid", value: fmt.Sprintf("wx-silent-%d", stamp)},
+		{kind: "apple", path: "/api/app/v1/auth/bind-apple", field: "identity_token", value: fmt.Sprintf("apple-%d", stamp)},
+		{kind: "wechat", path: "/api/app/v1/auth/bind-wechat", field: "code", value: fmt.Sprintf("wx-silent-%d", stamp)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
@@ -398,8 +397,7 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		if got == nil || !strings.EqualFold(*got, emailB) {
 			t.Fatalf("email not moved: %v", got)
 		}
-		loginCode := sendEmailCode(t, ts, "", emailB, "login")
-		loginMsg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/login", map[string]string{"email": emailB, "password": "new-pass-123", "code": loginCode})
+		loginMsg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/login", map[string]string{"email": emailB, "password": "new-pass-123"})
 		if loginMsg != "" {
 			t.Fatalf("moved email login: %s", loginMsg)
 		}
@@ -424,7 +422,7 @@ func TestBindDoesNotRebind(t *testing.T) {
 		t.Fatal(err)
 	}
 	readingB := insertReadingWithMessage(t, store, idB, "换绑", "不应合并")
-	msg, _ := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"openid": other})
+	msg, _ := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": other})
 	if !strings.Contains(msg, "换绑未开放") {
 		t.Fatalf("rebind message: %s", msg)
 	}
@@ -448,10 +446,15 @@ func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	protectLiveAIConfig(t, store)
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	t.Cleanup(ts.Close)
 	return store, ts
+}
+
+func absAsset(ts *httptest.Server, path string) string {
+	return strings.TrimRight(ts.URL, "/") + path
 }
 
 func userIDByEmail(t *testing.T, store *Store, email string) int64 {

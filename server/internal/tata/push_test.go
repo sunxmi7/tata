@@ -17,6 +17,7 @@ func TestPushAndInbox(t *testing.T) {
 	if err != nil {
 		t.Skipf("no database: %v", err)
 	}
+	protectLiveAIConfig(t, store)
 	app := testApp(store) // Push nil: 个推禁用，仅落站内信
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()

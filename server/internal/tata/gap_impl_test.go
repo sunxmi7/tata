@@ -123,7 +123,7 @@ func TestHistoryListPreviewFields(t *testing.T) {
 	if item["status_label"] != "已解读" || item["card_name"] != "愚者" || !strings.Contains(fmt.Sprint(item["short_text"]), "先把选择") {
 		t.Fatalf("preview: %#v", item)
 	}
-	if item["card_thumbnail"] != defaultCardThumbnailPath {
+	if item["card_thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
 		t.Fatalf("default thumbnail: %#v", item["card_thumbnail"])
 	}
 }
@@ -199,7 +199,7 @@ func TestCalendarDayPreviewFields(t *testing.T) {
 	if daily["card_name"] != "女皇" || daily["orientation"] != "upright" || daily["orientation_label"] != "正位" || daily["type_label"] != "今日一牌" {
 		t.Fatalf("daily: %#v", daily)
 	}
-	if daily["card_thumbnail"] != defaultCardThumbnailPath {
+	if daily["card_thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
 		t.Fatalf("daily thumb: %#v", daily["card_thumbnail"])
 	}
 	if !strings.Contains(fmt.Sprint(daily["short_text"]), "把温柔") {
@@ -304,7 +304,7 @@ func TestSpreadRecommended(t *testing.T) {
 	if len(appList) == 0 || appList[0]["name"] != "时间流" || appList[0]["recommended"] != true {
 		t.Fatalf("seed recommended: %#v", appList)
 	}
-	if appList[0]["thumbnail"] != defaultCardThumbnailPath {
+	if appList[0]["thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
 		t.Fatalf("seed thumb: %#v", appList[0]["thumbnail"])
 	}
 
@@ -331,7 +331,7 @@ func TestSpreadRecommended(t *testing.T) {
 	if !foundTime {
 		t.Fatalf("time flow missing: %#v", appList)
 	}
-	if appList[0]["thumbnail"] != defaultCardThumbnailPath {
+	if appList[0]["thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
 		t.Fatalf("new default thumb: %#v", appList[0]["thumbnail"])
 	}
 
