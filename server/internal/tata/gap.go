@@ -55,65 +55,75 @@ func (a *App) claimed(r *http.Request, kind, value string) bool {
 
 func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpenID string `json:"openid"`
+		Code string `json:"code"`
 	}
-	if err := decode(r, &req); err != nil || req.OpenID == "" {
-		writeErr(w, http.StatusOK, "微信身份不能为空")
+	if err := decode(r, &req); err != nil {
+		writeErr(w, r, http.StatusOK, "请求字段不正确")
+		return
+	}
+	openID, err := a.wechatIdentity(r.Context(), req.Code)
+	if err != nil {
+		writeErr(w, r, http.StatusOK, err.Error())
 		return
 	}
 	var id int64
 	var cancelled *time.Time
-	err := a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, req.OpenID).Scan(&id, &cancelled)
+	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, openID).Scan(&id, &cancelled)
 	if err != nil {
-		if a.claimed(r, "wechat", req.OpenID) {
-			writeErr(w, http.StatusOK, "该微信已注销，不能重复领取注册奖励")
+		if a.claimed(r, "wechat", openID) {
+			writeErr(w, r, http.StatusOK, "该微信已注销，不能重复领取注册奖励")
 			return
 		}
-		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(wechat_openid) VALUES ($1) RETURNING id`, req.OpenID).Scan(&id)
+		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(wechat_openid) VALUES ($1) RETURNING id`, openID).Scan(&id)
 		if err != nil {
-			writeErr(w, http.StatusOK, "微信登录失败")
+			writeErr(w, r, http.StatusOK, "微信登录失败")
 			return
 		}
-		if !a.claimed(r, "wechat", req.OpenID) {
+		if !a.claimed(r, "wechat", openID) {
 			exp := nextBeijingEight(time.Now())
 			_, _ = a.Store.Exec(r.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at) VALUES ($1, now(), $2) ON CONFLICT DO NOTHING`, id, exp)
 		}
 	}
 	if cancelled != nil {
-		writeErr(w, http.StatusOK, "账号已注销")
+		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
-	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": wechatQuotaNote})
+	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": T(r.Context(), wechatQuotaNote)})
 }
 
 func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Sub string `json:"sub"`
+		IdentityToken string `json:"identity_token"`
 	}
-	if err := decode(r, &req); err != nil || req.Sub == "" {
-		writeErr(w, http.StatusOK, "苹果身份不能为空")
+	if err := decode(r, &req); err != nil {
+		writeErr(w, r, http.StatusOK, "请求字段不正确")
+		return
+	}
+	sub, err := a.appleIdentity(r.Context(), req.IdentityToken)
+	if err != nil {
+		writeErr(w, r, http.StatusOK, err.Error())
 		return
 	}
 	var id int64
 	var cancelled *time.Time
-	err := a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE apple_sub=$1`, req.Sub).Scan(&id, &cancelled)
+	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE apple_sub=$1`, sub).Scan(&id, &cancelled)
 	if err != nil {
-		if a.claimed(r, "apple", req.Sub) {
-			writeErr(w, http.StatusOK, "该苹果账号已注销，不能重复领取注册奖励")
+		if a.claimed(r, "apple", sub) {
+			writeErr(w, r, http.StatusOK, "该苹果账号已注销，不能重复领取注册奖励")
 			return
 		}
-		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(apple_sub) VALUES ($1) RETURNING id`, req.Sub).Scan(&id)
+		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(apple_sub) VALUES ($1) RETURNING id`, sub).Scan(&id)
 		if err != nil {
-			writeErr(w, http.StatusOK, "苹果登录失败")
+			writeErr(w, r, http.StatusOK, "苹果登录失败")
 			return
 		}
 		exp := nextBeijingEight(time.Now())
 		_, _ = a.Store.Exec(r.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at) VALUES ($1, now(), $2) ON CONFLICT DO NOTHING`, id, exp)
 	}
 	if cancelled != nil {
-		writeErr(w, http.StatusOK, "账号已注销")
+		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
 	access, _ := a.signAccess("app", id, "", "")
@@ -122,15 +132,16 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) appBindApple(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
-		Sub string `json:"sub"`
+		IdentityToken string `json:"identity_token"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if req.Sub == "" {
-		return biz("苹果身份不能为空")
+	sub, err := a.appleIdentity(r.Context(), req.IdentityToken)
+	if err != nil {
+		return err
 	}
-	return a.bindWithConfirm(w, r, bindSpec{kind: "apple", value: req.Sub})
+	return a.bindWithConfirm(w, r, bindSpec{kind: "apple", value: sub})
 }
 
 func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
@@ -158,28 +169,16 @@ func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
-		OpenID string `json:"openid"`
+		Code string `json:"code"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if req.OpenID == "" {
-		return biz("微信身份不能为空")
-	}
-	return a.bindWithConfirm(w, r, bindSpec{kind: "wechat", value: req.OpenID})
-}
-
-func (a *App) appBindPhone(w http.ResponseWriter, r *http.Request) error {
-	var req struct {
-		Phone string `json:"phone"`
-	}
-	if err := decode(r, &req); err != nil {
+	openID, err := a.wechatIdentity(r.Context(), req.Code)
+	if err != nil {
 		return err
 	}
-	if req.Phone == "" {
-		return biz("手机号不能为空")
-	}
-	return a.bindWithConfirm(w, r, bindSpec{kind: "phone", value: req.Phone})
+	return a.bindWithConfirm(w, r, bindSpec{kind: "wechat", value: openID})
 }
 
 func (a *App) appCancel(w http.ResponseWriter, r *http.Request) error {
@@ -256,7 +255,7 @@ func (a *App) appEditQuestion(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	item, err := a.loadReading(r.Context(), id)
+	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err
 	}
@@ -265,6 +264,9 @@ func (a *App) appEditQuestion(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
+	if wantsSSE(r) {
+		return a.appDetectStream(w, r)
+	}
 	uid, anon, err := a.appActor(r)
 	if err != nil {
 		return err
@@ -276,17 +278,23 @@ func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
-	item, err := a.loadReading(r.Context(), id)
+	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err
 	}
 	question, _ := item["question"].(string)
-	step := a.runStep(r, "detect", question)
-	if step.Error != "" {
-		return biz(step.Error)
+	run, err := a.ensureDetectJob(r.Context(), id, question)
+	if err != nil {
+		return err
 	}
-	_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET skip_detect=false, updated_at=now() WHERE id=$1`, id)
-	writeOK(w, map[string]any{"text": step.Output, "vendor": step.Vendor, "model": step.Model, "suggestions": 3})
+	if err := run.wait(r.Context()); err != nil {
+		return err
+	}
+	payload, _ := run.result().(map[string]any)
+	if payload == nil {
+		return biz("问题检测失败")
+	}
+	writeOK(w, payload)
 	return nil
 }
 
@@ -321,7 +329,7 @@ func (a *App) moveRitual(w http.ResponseWriter, r *http.Request, from, to, wrong
 	if tag.RowsAffected() == 0 {
 		return biz(wrong)
 	}
-	item, err := a.loadReading(r.Context(), id)
+	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err
 	}
@@ -330,6 +338,9 @@ func (a *App) moveRitual(w http.ResponseWriter, r *http.Request, from, to, wrong
 }
 
 func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
+	if wantsSSE(r) {
+		return a.appFollowupStream(w, r)
+	}
 	uid, anon, err := a.appActor(r)
 	if err != nil {
 		return err
@@ -438,7 +449,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		a.clearPendingIdem(r, scope, idemKey)
-		writeQuotaBlock(w, decision, id)
+		writeQuotaBlock(w, r, decision, id)
 		return nil
 	}
 	if err := ensureUserTurn(r.Context(), tx, id, turn, strings.TrimSpace(req.Text)); err != nil {
@@ -448,10 +459,22 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	body, err := a.answerFollowup(r.Context(), id, uid, turn, strings.TrimSpace(req.Text))
+	run, err := a.ensureFollowupJob(r.Context(), id, uid, turn, strings.TrimSpace(req.Text))
 	if err != nil {
 		a.clearPendingIdem(r, scope, idemKey)
 		return err
+	}
+	if err := run.wait(r.Context()); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	body, _ := run.result().(map[string]any)
+	if body == nil {
+		body, err = a.answerFollowup(r.Context(), id, uid, turn, strings.TrimSpace(req.Text))
+		if err != nil {
+			a.clearPendingIdem(r, scope, idemKey)
+			return err
+		}
 	}
 	body["quota_outcome"] = decision.Status
 	body["entitlement"] = decision.Entitlement
@@ -706,7 +729,7 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 			"progress":   label, "continue": next, "updated_at": updated, "created_at": created,
 			"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,
 		}
-		attachCalendarPreview(item, cfg, tarotistName, tarotistAvatar)
+		attachCalendarPreview(r, item, cfg, tarotistName, tarotistAvatar)
 		list = append(list, item)
 	}
 	cycle := a.userCycle(r, uid)
@@ -740,7 +763,7 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if already {
-		writeOK(w, map[string]any{"quota_consumed": true, "entitlement": ent, "message": "已经扣过，不再扣"})
+		writeOK(w, map[string]any{"quota_consumed": true, "entitlement": ent, "message": T(r.Context(), "已经扣过，不再扣")})
 		return nil
 	}
 	var req struct {
@@ -748,7 +771,7 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 	}
 	_ = decode(r, &req)
 	if !req.Consume {
-		writeOK(w, map[string]any{"quota_consumed": false, "message": "未确认，不扣额度，记录已保留"})
+		writeOK(w, map[string]any{"quota_consumed": false, "message": T(r.Context(), "未确认，不扣额度，记录已保留")})
 		return nil
 	}
 	decision, err := a.chargeOwned(r, id, chargeKeyPlay, resumeHold)
@@ -756,7 +779,7 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !decision.Continue {
-		writeQuotaBlock(w, decision, id)
+		writeQuotaBlock(w, r, decision, id)
 		return nil
 	}
 	writeOK(w, map[string]any{
@@ -783,7 +806,7 @@ func (a *App) appUseReward(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !decision.Continue {
-		writeQuotaBlock(w, decision, id)
+		writeQuotaBlock(w, r, decision, id)
 		return nil
 	}
 	writeOK(w, map[string]any{

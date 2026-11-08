@@ -51,7 +51,7 @@ func (a *App) appSendEmailCode(w http.ResponseWriter, r *http.Request) error {
 	}
 	scene := strings.TrimSpace(req.Scene)
 	switch scene {
-	case "register", "login", "bind":
+	case "register", "bind":
 	default:
 		return biz("验证码场景不正确")
 	}
@@ -71,13 +71,6 @@ func (a *App) appSendEmailCode(w http.ResponseWriter, r *http.Request) error {
 		}
 		if n > 0 {
 			return biz("邮箱已注册")
-		}
-	}
-	if scene == "login" {
-		var cancelled *time.Time
-		err := a.Store.QueryRow(r.Context(), `SELECT cancelled_at FROM app_users WHERE lower(email)=lower($1) AND merged_into IS NULL`, email).Scan(&cancelled)
-		if err != nil || cancelled != nil {
-			return biz("该邮箱尚未注册")
 		}
 	}
 	store := a.kv()

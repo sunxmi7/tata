@@ -183,7 +183,7 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeOK(w, map[string]any{
 		"code": code, "benefit_name": benefit, "kind": kind, "amount": amount,
-		"unit": unit, "display_label": displayLabelTataCoin,
+		"unit": unit, "display_label": T(r.Context(), displayLabelTataCoin),
 		"pack_diamonds": pack, "subscription_diamonds": sub, "balance": pack + sub,
 	})
 	return nil
@@ -258,14 +258,14 @@ func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
 		}
 		items = append(items, map[string]any{
 			"time": created, "type": reason, "amount": amount, "balance": balance,
-			"note": ledgerNote(reason), "bucket": bucket,
+			"note": T(r.Context(), ledgerNote(reason)), "bucket": bucket,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	writeOK(w, map[string]any{
-		"items": items, "display_label": displayLabelTataCoin, "unit": "diamond",
+		"items": items, "display_label": T(r.Context(), displayLabelTataCoin), "unit": "diamond",
 		"pack_diamonds": pack, "subscription_diamonds": sub, "balance": pack + sub,
 	})
 	return nil
@@ -438,7 +438,26 @@ func validUploadPath(name string) bool {
 	if !ok || strings.Contains(file, "/") || !uploadFolders[folder] {
 		return false
 	}
+	if folder == "cards" && seedCardFile(file) {
+		return true
+	}
 	return validUploadName(file)
+}
+
+func seedCardFile(name string) bool {
+	if !strings.HasPrefix(name, "rider_waite_tarot_") || !strings.HasSuffix(name, ".jpg") {
+		return false
+	}
+	if strings.Contains(name, "..") {
+		return false
+	}
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validUploadName(name string) bool {
@@ -465,19 +484,58 @@ func validUploadName(name string) bool {
 	return false
 }
 
-func publicAssetURL(r *http.Request, name string) string {
+func requestBaseURL(r *http.Request) string {
 	scheme := "http"
-	if r.TLS != nil {
+	if r != nil && r.TLS != nil {
 		scheme = "https"
 	}
-	if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
-		scheme = proto
+	if r != nil {
+		if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+			scheme = proto
+		}
 	}
-	host := r.Host
+	host := ""
+	if r != nil {
+		host = strings.TrimSpace(r.Host)
+	}
 	if host == "" {
-		host = "127.0.0.1"
+		host = "127.0.0.1:8080"
 	}
-	return scheme + "://" + host + "/uploads/" + name
+	return scheme + "://" + host
+}
+
+// absoluteAssetURL 把 /uploads/... 拼成当前请求的完整地址；已经是 http(s) 的 CDN 地址原样返回。
+func absoluteAssetURL(r *http.Request, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	if r == nil {
+		return raw
+	}
+	if !strings.HasPrefix(raw, "/") {
+		raw = "/" + raw
+	}
+	return requestBaseURL(r) + raw
+}
+
+func absoluteAssetAny(r *http.Request, v any) any {
+	s, ok := v.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		return v
+	}
+	return absoluteAssetURL(r, s)
+}
+
+func publicAssetURL(r *http.Request, name string) string {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if strings.HasPrefix(name, "uploads/") {
+		return absoluteAssetURL(r, "/"+name)
+	}
+	return absoluteAssetURL(r, "/uploads/"+name)
 }
 
 func randomHex(n int) (string, error) {
@@ -520,7 +578,7 @@ func (a *App) appWishlist(w http.ResponseWriter, r *http.Request) error {
 		uid, content, imageURL).Scan(&id); err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"id": id, "message": "心愿已提交"})
+	writeOK(w, map[string]any{"id": id, "message": T(r.Context(), "心愿已提交")})
 	return nil
 }
 
@@ -565,7 +623,7 @@ func (a *App) appFeedback(w http.ResponseWriter, r *http.Request) error {
 		uid, strings.TrimSpace(req.Category), content, imageURL, email).Scan(&id); err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"id": id, "message": "反馈已提交"})
+	writeOK(w, map[string]any{"id": id, "message": T(r.Context(), "反馈已提交")})
 	return nil
 }
 
@@ -737,10 +795,7 @@ func emptyAsNil(s string) any {
 	return s
 }
 
-func accountDisplay(email string, phone, wechat, apple *string) string {
-	if phone != nil && strings.TrimSpace(*phone) != "" {
-		return maskPhone(*phone)
-	}
+func accountDisplay(email string, wechat, apple *string) string {
 	if strings.TrimSpace(email) != "" {
 		return maskEmail(email)
 	}
@@ -751,20 +806,6 @@ func accountDisplay(email string, phone, wechat, apple *string) string {
 		return "Apple 已绑定"
 	}
 	return ""
-}
-
-func maskPhone(phone string) string {
-	var digits strings.Builder
-	for _, r := range phone {
-		if r >= '0' && r <= '9' {
-			digits.WriteRune(r)
-		}
-	}
-	s := digits.String()
-	if len(s) < 7 {
-		return phone
-	}
-	return s[:3] + "****" + s[len(s)-4:]
 }
 
 const publicIDAlphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ123456789"
@@ -937,7 +978,7 @@ func readingTypeLabel(typ string) string {
 	}
 }
 
-func attachCalendarPreview(item map[string]any, cfg map[string]string, tarotistName, tarotistAvatar string) {
+func attachCalendarPreview(r *http.Request, item map[string]any, cfg map[string]string, tarotistName, tarotistAvatar string) {
 	attachReadingPreview(item)
 	cards := parsePreviewCards(item["cards"])
 	ori := ""
@@ -953,18 +994,21 @@ func attachCalendarPreview(item map[string]any, cfg map[string]string, tarotistN
 	thumbs := make([]any, 0, len(cards))
 	for _, c := range cards {
 		if u := resolveCardThumbnail(cfg, c.Name); u != nil {
-			thumbs = append(thumbs, u)
+			thumbs = append(thumbs, absoluteAssetAny(r, u))
 		}
 	}
 	item["card_thumbnails"] = thumbs
 	name, _ := item["card_name"].(string)
-	item["card_thumbnail"] = resolveCardThumbnail(cfg, name)
+	item["card_thumbnail"] = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 	typ, _ := item["type"].(string)
 	item["type_label"] = readingTypeLabel(typ)
 	item["tarotist_name"] = emptyAsNil(tarotistName)
-	item["tarotist_avatar"] = emptyAsNil(tarotistAvatar)
+	item["tarotist_avatar"] = emptyAsNil(absoluteAssetURL(r, tarotistAvatar))
 	delete(item, "cards")
 	delete(item, "interpretation")
+	if r != nil {
+		localizeReading(r.Context(), item)
+	}
 }
 
 func interpText(v any) string {

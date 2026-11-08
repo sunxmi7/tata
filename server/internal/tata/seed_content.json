@@ -1,0 +1,995 @@
+{
+  "cards": [
+    {
+      "name": "愚者",
+      "excel_name": "愚者",
+      "file": "rider_waite_tarot_big_the_fool_00.jpg",
+      "en": "The Fool",
+      "ja": "愚者",
+      "ko": "바보"
+    },
+    {
+      "name": "魔术师",
+      "excel_name": "魔术师",
+      "file": "rider_waite_tarot_big_the_magician_01.jpg",
+      "en": "The Magician",
+      "ja": "魔術師",
+      "ko": "마법사"
+    },
+    {
+      "name": "女祭司",
+      "excel_name": "女祭司",
+      "file": "rider_waite_tarot_big_the_high_priestess_02.jpg",
+      "en": "The High Priestess",
+      "ja": "女教皇",
+      "ko": "여사제"
+    },
+    {
+      "name": "女皇",
+      "excel_name": "皇后",
+      "file": "rider_waite_tarot_big_the_empress_03.jpg",
+      "en": "The Empress",
+      "ja": "女帝",
+      "ko": "여황제"
+    },
+    {
+      "name": "皇帝",
+      "excel_name": "皇帝",
+      "file": "rider_waite_tarot_big_the_emperor_04.jpg",
+      "en": "The Emperor",
+      "ja": "皇帝",
+      "ko": "황제"
+    },
+    {
+      "name": "教皇",
+      "excel_name": "教皇",
+      "file": "rider_waite_tarot_big_the_hierophant_05.jpg",
+      "en": "The Hierophant",
+      "ja": "教皇",
+      "ko": "교황"
+    },
+    {
+      "name": "恋人",
+      "excel_name": "恋人",
+      "file": "rider_waite_tarot_big_the_lovers_06.jpg",
+      "en": "The Lovers",
+      "ja": "恋人",
+      "ko": "연인"
+    },
+    {
+      "name": "战车",
+      "excel_name": "战车",
+      "file": "rider_waite_tarot_big_the_chariot_07.jpg",
+      "en": "The Chariot",
+      "ja": "戦車",
+      "ko": "전차"
+    },
+    {
+      "name": "力量",
+      "excel_name": "力量",
+      "file": "rider_waite_tarot_big_strength_08.jpg",
+      "en": "Strength",
+      "ja": "力",
+      "ko": "힘"
+    },
+    {
+      "name": "隐者",
+      "excel_name": "隐士",
+      "file": "rider_waite_tarot_big_the_hermit_09.jpg",
+      "en": "The Hermit",
+      "ja": "隠者",
+      "ko": "은둔자"
+    },
+    {
+      "name": "命运之轮",
+      "excel_name": "命运之轮",
+      "file": "rider_waite_tarot_big_wheel_of_fortune_10.jpg",
+      "en": "Wheel of Fortune",
+      "ja": "運命の輪",
+      "ko": "운명의 수레바퀴"
+    },
+    {
+      "name": "正义",
+      "excel_name": "正义",
+      "file": "rider_waite_tarot_big_justice_11.jpg",
+      "en": "Justice",
+      "ja": "正義",
+      "ko": "정의"
+    },
+    {
+      "name": "倒吊人",
+      "excel_name": "倒吊人",
+      "file": "rider_waite_tarot_big_the_hanged_man_12.jpg",
+      "en": "The Hanged Man",
+      "ja": "吊るされた男",
+      "ko": "매달린 사람"
+    },
+    {
+      "name": "死神",
+      "excel_name": "死神",
+      "file": "rider_waite_tarot_big_death_13.jpg",
+      "en": "Death",
+      "ja": "死神",
+      "ko": "죽음"
+    },
+    {
+      "name": "节制",
+      "excel_name": "节制",
+      "file": "rider_waite_tarot_big_temperance_14.jpg",
+      "en": "Temperance",
+      "ja": "節制",
+      "ko": "절제"
+    },
+    {
+      "name": "恶魔",
+      "excel_name": "恶魔",
+      "file": "rider_waite_tarot_big_the_devil_15.jpg",
+      "en": "The Devil",
+      "ja": "悪魔",
+      "ko": "악마"
+    },
+    {
+      "name": "高塔",
+      "excel_name": "高塔",
+      "file": "rider_waite_tarot_big_the_tower_16.jpg",
+      "en": "The Tower",
+      "ja": "塔",
+      "ko": "탑"
+    },
+    {
+      "name": "星星",
+      "excel_name": "星星",
+      "file": "rider_waite_tarot_big_the_star_17.jpg",
+      "en": "The Star",
+      "ja": "星",
+      "ko": "별"
+    },
+    {
+      "name": "月亮",
+      "excel_name": "月亮",
+      "file": "rider_waite_tarot_big_the_moon_18.jpg",
+      "en": "The Moon",
+      "ja": "月",
+      "ko": "달"
+    },
+    {
+      "name": "太阳",
+      "excel_name": "太阳",
+      "file": "rider_waite_tarot_big_the_sun_19.jpg",
+      "en": "The Sun",
+      "ja": "太陽",
+      "ko": "태양"
+    },
+    {
+      "name": "审判",
+      "excel_name": "审判",
+      "file": "rider_waite_tarot_big_judgement_20.jpg",
+      "en": "Judgement",
+      "ja": "審判",
+      "ko": "심판"
+    },
+    {
+      "name": "世界",
+      "excel_name": "世界",
+      "file": "rider_waite_tarot_big_the_world_21.jpg",
+      "en": "The World",
+      "ja": "世界",
+      "ko": "세계"
+    },
+    {
+      "name": "权杖王牌",
+      "excel_name": "权杖王牌",
+      "file": "rider_waite_tarot_small_ace_of_wands_01.jpg",
+      "en": "Ace of Wands",
+      "ja": "ワンドのエース",
+      "ko": "완드 에이스"
+    },
+    {
+      "name": "权杖二",
+      "excel_name": "权杖二",
+      "file": "rider_waite_tarot_small_two_of_wands_02.jpg",
+      "en": "Two of Wands",
+      "ja": "ワンドの2",
+      "ko": "완드 2"
+    },
+    {
+      "name": "权杖三",
+      "excel_name": "权杖三",
+      "file": "rider_waite_tarot_small_three_of_wands_03.jpg",
+      "en": "Three of Wands",
+      "ja": "ワンドの3",
+      "ko": "완드 3"
+    },
+    {
+      "name": "权杖四",
+      "excel_name": "权杖四",
+      "file": "rider_waite_tarot_small_four_of_wands_04.jpg",
+      "en": "Four of Wands",
+      "ja": "ワンドの4",
+      "ko": "완드 4"
+    },
+    {
+      "name": "权杖五",
+      "excel_name": "权杖五",
+      "file": "rider_waite_tarot_small_five_of_wands_05.jpg",
+      "en": "Five of Wands",
+      "ja": "ワンドの5",
+      "ko": "완드 5"
+    },
+    {
+      "name": "权杖六",
+      "excel_name": "权杖六",
+      "file": "rider_waite_tarot_small_six_of_wands_06.jpg",
+      "en": "Six of Wands",
+      "ja": "ワンドの6",
+      "ko": "완드 6"
+    },
+    {
+      "name": "权杖七",
+      "excel_name": "权杖七",
+      "file": "rider_waite_tarot_small_seven_of_wands_07.jpg",
+      "en": "Seven of Wands",
+      "ja": "ワンドの7",
+      "ko": "완드 7"
+    },
+    {
+      "name": "权杖八",
+      "excel_name": "权杖八",
+      "file": "rider_waite_tarot_small_eight_of_wands_08.jpg",
+      "en": "Eight of Wands",
+      "ja": "ワンドの8",
+      "ko": "완드 8"
+    },
+    {
+      "name": "权杖九",
+      "excel_name": "权杖九",
+      "file": "rider_waite_tarot_small_nine_of_wands_09.jpg",
+      "en": "Nine of Wands",
+      "ja": "ワンドの9",
+      "ko": "완드 9"
+    },
+    {
+      "name": "权杖十",
+      "excel_name": "权杖十",
+      "file": "rider_waite_tarot_small_ten_of_wands_10.jpg",
+      "en": "Ten of Wands",
+      "ja": "ワンドの10",
+      "ko": "완드 10"
+    },
+    {
+      "name": "权杖侍从",
+      "excel_name": "权杖侍从",
+      "file": "rider_waite_tarot_small_page_of_wands_11.jpg",
+      "en": "Page of Wands",
+      "ja": "ワンドのペイジ",
+      "ko": "완드 페이지"
+    },
+    {
+      "name": "权杖骑士",
+      "excel_name": "权杖骑士",
+      "file": "rider_waite_tarot_small_knight_of_wands_12.jpg",
+      "en": "Knight of Wands",
+      "ja": "ワンドのナイト",
+      "ko": "완드 나이트"
+    },
+    {
+      "name": "权杖王后",
+      "excel_name": "权杖王后",
+      "file": "rider_waite_tarot_small_queen_of_wands_13.jpg",
+      "en": "Queen of Wands",
+      "ja": "ワンドのクイーン",
+      "ko": "완드 퀸"
+    },
+    {
+      "name": "权杖国王",
+      "excel_name": "权杖国王",
+      "file": "rider_waite_tarot_small_king_of_wands_14.jpg",
+      "en": "King of Wands",
+      "ja": "ワンドのキング",
+      "ko": "완드 킹"
+    },
+    {
+      "name": "圣杯王牌",
+      "excel_name": "圣杯王牌",
+      "file": "rider_waite_tarot_small_ace_of_cups_15.jpg",
+      "en": "Ace of Cups",
+      "ja": "カップのエース",
+      "ko": "컵 에이스"
+    },
+    {
+      "name": "圣杯二",
+      "excel_name": "圣杯二",
+      "file": "rider_waite_tarot_small_two_of_cups_16.jpg",
+      "en": "Two of Cups",
+      "ja": "カップの2",
+      "ko": "컵 2"
+    },
+    {
+      "name": "圣杯三",
+      "excel_name": "圣杯三",
+      "file": "rider_waite_tarot_small_three_of_cups_17.jpg",
+      "en": "Three of Cups",
+      "ja": "カップの3",
+      "ko": "컵 3"
+    },
+    {
+      "name": "圣杯四",
+      "excel_name": "圣杯四",
+      "file": "rider_waite_tarot_small_four_of_cups_18.jpg",
+      "en": "Four of Cups",
+      "ja": "カップの4",
+      "ko": "컵 4"
+    },
+    {
+      "name": "圣杯五",
+      "excel_name": "圣杯五",
+      "file": "rider_waite_tarot_small_five_of_cups_19.jpg",
+      "en": "Five of Cups",
+      "ja": "カップの5",
+      "ko": "컵 5"
+    },
+    {
+      "name": "圣杯六",
+      "excel_name": "圣杯六",
+      "file": "rider_waite_tarot_small_six_of_cups_20.jpg",
+      "en": "Six of Cups",
+      "ja": "カップの6",
+      "ko": "컵 6"
+    },
+    {
+      "name": "圣杯七",
+      "excel_name": "圣杯七",
+      "file": "rider_waite_tarot_small_seven_of_cups_21.jpg",
+      "en": "Seven of Cups",
+      "ja": "カップの7",
+      "ko": "컵 7"
+    },
+    {
+      "name": "圣杯八",
+      "excel_name": "圣杯八",
+      "file": "rider_waite_tarot_small_eight_of_cups_22.jpg",
+      "en": "Eight of Cups",
+      "ja": "カップの8",
+      "ko": "컵 8"
+    },
+    {
+      "name": "圣杯九",
+      "excel_name": "圣杯九",
+      "file": "rider_waite_tarot_small_nine_of_cups_23.jpg",
+      "en": "Nine of Cups",
+      "ja": "カップの9",
+      "ko": "컵 9"
+    },
+    {
+      "name": "圣杯十",
+      "excel_name": "圣杯十",
+      "file": "rider_waite_tarot_small_ten_of_cups_24.jpg",
+      "en": "Ten of Cups",
+      "ja": "カップの10",
+      "ko": "컵 10"
+    },
+    {
+      "name": "圣杯侍从",
+      "excel_name": "圣杯侍从",
+      "file": "rider_waite_tarot_small_page_of_cups_25.jpg",
+      "en": "Page of Cups",
+      "ja": "カップのペイジ",
+      "ko": "컵 페이지"
+    },
+    {
+      "name": "圣杯骑士",
+      "excel_name": "圣杯骑士",
+      "file": "rider_waite_tarot_small_knight_of_cups_26.jpg",
+      "en": "Knight of Cups",
+      "ja": "カップのナイト",
+      "ko": "컵 나이트"
+    },
+    {
+      "name": "圣杯王后",
+      "excel_name": "圣杯王后",
+      "file": "rider_waite_tarot_small_queen_of_cups_27.jpg",
+      "en": "Queen of Cups",
+      "ja": "カップのクイーン",
+      "ko": "컵 퀸"
+    },
+    {
+      "name": "圣杯国王",
+      "excel_name": "圣杯国王",
+      "file": "rider_waite_tarot_small_king_of_cups_28.jpg",
+      "en": "King of Cups",
+      "ja": "カップのキング",
+      "ko": "컵 킹"
+    },
+    {
+      "name": "宝剑王牌",
+      "excel_name": "宝剑王牌",
+      "file": "rider_waite_tarot_small_ace_of_swords_29.jpg",
+      "en": "Ace of Swords",
+      "ja": "ソードのエース",
+      "ko": "소드 에이스"
+    },
+    {
+      "name": "宝剑二",
+      "excel_name": "宝剑二",
+      "file": "rider_waite_tarot_small_two_of_swords_30.jpg",
+      "en": "Two of Swords",
+      "ja": "ソードの2",
+      "ko": "소드 2"
+    },
+    {
+      "name": "宝剑三",
+      "excel_name": "宝剑三",
+      "file": "rider_waite_tarot_small_three_of_swords_31.jpg",
+      "en": "Three of Swords",
+      "ja": "ソードの3",
+      "ko": "소드 3"
+    },
+    {
+      "name": "宝剑四",
+      "excel_name": "宝剑四",
+      "file": "rider_waite_tarot_small_four_of_swords_32.jpg",
+      "en": "Four of Swords",
+      "ja": "ソードの4",
+      "ko": "소드 4"
+    },
+    {
+      "name": "宝剑五",
+      "excel_name": "宝剑五",
+      "file": "rider_waite_tarot_small_five_of_swords_33.jpg",
+      "en": "Five of Swords",
+      "ja": "ソードの5",
+      "ko": "소드 5"
+    },
+    {
+      "name": "宝剑六",
+      "excel_name": "宝剑六",
+      "file": "rider_waite_tarot_small_six_of_swords_34.jpg",
+      "en": "Six of Swords",
+      "ja": "ソードの6",
+      "ko": "소드 6"
+    },
+    {
+      "name": "宝剑七",
+      "excel_name": "宝剑七",
+      "file": "rider_waite_tarot_small_seven_of_swords_35.jpg",
+      "en": "Seven of Swords",
+      "ja": "ソードの7",
+      "ko": "소드 7"
+    },
+    {
+      "name": "宝剑八",
+      "excel_name": "宝剑八",
+      "file": "rider_waite_tarot_small_eight_of_swords_36.jpg",
+      "en": "Eight of Swords",
+      "ja": "ソードの8",
+      "ko": "소드 8"
+    },
+    {
+      "name": "宝剑九",
+      "excel_name": "宝剑九",
+      "file": "rider_waite_tarot_small_nine_of_swords_37.jpg",
+      "en": "Nine of Swords",
+      "ja": "ソードの9",
+      "ko": "소드 9"
+    },
+    {
+      "name": "宝剑十",
+      "excel_name": "宝剑十",
+      "file": "rider_waite_tarot_small_ten_of_swords_38.jpg",
+      "en": "Ten of Swords",
+      "ja": "ソードの10",
+      "ko": "소드 10"
+    },
+    {
+      "name": "宝剑侍从",
+      "excel_name": "宝剑侍从",
+      "file": "rider_waite_tarot_small_page_of_swords_39.jpg",
+      "en": "Page of Swords",
+      "ja": "ソードのペイジ",
+      "ko": "소드 페이지"
+    },
+    {
+      "name": "宝剑骑士",
+      "excel_name": "宝剑骑士",
+      "file": "rider_waite_tarot_small_knight_of_swords_40.jpg",
+      "en": "Knight of Swords",
+      "ja": "ソードのナイト",
+      "ko": "소드 나이트"
+    },
+    {
+      "name": "宝剑王后",
+      "excel_name": "宝剑王后",
+      "file": "rider_waite_tarot_small_queen_of_swords_41.jpg",
+      "en": "Queen of Swords",
+      "ja": "ソードのクイーン",
+      "ko": "소드 퀸"
+    },
+    {
+      "name": "宝剑国王",
+      "excel_name": "宝剑国王",
+      "file": "rider_waite_tarot_small_king_of_swords_42.jpg",
+      "en": "King of Swords",
+      "ja": "ソードのキング",
+      "ko": "소드 킹"
+    },
+    {
+      "name": "星币王牌",
+      "excel_name": "星币王牌",
+      "file": "rider_waite_tarot_small_ace_of_pentacles_43.jpg",
+      "en": "Ace of Pentacles",
+      "ja": "ペンタクルのエース",
+      "ko": "펜타클 에이스"
+    },
+    {
+      "name": "星币二",
+      "excel_name": "星币二",
+      "file": "rider_waite_tarot_small_two_of_pentacles_44.jpg",
+      "en": "Two of Pentacles",
+      "ja": "ペンタクルの2",
+      "ko": "펜타클 2"
+    },
+    {
+      "name": "星币三",
+      "excel_name": "星币三",
+      "file": "rider_waite_tarot_small_three_of_pentacles_45.jpg",
+      "en": "Three of Pentacles",
+      "ja": "ペンタクルの3",
+      "ko": "펜타클 3"
+    },
+    {
+      "name": "星币四",
+      "excel_name": "星币四",
+      "file": "rider_waite_tarot_small_four_of_pentacles_46.jpg",
+      "en": "Four of Pentacles",
+      "ja": "ペンタクルの4",
+      "ko": "펜타클 4"
+    },
+    {
+      "name": "星币五",
+      "excel_name": "星币五",
+      "file": "rider_waite_tarot_small_five_of_pentacles_47.jpg",
+      "en": "Five of Pentacles",
+      "ja": "ペンタクルの5",
+      "ko": "펜타클 5"
+    },
+    {
+      "name": "星币六",
+      "excel_name": "星币六",
+      "file": "rider_waite_tarot_small_six_of_pentacles_48.jpg",
+      "en": "Six of Pentacles",
+      "ja": "ペンタクルの6",
+      "ko": "펜타클 6"
+    },
+    {
+      "name": "星币七",
+      "excel_name": "星币七",
+      "file": "rider_waite_tarot_small_seven_of_pentacles_49.jpg",
+      "en": "Seven of Pentacles",
+      "ja": "ペンタクルの7",
+      "ko": "펜타클 7"
+    },
+    {
+      "name": "星币八",
+      "excel_name": "星币八",
+      "file": "rider_waite_tarot_small_eight_of_pentacles_50.jpg",
+      "en": "Eight of Pentacles",
+      "ja": "ペンタクルの8",
+      "ko": "펜타클 8"
+    },
+    {
+      "name": "星币九",
+      "excel_name": "星币九",
+      "file": "rider_waite_tarot_small_nine_of_pentacles_51.jpg",
+      "en": "Nine of Pentacles",
+      "ja": "ペンタクルの9",
+      "ko": "펜타클 9"
+    },
+    {
+      "name": "星币十",
+      "excel_name": "星币十",
+      "file": "rider_waite_tarot_small_ten_of_pentacles_52.jpg",
+      "en": "Ten of Pentacles",
+      "ja": "ペンタクルの10",
+      "ko": "펜타클 10"
+    },
+    {
+      "name": "星币侍从",
+      "excel_name": "星币侍从",
+      "file": "rider_waite_tarot_small_page_of_pentacles_53.jpg",
+      "en": "Page of Pentacles",
+      "ja": "ペンタクルのペイジ",
+      "ko": "펜타클 페이지"
+    },
+    {
+      "name": "星币骑士",
+      "excel_name": "星币骑士",
+      "file": "rider_waite_tarot_small_knight_of_pentacles_54.jpg",
+      "en": "Knight of Pentacles",
+      "ja": "ペンタクルのナイト",
+      "ko": "펜타클 나이트"
+    },
+    {
+      "name": "星币王后",
+      "excel_name": "星币王后",
+      "file": "rider_waite_tarot_small_queen_of_pentacles_55.jpg",
+      "en": "Queen of Pentacles",
+      "ja": "ペンタクルのクイーン",
+      "ko": "펜타클 퀸"
+    },
+    {
+      "name": "星币国王",
+      "excel_name": "星币国王",
+      "file": "rider_waite_tarot_small_king_of_pentacles_56.jpg",
+      "en": "King of Pentacles",
+      "ja": "ペンタクルのキング",
+      "ko": "펜타클 킹"
+    }
+  ],
+  "questions": [
+    {
+      "question_id": "featured_01",
+      "pool": "featured",
+      "category": "",
+      "body": "最近的我，最需要关注什么？",
+      "sort_order": 1
+    },
+    {
+      "question_id": "featured_02",
+      "pool": "featured",
+      "category": "",
+      "body": "TA 对这段关系的真实态度是什么？",
+      "sort_order": 2
+    },
+    {
+      "question_id": "featured_03",
+      "pool": "featured",
+      "category": "",
+      "body": "接下来三个月，我的事业会有哪些新机会？",
+      "sort_order": 3
+    },
+    {
+      "question_id": "featured_04",
+      "pool": "featured",
+      "category": "",
+      "body": "我现在的情绪困扰，背后隐藏着什么？",
+      "sort_order": 4
+    },
+    {
+      "question_id": "featured_05",
+      "pool": "featured",
+      "category": "",
+      "body": "我和 TA 接下来一个月的关系会如何发展？",
+      "sort_order": 5
+    },
+    {
+      "question_id": "featured_06",
+      "pool": "featured",
+      "category": "",
+      "body": "为了实现这个愿望，我接下来可以做些什么？",
+      "sort_order": 6
+    },
+    {
+      "question_id": "featured_07",
+      "pool": "featured",
+      "category": "",
+      "body": "最近有什么值得我留意的新机会？",
+      "sort_order": 7
+    },
+    {
+      "question_id": "featured_08",
+      "pool": "featured",
+      "category": "",
+      "body": "我目前的职业方向适合继续坚持吗？",
+      "sort_order": 8
+    },
+    {
+      "question_id": "featured_09",
+      "pool": "featured",
+      "category": "",
+      "body": "这段关系中，有哪些我还没有看清的事情？",
+      "sort_order": 9
+    },
+    {
+      "question_id": "featured_10",
+      "pool": "featured",
+      "category": "",
+      "body": "接下来三个月，我的财务状况会有什么变化？",
+      "sort_order": 10
+    },
+    {
+      "question_id": "featured_11",
+      "pool": "featured",
+      "category": "",
+      "body": "我应该如何改善目前的人际关系？",
+      "sort_order": 11
+    },
+    {
+      "question_id": "featured_12",
+      "pool": "featured",
+      "category": "",
+      "body": "如果我主动迈出一步，事情会有什么变化？",
+      "sort_order": 12
+    },
+    {
+      "question_id": "featured_13",
+      "pool": "featured",
+      "category": "",
+      "body": "我身上有哪些尚未被发现的优势？",
+      "sort_order": 13
+    },
+    {
+      "question_id": "featured_14",
+      "pool": "featured",
+      "category": "",
+      "body": "接下来一个月，我的生活会出现什么新的可能？",
+      "sort_order": 14
+    },
+    {
+      "question_id": "featured_15",
+      "pool": "featured",
+      "category": "",
+      "body": "现在的我，最需要听见什么样的提醒？",
+      "sort_order": 15
+    },
+    {
+      "question_id": "backup_01",
+      "pool": "backup",
+      "category": "感情关系",
+      "body": "TA 现在是如何看待我们的关系的？",
+      "sort_order": 1
+    },
+    {
+      "question_id": "backup_02",
+      "pool": "backup",
+      "category": "感情关系",
+      "body": "我们之间最大的阻碍是什么？",
+      "sort_order": 2
+    },
+    {
+      "question_id": "backup_03",
+      "pool": "backup",
+      "category": "感情关系",
+      "body": "这段关系还有继续发展的空间吗？",
+      "sort_order": 3
+    },
+    {
+      "question_id": "backup_04",
+      "pool": "backup",
+      "category": "感情关系",
+      "body": "我应该主动表达自己的感受吗？",
+      "sort_order": 4
+    },
+    {
+      "question_id": "backup_05",
+      "pool": "backup",
+      "category": "感情关系",
+      "body": "我在这段感情中真正需要的是什么？",
+      "sort_order": 5
+    },
+    {
+      "question_id": "backup_06",
+      "pool": "backup",
+      "category": "感情关系",
+      "body": "接下来三个月，我的感情生活会有什么变化？",
+      "sort_order": 6
+    },
+    {
+      "question_id": "backup_07",
+      "pool": "backup",
+      "category": "事业与工作",
+      "body": "我目前的职业选择适合长期发展吗？",
+      "sort_order": 7
+    },
+    {
+      "question_id": "backup_08",
+      "pool": "backup",
+      "category": "事业与工作",
+      "body": "如果我考虑换工作，应该关注哪些方面？",
+      "sort_order": 8
+    },
+    {
+      "question_id": "backup_09",
+      "pool": "backup",
+      "category": "事业与工作",
+      "body": "接下来三个月，我的事业发展重点是什么？",
+      "sort_order": 9
+    },
+    {
+      "question_id": "backup_10",
+      "pool": "backup",
+      "category": "事业与工作",
+      "body": "我应该如何提升自己在工作中的竞争力？",
+      "sort_order": 10
+    },
+    {
+      "question_id": "backup_11",
+      "pool": "backup",
+      "category": "事业与工作",
+      "body": "目前有哪些职业机会值得我关注？",
+      "sort_order": 11
+    },
+    {
+      "question_id": "backup_12",
+      "pool": "backup",
+      "category": "事业与工作",
+      "body": "我现在的努力会在哪些方面带来改变？",
+      "sort_order": 12
+    },
+    {
+      "question_id": "backup_13",
+      "pool": "backup",
+      "category": "学业与考试",
+      "body": "我接下来的学习状态会如何变化？",
+      "sort_order": 13
+    },
+    {
+      "question_id": "backup_14",
+      "pool": "backup",
+      "category": "学业与考试",
+      "body": "我应该如何调整目前的学习方法？",
+      "sort_order": 14
+    },
+    {
+      "question_id": "backup_15",
+      "pool": "backup",
+      "category": "学业与考试",
+      "body": "这段时间，我最需要突破的学习瓶颈是什么？",
+      "sort_order": 15
+    },
+    {
+      "question_id": "backup_16",
+      "pool": "backup",
+      "category": "学业与考试",
+      "body": "面对即将到来的考试，我应该重点准备什么？",
+      "sort_order": 16
+    },
+    {
+      "question_id": "backup_17",
+      "pool": "backup",
+      "category": "学业与考试",
+      "body": "我适合继续目前的专业方向吗？",
+      "sort_order": 17
+    },
+    {
+      "question_id": "backup_18",
+      "pool": "backup",
+      "category": "学业与考试",
+      "body": "如何才能更好地平衡学习与生活？",
+      "sort_order": 18
+    },
+    {
+      "question_id": "backup_19",
+      "pool": "backup",
+      "category": "自我成长",
+      "body": "我为什么总是容易陷入自我怀疑？",
+      "sort_order": 19
+    },
+    {
+      "question_id": "backup_20",
+      "pool": "backup",
+      "category": "自我成长",
+      "body": "我现在最需要放下的是什么？",
+      "sort_order": 20
+    },
+    {
+      "question_id": "backup_21",
+      "pool": "backup",
+      "category": "自我成长",
+      "body": "我有哪些尚未发现的潜在优势？",
+      "sort_order": 21
+    },
+    {
+      "question_id": "backup_22",
+      "pool": "backup",
+      "category": "自我成长",
+      "body": "我应该如何建立更稳定的内心状态？",
+      "sort_order": 22
+    },
+    {
+      "question_id": "backup_23",
+      "pool": "backup",
+      "category": "自我成长",
+      "body": "最近反复出现的情绪在提醒我什么？",
+      "sort_order": 23
+    },
+    {
+      "question_id": "backup_24",
+      "pool": "backup",
+      "category": "自我成长",
+      "body": "未来三个月，我最值得投入精力的方向是什么？",
+      "sort_order": 24
+    },
+    {
+      "question_id": "backup_25",
+      "pool": "backup",
+      "category": "人际关系",
+      "body": "我应该如何处理目前的人际关系困扰？",
+      "sort_order": 25
+    },
+    {
+      "question_id": "backup_26",
+      "pool": "backup",
+      "category": "人际关系",
+      "body": "身边哪些关系值得我花更多精力维护？",
+      "sort_order": 26
+    },
+    {
+      "question_id": "backup_27",
+      "pool": "backup",
+      "category": "人际关系",
+      "body": "我在人际交往中容易忽略什么？",
+      "sort_order": 27
+    },
+    {
+      "question_id": "backup_28",
+      "pool": "backup",
+      "category": "人际关系",
+      "body": "我应该如何表达自己的真实想法？",
+      "sort_order": 28
+    },
+    {
+      "question_id": "backup_29",
+      "pool": "backup",
+      "category": "人际关系",
+      "body": "这段友谊接下来会如何发展？",
+      "sort_order": 29
+    },
+    {
+      "question_id": "backup_30",
+      "pool": "backup",
+      "category": "人际关系",
+      "body": "我该如何面对与他人的意见分歧？",
+      "sort_order": 30
+    },
+    {
+      "question_id": "backup_31",
+      "pool": "backup",
+      "category": "生活与选择",
+      "body": "如果我选择另一条道路，会有哪些不同？",
+      "sort_order": 31
+    },
+    {
+      "question_id": "backup_32",
+      "pool": "backup",
+      "category": "生活与选择",
+      "body": "目前摆在我面前的两个选择，哪个更值得考虑？",
+      "sort_order": 32
+    },
+    {
+      "question_id": "backup_33",
+      "pool": "backup",
+      "category": "生活与选择",
+      "body": "我现在最应该优先处理的事情是什么？",
+      "sort_order": 33
+    },
+    {
+      "question_id": "backup_34",
+      "pool": "backup",
+      "category": "生活与选择",
+      "body": "最近有什么值得我留意的新机会？",
+      "sort_order": 34
+    },
+    {
+      "question_id": "backup_35",
+      "pool": "backup",
+      "category": "生活与选择",
+      "body": "接下来一个月，我的生活重心应该放在哪里？",
+      "sort_order": 35
+    },
+    {
+      "question_id": "backup_36",
+      "pool": "backup",
+      "category": "生活与选择",
+      "body": "如果我想做出改变，第一步应该从哪里开始？",
+      "sort_order": 36
+    }
+  ],
+  "more_per_page": 5,
+  "deck": {
+    "code": "rider-waite",
+    "name_zh": "经典韦特塔罗",
+    "name_en": "Rider-Waite Tarot",
+    "name_ja": "クラシック・ライダー・ウェイト・タロット",
+    "name_ko": "클래식 라이더 웨이트 타로"
+  }
+}

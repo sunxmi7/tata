@@ -181,7 +181,7 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 	if r.ContentLength > 0 {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
-	item, err := a.loadReading(r.Context(), id)
+	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err
 	}

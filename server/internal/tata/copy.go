@@ -127,7 +127,7 @@ func (a *App) cardConfig(ctx context.Context) map[string]string {
 	return cfg
 }
 
-func (a *App) applyCardThumbnails(ctx context.Context, items ...map[string]any) {
+func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ...map[string]any) {
 	cfg := a.cardConfig(ctx)
 	for _, item := range items {
 		if item == nil {
@@ -137,14 +137,24 @@ func (a *App) applyCardThumbnails(ctx context.Context, items ...map[string]any) 
 		if name == "" {
 			name = firstCardName(item["cards"])
 		}
-		item["card_thumbnail"] = resolveCardThumbnail(cfg, name)
+		item["card_thumbnail"] = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
+		if _, ok := item["yi"]; !ok && knownCardName(name) {
+			item["yi"] = nullableConfig(cfg[cardYiKey(name)])
+		}
 	}
 }
 
-func (a *App) attachDailyHome(ctx context.Context, item map[string]any, target, business string) {
+func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[string]any, target, business string) {
 	name := firstCardName(item["cards"])
 	cfg := a.cardConfig(ctx)
-	attachDailyHome(item, target, business, nullableConfig(cfg[cardYiKey(name)]), resolveCardThumbnail(cfg, name))
+	yi := item["yi"]
+	thumb := item["card_thumbnail"]
+	if knownCardName(name) {
+		yi = nullableConfig(cfg[cardYiKey(name)])
+		thumb = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
+	}
+	attachDailyHome(item, target, business, yi, thumb)
+	localizeReading(ctx, item)
 }
 
 func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
@@ -180,7 +190,7 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 				"card_name":      card.Name,
 				"yi":             nullableConfig(cfg[cardYiKey(card.Name)]),
 				"thumbnail":      nullableConfig(cfg[cardThumbnailKey(card.Name)]),
-				"card_thumbnail": resolveCardThumbnail(cfg, card.Name),
+				"card_thumbnail": absoluteAssetAny(r, resolveCardThumbnail(cfg, card.Name)),
 			})
 		}
 		writeOK(w, map[string]any{

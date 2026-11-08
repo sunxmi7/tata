@@ -19,6 +19,7 @@ func TestErrorCodes(t *testing.T) {
 	if err != nil {
 		t.Skipf("no database: %v", err)
 	}
+	protectLiveAIConfig(t, store)
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()

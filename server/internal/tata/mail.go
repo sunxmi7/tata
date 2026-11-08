@@ -73,8 +73,6 @@ func emailCodeCopy(scene, code string) (subject, body string) {
 	switch scene {
 	case "register":
 		purpose = "注册账号"
-	case "login":
-		purpose = "登录账号"
 	case "bind":
 		purpose = "绑定邮箱"
 	}

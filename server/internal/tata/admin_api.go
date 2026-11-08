@@ -20,7 +20,7 @@ func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
-		writeErr(w, http.StatusOK, "请求字段不正确")
+		writeErr(w, r, http.StatusOK, "请求字段不正确")
 		return
 	}
 	var id int64
@@ -28,17 +28,17 @@ func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {
 	var disabled bool
 	err := a.Store.QueryRow(r.Context(), `SELECT id, password_hash, role, disabled FROM operators WHERE username=$1`, req.Username).Scan(&id, &hash, &role, &disabled)
 	if err != nil || disabled || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		writeErr(w, http.StatusOK, "用户名或密码错误")
+		writeErr(w, r, http.StatusOK, "用户名或密码错误")
 		return
 	}
 	access, err := a.signAccess("admin", id, "", role)
 	if err != nil {
-		writeErr(w, http.StatusOK, "内部错误")
+		writeErr(w, r, http.StatusOK, "内部错误")
 		return
 	}
 	refresh, err := a.issueRefresh(r.Context(), "admin", id)
 	if err != nil {
-		writeErr(w, http.StatusOK, "内部错误")
+		writeErr(w, r, http.StatusOK, "内部错误")
 		return
 	}
 	name := "管理员"
@@ -67,7 +67,7 @@ func (a *App) adminRefresh(w http.ResponseWriter, r *http.Request) {
 		RefreshToken string `json:"refreshToken"`
 	}
 	if err := decode(r, &req); err != nil || req.RefreshToken == "" {
-		writeErr(w, http.StatusUnauthorized, "刷新令牌无效")
+		writeErr(w, r, http.StatusUnauthorized, "刷新令牌无效")
 		return
 	}
 	var aud string
@@ -76,18 +76,18 @@ func (a *App) adminRefresh(w http.ResponseWriter, r *http.Request) {
 	var revoked bool
 	err := a.Store.QueryRow(r.Context(), `SELECT audience, subject_id, expires_at, revoked FROM refresh_tokens WHERE id=$1`, req.RefreshToken).Scan(&aud, &sub, &exp, &revoked)
 	if err != nil || aud != "admin" || revoked || time.Now().After(exp) {
-		writeErr(w, http.StatusUnauthorized, "刷新令牌无效")
+		writeErr(w, r, http.StatusUnauthorized, "刷新令牌无效")
 		return
 	}
 	var role string
 	var disabled bool
 	if err := a.Store.QueryRow(r.Context(), `SELECT role, disabled FROM operators WHERE id=$1`, sub).Scan(&role, &disabled); err != nil || disabled {
-		writeErr(w, http.StatusUnauthorized, "账号已停用")
+		writeErr(w, r, http.StatusUnauthorized, "账号已停用")
 		return
 	}
 	access, err := a.signAccess("admin", sub, "", role)
 	if err != nil {
-		writeErr(w, http.StatusOK, "内部错误")
+		writeErr(w, r, http.StatusOK, "内部错误")
 		return
 	}
 	writeOK(w, access)
@@ -431,12 +431,23 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	if followupReady {
 		followup = followupLimit
 	}
+	dailyFree, err := loadDailyFreeCount(r.Context(), a.Store)
+	if err != nil {
+		return err
+	}
+	dailySlot, err := loadDailySlotCount(r.Context(), a.Store)
+	if err != nil {
+		return err
+	}
 	writeOK(w, map[string]any{
 		"reset_at":                "北京时间 08:00",
-		"daily_free_count":        1,
+		"daily_free_count":        dailyFree,
+		"daily_slot_count":        dailySlot,
 		"shared_scope":            "全玩法共用：注册奖励，今日免费次数，人工补发免费次数，然后钻石",
 		"failure_policy":          "已扣不退",
 		"editable":                false,
+		"daily_free_editable":     true,
+		"daily_slot_editable":     true,
 		"followup_limit":          followup,
 		"followup_limit_editable": true,
 		"diamond_cost":            diamondCost,
@@ -456,28 +467,48 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &raw); err != nil {
 		return err
 	}
-	if _, ok := raw["daily_free_count"]; ok {
-		return biz("本期不可修改重置时刻或每日次数")
-	}
 	if _, ok := raw["reset_at"]; ok {
-		return biz("本期不可修改重置时刻或每日次数")
+		return biz("重置时刻不可修改")
 	}
-	limitRaw, ok := raw["followup_limit"]
-	if !ok {
-		return biz("本期不可修改重置时刻或每日次数")
-	}
-	if string(limitRaw) == "null" {
-		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=NULL, updated_at=now() WHERE id=1`); err != nil {
+	changed := false
+	if rawCount, ok := raw["daily_free_count"]; ok {
+		var n int
+		if err := json.Unmarshal(rawCount, &n); err != nil || n <= 0 {
+			return biz("每日免费次数须为正整数")
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET daily_free_count=$1, updated_at=now() WHERE id=1`, n); err != nil {
 			return err
 		}
-	} else {
-		var limit int
-		if err := json.Unmarshal(limitRaw, &limit); err != nil || limit <= 0 {
-			return biz("追问次数上限须为正整数，或 null 表示不限制")
+		changed = true
+	}
+	if rawCount, ok := raw["daily_slot_count"]; ok {
+		var n int
+		if err := json.Unmarshal(rawCount, &n); err != nil || n <= 0 {
+			return biz("今日一牌次数须为正整数")
 		}
-		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=$1, updated_at=now() WHERE id=1`, limit); err != nil {
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET daily_slot_count=$1, updated_at=now() WHERE id=1`, n); err != nil {
 			return err
 		}
+		changed = true
+	}
+	if limitRaw, ok := raw["followup_limit"]; ok {
+		if string(limitRaw) == "null" {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=NULL, updated_at=now() WHERE id=1`); err != nil {
+				return err
+			}
+		} else {
+			var limit int
+			if err := json.Unmarshal(limitRaw, &limit); err != nil || limit <= 0 {
+				return biz("追问次数上限须为正整数，或 null 表示不限制")
+			}
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=$1, updated_at=now() WHERE id=1`, limit); err != nil {
+				return err
+			}
+		}
+		changed = true
+	}
+	if !changed {
+		return biz("没有可修改的额度参数")
 	}
 	return a.adminQuota(w, r)
 }

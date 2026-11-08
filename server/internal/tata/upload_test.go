@@ -82,3 +82,24 @@ func TestUploadDriverInvalid(t *testing.T) {
 		t.Fatalf("invalid driver: %v", err)
 	}
 }
+
+func TestAbsoluteAssetURL(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/app/v1/spreads", nil)
+	req.Host = "127.0.0.1:8080"
+	if got := absoluteAssetURL(req, "/uploads/card-default.png"); got != "http://127.0.0.1:8080/uploads/card-default.png" {
+		t.Fatalf("relative: %s", got)
+	}
+	if got := absoluteAssetURL(req, "https://cdn.example.test/a.png"); got != "https://cdn.example.test/a.png" {
+		t.Fatalf("cdn: %s", got)
+	}
+	if got := absoluteAssetURL(req, ""); got != "" {
+		t.Fatalf("empty: %s", got)
+	}
+	if got := absoluteAssetURL(nil, "/uploads/card-default.png"); got != "/uploads/card-default.png" {
+		t.Fatalf("nil request: %s", got)
+	}
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if got := absoluteAssetURL(req, "/uploads/card-default.png"); got != "https://127.0.0.1:8080/uploads/card-default.png" {
+		t.Fatalf("forwarded: %s", got)
+	}
+}

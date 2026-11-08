@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+func wantsSSE(r *http.Request) bool {
+	if q := strings.TrimSpace(r.URL.Query().Get("stream")); q == "1" || strings.EqualFold(q, "true") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
+}
+
 // sseStart 切换响应为 SSE 并返回一个发送函数。每次发送后立即 flush。
 // 调用前不得已向 w 写过普通 JSON（额度拦截等前置判断要先于此函数返回）。
 func sseStart(w http.ResponseWriter) func(event string, payload any) {
@@ -64,17 +71,7 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || stop {
 		return err
 	}
-	send := sseStart(w)
-	item, genErr := a.generateStream(r.Context(), id, func(chunk string) error {
-		send("delta", map[string]any{"text": chunk})
-		return r.Context().Err()
-	})
-	if genErr != nil {
-		send("error", map[string]any{"message": genErr.Error()})
-		return nil
-	}
-	send("done", map[string]any{"reading": item})
-	return nil
+	return a.streamInterpretJob(w, r, id, nil)
 }
 
 // appFollowupStream 是追问的流式版本，仅支持延续追问（continuation=true）。
@@ -153,7 +150,7 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 		if err := tx.Commit(r.Context()); err != nil {
 			return err
 		}
-		writeQuotaBlock(w, decision, id)
+		writeQuotaBlock(w, r, decision, id)
 		return nil
 	}
 	if err := ensureUserTurn(r.Context(), tx, id, turn, text); err != nil {
@@ -162,18 +159,157 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
+	run, err := a.ensureFollowupJob(r.Context(), id, uid, turn, text)
+	if err != nil {
+		return err
+	}
 	send := sseStart(w)
-	body, genErr := a.answerFollowupStreaming(r.Context(), id, uid, turn, text, func(chunk string) error {
-		send("delta", map[string]any{"text": chunk})
-		return r.Context().Err()
+	a.attachJobSSE(r.Context(), send, run, func() error {
+		body, _ := run.result().(map[string]any)
+		if body == nil {
+			var waitErr error
+			body, waitErr = a.answerFollowup(r.Context(), id, uid, turn, text)
+			if waitErr != nil {
+				return waitErr
+			}
+		}
+		body["quota_outcome"] = decision.Status
+		body["entitlement"] = decision.Entitlement
+		body["charged"] = decision.Status == quotaCharged && decision.Entitlement != entTrial
+		send("done", map[string]any{"followup": body})
+		return nil
 	})
-	if genErr != nil {
-		send("error", map[string]any{"message": genErr.Error()})
+	return nil
+}
+
+func (a *App) streamGenerate(w http.ResponseWriter, r *http.Request, id int64, wrap func(map[string]any) map[string]any) error {
+	return a.streamInterpretJob(w, r, id, wrap)
+}
+
+func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
+	id, target, business, existing, written, err := a.openDaily(w, r, true)
+	if err != nil || written {
+		return err
+	}
+	if existing != nil {
+		status, _ := existing["status"].(string)
+		if status == "COMPLETED" {
+			send := sseStart(w)
+			a.attachDailyHome(r.Context(), r, existing, target, business)
+			send("done", map[string]any{"reading": existing, "reused": true})
+			return nil
+		}
+		if status != "CARDS_FIXED" && status != "FAILED_RETRYABLE" {
+			send := sseStart(w)
+			send("error", map[string]any{"message": T(r.Context(), "当日今日一牌名额已占用")})
+			return nil
+		}
+		id = asInt64(existing["id"])
+	}
+	return a.streamGenerate(w, r, id, func(item map[string]any) map[string]any {
+		a.attachDailyHome(r.Context(), r, item, target, business)
+		return item
+	})
+}
+
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	default:
+		return 0
+	}
+}
+
+func (a *App) appDetectStream(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	item, err := a.loadReadingAbs(r.Context(), r, id)
+	if err != nil {
+		return err
+	}
+	question, _ := item["question"].(string)
+	run, err := a.ensureDetectJob(r.Context(), id, question)
+	if err != nil {
+		return err
+	}
+	send := sseStart(w)
+	a.attachJobSSE(r.Context(), send, run, func() error {
+		payload, _ := run.result().(map[string]any)
+		if payload == nil {
+			payload = map[string]any{"text": run.snapshot(), "suggestions": 3}
+		}
+		send("done", payload)
+		return nil
+	})
+	return nil
+}
+
+func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) error {
+	uid, year, err := a.yearlyActor(r)
+	if err != nil {
+		return err
+	}
+	var req struct{}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if err := a.requireYearlyUnlocked(r.Context(), uid, year); err != nil {
+		return err
+	}
+	if err := a.ensureYearlyRow(r.Context(), uid, year, ""); err != nil {
+		return err
+	}
+	row, err := a.loadYearlyRow(r.Context(), uid, year)
+	if err != nil {
+		return err
+	}
+	if !row.profileAt.Valid {
+		return biz("请先填写基本信息")
+	}
+	if row.rhythmJSON == "" {
+		return biz("请先选完 12 张全年节奏牌")
+	}
+	if row.domainJSON == "" {
+		return biz("请先抽完六大领域牌")
+	}
+	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
+		view, err := a.buildYearlyReport(r.Context(), uid, year, r)
+		if err != nil {
+			return err
+		}
+		send := sseStart(w)
+		send("done", map[string]any{"report": view, "reused": true})
 		return nil
 	}
-	body["quota_outcome"] = decision.Status
-	body["entitlement"] = decision.Entitlement
-	body["charged"] = decision.Status == quotaCharged && decision.Entitlement != entTrial
-	send("done", map[string]any{"followup": body})
+	run, err := a.ensureYearlyJob(r.Context(), uid, year, row)
+	if err != nil {
+		return err
+	}
+	send := sseStart(w)
+	a.attachJobSSE(r.Context(), send, run, func() error {
+		view, err := a.buildYearlyReport(r.Context(), uid, year, r)
+		if err != nil {
+			return err
+		}
+		send("done", map[string]any{"report": view})
+		return nil
+	})
 	return nil
 }

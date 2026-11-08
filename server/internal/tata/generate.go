@@ -4,147 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
 
 func (a *App) generate(ctx context.Context, id int64, adminRetry bool) (map[string]any, error) {
-	var status, kind string
-	var userID *int64
-	var cards, question *string
-	var quotaConsumed, first, rewardConsumed bool
-	err := a.Store.QueryRow(ctx, `SELECT status, type, user_id, cards, question, quota_consumed, first_experience, reward_consumed FROM readings WHERE id=$1 AND deleted_at IS NULL`, id).
-		Scan(&status, &kind, &userID, &cards, &question, &quotaConsumed, &first, &rewardConsumed)
-	if err != nil {
-		return nil, biz("记录不存在")
-	}
-	if adminRetry && status != "FAILED_RETRYABLE" {
-		return nil, biz("只有失败可重试的记录能重试")
-	}
-	if !adminRetry && status != "CARDS_FIXED" && status != "FAILED_RETRYABLE" {
-		return nil, biz("当前状态不能生成解读")
-	}
-	if userID == nil {
-		return nil, biz("获取答案前必须登录")
-	}
-	var settled bool
-	if err := a.Store.QueryRow(ctx, `SELECT quota_settled FROM readings WHERE id=$1`, id).Scan(&settled); err != nil {
-		return nil, err
-	}
-	if !quotaConsumed && !rewardConsumed && !settled {
-		return nil, biz("额度未扣减，记录已保留，不继续生成")
-	}
-	_ = first
-	if cards == nil || *cards == "" {
-		return nil, biz("牌面尚未固定")
-	}
-	vendorName, model, _, _, _, err := a.binding(ctx, taskFor(kind))
-	if err != nil {
-		_, _ = a.Store.Exec(ctx, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2 AND status IN ('CARDS_FIXED','FAILED_RETRYABLE')`, "未绑定供应商", id)
-		return nil, err
-	}
-	unlock, err := a.lockGen(id)
+	run, err := a.ensureInterpretJob(ctx, id, adminRetry)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
-	tag, err := a.Store.Exec(ctx, `UPDATE readings SET status='INTERPRETING', vendor_name=$1, model_name=$2, fail_reason=NULL, updated_at=now() WHERE id=$3 AND status IN ('CARDS_FIXED','FAILED_RETRYABLE')`,
-		vendorName, model, id)
+	if err := run.wait(ctx); err != nil {
+		return nil, err
+	}
+	item, err := a.loadReading(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, biz("生成进行中")
-	}
-	prompt := buildPrompt(kind, deref(question), *cards)
-	if kind == "tarotist" {
-		var tid *int64
-		_ = a.Store.QueryRow(ctx, `SELECT tarotist_id FROM readings WHERE id=$1`, id).Scan(&tid)
-		if tid != nil {
-			var name, persona, voice, banned, ask string
-			_ = a.Store.QueryRow(ctx, `SELECT name, persona, voice, banned, ask_style FROM tarotists WHERE id=$1`, *tid).Scan(&name, &persona, &voice, &banned, &ask)
-			prompt = "共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n人设：" + name + "。" + persona + "\n语音：" + voice + "。禁止：" + banned + "。追问：" + ask + "\n" + buildPrompt(kind, deref(question), *cards)
-		}
-	}
-	vendorName, model, text, callErr := a.runEino(ctx, taskFor(kind), prompt)
-	if callErr != nil {
-		_, _ = a.Store.Exec(ctx, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, callErr.Error(), id)
-		return nil, biz("解读失败，可重试，未重新扣费")
-	}
-	_, err = a.Store.Exec(ctx, `UPDATE readings SET status='COMPLETED', interpretation=$1, fail_reason=NULL, updated_at=now() WHERE id=$2`, text, id)
-	if err != nil {
-		return nil, err
-	}
-	return a.loadReading(ctx, id)
-}
-
-// generateStream 与 generate 同样的状态机与落库，只把模型调用换成流式：
-// 每个增量片段回调 onChunk（供 SSE 下发），全部收完后一次性写入 interpretation 并置 COMPLETED。
-func (a *App) generateStream(ctx context.Context, id int64, onChunk func(string) error) (map[string]any, error) {
-	var status, kind string
-	var userID *int64
-	var cards, question *string
-	var quotaConsumed, first, rewardConsumed bool
-	err := a.Store.QueryRow(ctx, `SELECT status, type, user_id, cards, question, quota_consumed, first_experience, reward_consumed FROM readings WHERE id=$1 AND deleted_at IS NULL`, id).
-		Scan(&status, &kind, &userID, &cards, &question, &quotaConsumed, &first, &rewardConsumed)
-	if err != nil {
-		return nil, biz("记录不存在")
-	}
-	if status != "CARDS_FIXED" && status != "FAILED_RETRYABLE" {
-		return nil, biz("当前状态不能生成解读")
-	}
-	if userID == nil {
-		return nil, biz("获取答案前必须登录")
-	}
-	var settled bool
-	if err := a.Store.QueryRow(ctx, `SELECT quota_settled FROM readings WHERE id=$1`, id).Scan(&settled); err != nil {
-		return nil, err
-	}
-	if !quotaConsumed && !rewardConsumed && !settled {
-		return nil, biz("额度未扣减，记录已保留，不继续生成")
-	}
-	_ = first
-	if cards == nil || *cards == "" {
-		return nil, biz("牌面尚未固定")
-	}
-	vendorName, model, _, _, _, err := a.binding(ctx, taskFor(kind))
-	if err != nil {
-		_, _ = a.Store.Exec(ctx, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2 AND status IN ('CARDS_FIXED','FAILED_RETRYABLE')`, "未绑定供应商", id)
-		return nil, err
-	}
-	unlock, err := a.lockGen(id)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	tag, err := a.Store.Exec(ctx, `UPDATE readings SET status='INTERPRETING', vendor_name=$1, model_name=$2, fail_reason=NULL, updated_at=now() WHERE id=$3 AND status IN ('CARDS_FIXED','FAILED_RETRYABLE')`,
-		vendorName, model, id)
-	if err != nil {
-		return nil, err
-	}
-	if tag.RowsAffected() == 0 {
-		return nil, biz("生成进行中")
-	}
-	prompt := buildPrompt(kind, deref(question), *cards)
-	if kind == "tarotist" {
-		var tid *int64
-		_ = a.Store.QueryRow(ctx, `SELECT tarotist_id FROM readings WHERE id=$1`, id).Scan(&tid)
-		if tid != nil {
-			var name, persona, voice, banned, ask string
-			_ = a.Store.QueryRow(ctx, `SELECT name, persona, voice, banned, ask_style FROM tarotists WHERE id=$1`, *tid).Scan(&name, &persona, &voice, &banned, &ask)
-			prompt = "共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n人设：" + name + "。" + persona + "\n语音：" + voice + "。禁止：" + banned + "。追问：" + ask + "\n" + buildPrompt(kind, deref(question), *cards)
-		}
-	}
-	_, _, text, callErr := a.runEinoStream(ctx, taskFor(kind), prompt, onChunk)
-	if callErr != nil {
-		_, _ = a.Store.Exec(ctx, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, callErr.Error(), id)
-		return nil, biz("解读失败，可重试，未重新扣费")
-	}
-	_, err = a.Store.Exec(ctx, `UPDATE readings SET status='COMPLETED', interpretation=$1, fail_reason=NULL, updated_at=now() WHERE id=$2`, text, id)
-	if err != nil {
-		return nil, err
-	}
-	return a.loadReading(ctx, id)
+	localizeReading(ctx, item)
+	return item, nil
 }
 
 func (a *App) binding(ctx context.Context, task string) (name, model, base, key string, timeout *int, err error) {
@@ -237,11 +115,16 @@ func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 }
 
 func (a *App) loadReading(ctx context.Context, id int64) (map[string]any, error) {
+	return a.loadReadingAbs(ctx, nil, id)
+}
+
+func (a *App) loadReadingAbs(ctx context.Context, r *http.Request, id int64) (map[string]any, error) {
 	row := a.Store.QueryRow(ctx, `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at FROM readings WHERE id=$1`, id)
 	item, err := scanReading(row)
 	if err != nil {
 		return nil, biz("记录不存在")
 	}
-	a.applyCardThumbnails(ctx, item)
+	a.applyCardThumbnails(ctx, r, item)
+	localizeReading(ctx, item)
 	return item, nil
 }

@@ -2,6 +2,7 @@ package tata
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ func TestAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	protectLiveAIConfig(t, store)
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
@@ -41,10 +43,18 @@ func TestAcceptance(t *testing.T) {
 	if !strings.Contains(string(body), "请求字段不正确") {
 		t.Fatalf("price accepted: %s", body)
 	}
-	qstatus, _ := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 9})
-	if !strings.Contains(qstatus, "不可修改") {
-		t.Fatalf("quota editable: %s", qstatus)
+	qstatus, qraw := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 9, "daily_slot_count": 3})
+	if qstatus != "" {
+		t.Fatalf("quota counts: %s %s", qstatus, qraw)
 	}
+	params := decodeData(t, qraw)
+	if params["daily_free_count"] != float64(9) || params["daily_slot_count"] != float64(3) {
+		t.Fatalf("quota saved: %#v", params)
+	}
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET daily_free_count=1, daily_slot_count=1 WHERE id=1`)
+	})
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 1, "daily_slot_count": 1})
 	lstatus, _ := call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/ledger", map[string]any{"amount": 1})
 	if !strings.Contains(lstatus, "不能") {
 		t.Fatalf("ledger writable: %s", lstatus)

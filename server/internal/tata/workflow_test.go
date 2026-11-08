@@ -1,6 +1,7 @@
 package tata
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ func TestAdminSimulateUsesEinoWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	protectLiveAIConfig(t, store)
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
@@ -40,5 +42,33 @@ func TestAdminSimulateUsesEinoWithoutWriting(t *testing.T) {
 	}
 	if after != before {
 		t.Fatalf("simulate wrote readings %d -> %d", before, after)
+	}
+}
+
+func TestEnableVendorAppliesAllBindings(t *testing.T) {
+	_, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	first := create(t, ts, admin.access, "/api/admin/v1/vendors", map[string]any{
+		"name": "自动绑定甲", "base_url": ts.URL + "/demo/openai/v1", "api_key": "a", "models": []string{"demo"}, "enabled": true,
+	})
+	assertAllTasksBound(t, ts, admin.access, asID(first["id"]), "demo")
+
+	second := create(t, ts, admin.access, "/api/admin/v1/vendors", map[string]any{
+		"name": "自动绑定乙", "base_url": ts.URL + "/demo/openai/v1", "api_key": "b", "models": []string{"demo"}, "enabled": true,
+	})
+	assertAllTasksBound(t, ts, admin.access, asID(second["id"]), "demo")
+
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/vendors/%d", asID(first["id"])), map[string]any{
+		"name": "自动绑定甲", "base_url": ts.URL + "/demo/openai/v1", "api_key": "a", "models": []string{"demo"}, "enabled": true,
+	})
+	assertAllTasksBound(t, ts, admin.access, asID(first["id"]), "demo")
+}
+
+func assertAllTasksBound(t *testing.T, ts *httptest.Server, token string, vendorID int64, model string) {
+	t.Helper()
+	for _, item := range list(t, ts, token, "/api/admin/v1/bindings") {
+		if asID(item["vendor_id"]) != vendorID || item["model"] != model {
+			t.Fatalf("task %v bound to %#v, want vendor=%d model=%s", item["task"], item, vendorID, model)
+		}
 	}
 }

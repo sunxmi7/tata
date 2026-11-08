@@ -88,7 +88,7 @@ func (a *App) appYearlyProfile(w http.ResponseWriter, r *http.Request) error {
 		WHERE user_id=$3 AND year=$4`, birth, gender, uid, year); err != nil {
 		return err
 	}
-	view, err := a.buildYearlyReport(r.Context(), uid, year)
+	view, err := a.buildYearlyReport(r.Context(), uid, year, r)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,7 @@ func (a *App) yearlyDraw(w http.ResponseWriter, r *http.Request, kind string) er
 	if _, err := a.Store.Exec(r.Context(), `UPDATE yearly_reports SET `+col+`=$1 WHERE user_id=$2 AND year=$3`, mustJSON(cards), uid, year); err != nil {
 		return err
 	}
-	view, err := a.buildYearlyReport(r.Context(), uid, year)
+	view, err := a.buildYearlyReport(r.Context(), uid, year, r)
 	if err != nil {
 		return err
 	}
@@ -188,6 +188,9 @@ func (a *App) yearlyDraw(w http.ResponseWriter, r *http.Request, kind string) er
 }
 
 func (a *App) appYearlyGenerate(w http.ResponseWriter, r *http.Request) error {
+	if wantsSSE(r) {
+		return a.appYearlyGenerateStream(w, r)
+	}
 	uid, year, err := a.yearlyActor(r)
 	if err != nil {
 		return err
@@ -216,44 +219,21 @@ func (a *App) appYearlyGenerate(w http.ResponseWriter, r *http.Request) error {
 		return biz("请先抽完六大领域牌")
 	}
 	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
-		view, err := a.buildYearlyReport(r.Context(), uid, year)
+		view, err := a.buildYearlyReport(r.Context(), uid, year, r)
 		if err != nil {
 			return err
 		}
 		writeOK(w, view)
 		return nil
 	}
-	vendorName, model, _, _, _, err := a.binding(r.Context(), "interpret")
-	if err != nil {
-		_, _ = a.Store.Exec(r.Context(), `UPDATE yearly_reports SET report_status='failed', fail_reason=$1 WHERE user_id=$2 AND year=$3`, "未绑定供应商", uid, year)
-		return err
-	}
-	unlock, err := a.lockNamed("yearly:" + fmtID(int64(uid)) + ":" + fmtID(int64(year)))
+	run, err := a.ensureYearlyJob(r.Context(), uid, year, row)
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	tag, err := a.Store.Exec(r.Context(), `UPDATE yearly_reports SET report_status='generating', fail_reason=NULL
-		WHERE user_id=$1 AND year=$2 AND report_status IN ('pending','failed','generating')`, uid, year)
-	if err != nil {
+	if err := run.wait(r.Context()); err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return biz("生成进行中")
-	}
-	prompt := buildYearlyPrompt(year, row.birthDate, row.gender, row.rhythmJSON, row.domainJSON)
-	_, _, text, callErr := a.runEino(r.Context(), "interpret", prompt)
-	if callErr != nil {
-		_, _ = a.Store.Exec(r.Context(), `UPDATE yearly_reports SET report_status='failed', fail_reason=$1 WHERE user_id=$2 AND year=$3`, callErr.Error(), uid, year)
-		return biz("解读失败，可重试")
-	}
-	if _, err := a.Store.Exec(r.Context(), `UPDATE yearly_reports SET report_status='ready', report=$1, fail_reason=NULL, generated_at=now()
-		WHERE user_id=$2 AND year=$3`, text, uid, year); err != nil {
-		return err
-	}
-	_ = vendorName
-	_ = model
-	view, err := a.buildYearlyReport(r.Context(), uid, year)
+	view, err := a.buildYearlyReport(r.Context(), uid, year, r)
 	if err != nil {
 		return err
 	}
@@ -325,7 +305,7 @@ func (a *App) loadYearlyRow(ctx context.Context, uid int64, year int) (yearlyRow
 	return row, err
 }
 
-func (a *App) attachYearlyFlow(ctx context.Context, uid int64, year int, view map[string]any) error {
+func (a *App) attachYearlyFlow(ctx context.Context, r *http.Request, uid int64, year int, view map[string]any) error {
 	row, err := a.loadYearlyRow(ctx, uid, year)
 	if err != nil {
 		return err
@@ -341,8 +321,8 @@ func (a *App) attachYearlyFlow(ctx context.Context, uid int64, year int, view ma
 		gender = strings.TrimSpace(userGender.String)
 	}
 	profileDone := row.profileAt.Valid
-	rhythm := a.yearlyCardsView(ctx, row.rhythmJSON)
-	domains := a.yearlyCardsView(ctx, row.domainJSON)
+	rhythm := a.yearlyCardsView(ctx, r, row.rhythmJSON)
+	domains := a.yearlyCardsView(ctx, r, row.domainJSON)
 	unlocked, _ := view["unlocked"].(bool)
 	step := yearlyStep(unlocked, profileDone, len(rhythm), len(domains), row.reportStatus)
 	view["step"] = step
@@ -355,13 +335,13 @@ func (a *App) attachYearlyFlow(ctx context.Context, uid int64, year int, view ma
 	view["domain_cards"] = domains
 	view["report"] = nullableConfig(row.report)
 	view["report_status"] = row.reportStatus
-	view["fail_reason"] = nullString(row.failReason)
 	view["generated_at"] = nullTime(row.generatedAt)
+	view["fail_reason"] = localizeString(ctx, nullString(row.failReason))
 	view["steps"] = []map[string]any{
-		{"key": "profile", "title": "填写基本信息", "done": profileDone},
-		{"key": "rhythm", "title": "选12张牌，看全年节奏", "done": len(rhythm) == 12, "required": 12, "drawn": len(rhythm)},
-		{"key": "domains", "title": "抽6张牌，看六大领域", "done": len(domains) == 6, "required": 6, "drawn": len(domains)},
-		{"key": "generate", "title": "生成年度报告", "done": row.reportStatus == "ready"},
+		{"key": "profile", "title": T(ctx, "填写基本信息"), "done": profileDone},
+		{"key": "rhythm", "title": T(ctx, "选12张牌，看全年节奏"), "done": len(rhythm) == 12, "required": 12, "drawn": len(rhythm)},
+		{"key": "domains", "title": T(ctx, "抽6张牌，看六大领域"), "done": len(domains) == 6, "required": 6, "drawn": len(domains)},
+		{"key": "generate", "title": T(ctx, "生成年度报告"), "done": row.reportStatus == "ready"},
 	}
 	return nil
 }
@@ -388,7 +368,7 @@ func yearlyStep(unlocked, profile bool, rhythmN, domainN int, reportStatus strin
 	return "generate"
 }
 
-func (a *App) yearlyCardsView(ctx context.Context, raw string) []map[string]any {
+func (a *App) yearlyCardsView(ctx context.Context, r *http.Request, raw string) []map[string]any {
 	if strings.TrimSpace(raw) == "" {
 		return []map[string]any{}
 	}
@@ -399,7 +379,13 @@ func (a *App) yearlyCardsView(ctx context.Context, raw string) []map[string]any 
 	cfg := a.cardConfig(ctx)
 	for _, card := range cards {
 		name, _ := card["name"].(string)
-		card["card_thumbnail"] = resolveCardThumbnail(cfg, name)
+		card["card_thumbnail"] = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
+		if name != "" {
+			card["name"] = T(ctx, name)
+		}
+		if pos, ok := card["position_name"].(string); ok && pos != "" {
+			card["position_name"] = T(ctx, pos)
+		}
 	}
 	return cards
 }
