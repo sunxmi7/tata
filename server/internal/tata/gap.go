@@ -52,10 +52,7 @@ func (a *App) claimed(r *http.Request, kind, value string) bool {
 }
 
 func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Code       string `json:"code"`
-		InviteCode string `json:"invite_code"`
-	}
+	var req wechatAuthBody
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
 		return
@@ -65,6 +62,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, err.Error())
 		return
 	}
+	mergeWeChatHints(&prof, req)
 	var id int64
 	var cancelled *time.Time
 	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, prof.ID).Scan(&id, &cancelled)
@@ -164,9 +162,7 @@ func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
-	var req struct {
-		Code string `json:"code"`
-	}
+	var req wechatAuthBody
 	if err := decode(r, &req); err != nil {
 		return err
 	}
@@ -174,6 +170,7 @@ func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	mergeWeChatHints(&prof, req)
 	return a.bindWithConfirm(w, r, bindSpec{kind: "wechat", value: prof.ID, wechat: prof})
 }
 

@@ -194,7 +194,7 @@ func TestWeChatExchangeUserInfo(t *testing.T) {
 func TestWeChatUserInfoFailureStillReturnsID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("access_token") != "" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"errcode": 40001, "errmsg": "invalid credential"})
+			_, _ = w.Write([]byte(`{"errcode":"40001","errmsg":"invalid credential"}`))
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "openid": "oid-2"})
@@ -272,6 +272,39 @@ func TestWeChatLoginFillsEmptyProfile(t *testing.T) {
 	}
 }
 
+func TestWeChatLoginClientProfileFallback(t *testing.T) {
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == "" {
+			t.Fatal("missing user-agent")
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png1x1)
+	}))
+	t.Cleanup(img.Close)
+	wechatAvatarTestHook = func(u *url.URL) bool { return u.Hostname() == "127.0.0.1" }
+	t.Cleanup(func() { wechatAvatarTestHook = nil })
+
+	store, _ := newMergeServer(t)
+	app := testApp(store)
+	app.WeChat = stubWeChat{}
+	app.Upload = NewUploader(UploadConfig{Driver: "local", LocalDir: t.TempDir()})
+	ts := httptest.NewServer(app.Handler())
+	t.Cleanup(ts.Close)
+
+	code := fmt.Sprintf("wx-fallback-%d", time.Now().UnixNano())
+	data := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]any{
+		"code": code, "nickname": "客户端昵称", "headimgurl": img.URL + "/head/132",
+	})
+	profile := listOne(t, ts, data["accessToken"].(string), "/api/app/v1/profile")
+	if profile["name"] != "客户端昵称" {
+		t.Fatalf("name: %#v", profile["name"])
+	}
+	avatar, _ := profile["avatar_url"].(string)
+	if !strings.Contains(avatar, "/uploads/misc/") || !strings.HasSuffix(avatar, ".png") {
+		t.Fatalf("avatar: %#v", profile["avatar_url"])
+	}
+}
+
 func TestWeChatBindFillsEmptyProfile(t *testing.T) {
 	store, _ := newMergeServer(t)
 	app := testApp(store)
@@ -298,8 +331,12 @@ func TestWeChatAvatarHostRejected(t *testing.T) {
 		t.Fatalf("allowed arbitrary host: %v", u)
 	}
 	u, ok = wechatAvatarURLOK("https://thirdwx.qlogo.cn/mmopen/x/132")
-	if !ok || u.Host != "thirdwx.qlogo.cn" {
+	if !ok || u.Host != "thirdwx.qlogo.cn" || !strings.HasSuffix(u.Path, "/0") {
 		t.Fatalf("qlogo: %v %v", u, ok)
+	}
+	u, ok = wechatAvatarURLOK("https://mmbiz.qpic.cn/mmbiz/abc/132")
+	if !ok || u.Host != "mmbiz.qpic.cn" {
+		t.Fatalf("qpic: %v %v", u, ok)
 	}
 }
 

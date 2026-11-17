@@ -2112,6 +2112,15 @@ components:
         invite_code:
           type: string
           description: 选填。邀请人 6 位 public_id。校验失败不挡登录。
+        nickname:
+          type: string
+          description: 选填。微信接口没返回昵称时写入档案。已有 name 不覆盖。
+        avatar_url:
+          type: string
+          description: 选填。微信头像 URL。服务端下载后转存，不直接保存外链。仅允许 qlogo.cn / qpic.cn。
+        headimgurl:
+          type: string
+          description: 选填。与 avatar_url 相同，兼容微信字段名。avatar_url 优先。
     AppleBody:
       type: object
       additionalProperties: false
@@ -4171,7 +4180,8 @@ paths:
       description: |
         客户端把微信 SDK 的 code 交给服务端。iOS / Android 共用微信开放平台同一个移动应用。
         服务端用 config.yaml 的 wechat.appId/appSecret 向微信换 openid/unionid（优先存 unionid），再查找或创建用户。
-        换票后会请求 sns/userinfo。档案 name / avatar_url 为空时写入微信昵称，并把头像下载转存到 uploads/misc；已有资料不覆盖。userinfo 失败不挡登录。
+        换票后请求 sns/userinfo 取昵称和 headimgurl。档案 name / avatar_url 为空时写入昵称，并把微信头像下载后经 Upload 落到本机或 OSS（不再把 qlogo 外链写进档案）。已有资料不覆盖。userinfo 失败不挡登录。
+        客户端可顺带 nickname / avatar_url / headimgurl；仅在微信接口没返回时作为补全，头像仍只接受微信 CDN 并转存。App 授权 scope 须为 snsapi_userinfo。
         wechat.enabled=false 或凭证空时返回「微信登录未配置」。code 无效返回「微信授权码无效」。
         已注销身份不能再次注册。不再发放注册奖励。成功后会尝试结算未扣费的占卜。
       requestBody:
