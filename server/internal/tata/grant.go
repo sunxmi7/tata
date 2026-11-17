@@ -11,21 +11,18 @@ import (
 	"time"
 )
 
-// Admin grants add diamonds and/or free counts. They do not update iap_orders
+// Admin grants add unified quota and/or free counts. They do not update iap_orders
 // and do not call resumeQuotaAfterCredit.
 //
-// Permission: operators.role = admin may write (adminActor write=true).
-// role = readonly may list grants, audit_log, and ledgers. DEC-015's finer
-// matrix is still open; this is the existing read/write role switch.
+// Permission: pay 模块可写才能补发；role=admin 隐含全部模块。
+// 无写权限可查补发记录。流水与审计分属 records / accounts 模块。
 //
-// Diamond buckets: omitted diamond_bucket means pack, which adds pack_diamonds
-// and writes diamond_ledger.bucket = consumable. subscription adds
-// subscription_diamonds and writes bucket = subscription. Both are additive.
-// Subscription period fields are not replaced (unlike an IAP period refresh).
+// diamonds 一律写入 quota_balance，diamond_ledger.bucket = quota。
+// diamond_bucket 兼容历史 pack/subscription，忽略后仍入统一额度。订阅有效期不改。
 //
 // Free counts add rewards.admin_grant_remaining. They do not change
-// rewards.remaining or its expiry. Spend order is after today's free count
-// and before diamonds. Reason on every grant row is admin_grant.
+// rewards.remaining or its expiry. Free users spend daily → invite → admin grant.
+// Members skip free counts and spend quota. Reason on every grant row is admin_grant.
 
 const (
 	grantKindDiamonds = "diamonds"
@@ -70,7 +67,7 @@ func (a *App) adminListGrants(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	out := grantMeta(act.role)
+	out := grantMeta(a.operatorCanWriteModule(r.Context(), act, adminModulePay))
 	out["grants"] = list
 	if userID > 0 {
 		bal, err := grantBalances(r.Context(), a.Store, userID)
@@ -116,7 +113,7 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 		return biz("补发数量不正确")
 	}
 	if req.Diamonds == 0 && req.FreeCount == 0 {
-		return biz("请填写钻石或免费次数")
+		return biz("请填写额度或免费次数")
 	}
 	if req.Diamonds > grantMaxAmount || req.FreeCount > grantMaxAmount {
 		return biz("补发数量超出单次上限")
@@ -125,9 +122,10 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 	if bucket == "" {
 		bucket = grantBucketPack
 	}
-	if bucket != grantBucketPack && bucket != grantBucketSub {
-		return biz("钻石桶只允许 pack 或 subscription，默认 pack（pack_diamonds）")
+	if bucket != grantBucketPack && bucket != grantBucketSub && bucket != "quota" {
+		return biz("额度补发写入统一额度账户")
 	}
+	bucket = "quota"
 
 	tx, err := a.Store.Begin(r.Context())
 	if err != nil {
@@ -156,7 +154,7 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	out := grantMeta(act.role)
+	out := grantMeta(a.operatorCanWriteModule(r.Context(), act, adminModulePay))
 	out["user_id"] = req.UserID
 	out["operator_id"] = act.id
 	out["grants"] = grants
@@ -172,17 +170,17 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func grantMeta(role string) map[string]any {
+func grantMeta(canWrite bool) map[string]any {
 	return map[string]any{
 		"reason":                         grantReason,
-		"diamond_bucket_default":         grantBucketPack,
-		"diamond_bucket_column":          "pack_diamonds",
-		"diamond_ledger_bucket_for_pack": "consumable",
+		"diamond_bucket_default":         "quota",
+		"diamond_bucket_column":          "quota_balance",
+		"diamond_ledger_bucket_for_pack": iapBucketQuota,
 		"writes_iap_orders":              false,
 		"resumes_paywall":                false,
-		"can_write":                      role == "admin",
+		"can_write":                      canWrite,
 		"write_role":                     "admin",
-		"permission_note":                "operators.role=admin 可写补发；readonly 默认可查流水与补发记录。写接口使用 adminActor(write=true)。",
+		"permission_note":                "付费模块可写才能补发额度或免费次数。diamonds 字段写入统一额度。",
 	}
 }
 
@@ -218,40 +216,27 @@ func lockGrantUser(ctx context.Context, tx Tx, uid int64) error {
 }
 
 func applyDiamondGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount int, bucket, note string, now time.Time) (map[string]any, error) {
-	ledgerBucket := iapBucketPack
-	if bucket == grantBucketSub {
-		ledgerBucket = iapBucketSub
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return nil, err
-	}
-	var subBal, packBal int
-	var periodEnd sql.NullTime
-	var periodKey string
-	if err := tx.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key
-		FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&subBal, &packBal, &periodEnd, &periodKey); err != nil {
-		return nil, err
-	}
-	after := packBal + amount
-	if bucket == grantBucketSub {
-		after = subBal + amount
-		if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET subscription_diamonds=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
-			return nil, err
-		}
-	} else if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET pack_diamonds=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
+	ledgerBucket := iapBucketQuota
+	after, err := creditQuota(ctx, tx, uid, amount, nil, "", grantReason)
+	if err != nil {
 		return nil, err
 	}
 	var grantID int64
 	if err := tx.QueryRow(ctx, `INSERT INTO admin_grants(user_id, operator_id, kind, amount, bucket, ledger_bucket, reason, note, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		uid, operatorID, grantKindDiamonds, amount, bucket, ledgerBucket, grantReason, note, now).Scan(&grantID); err != nil {
+		uid, operatorID, grantKindDiamonds, amount, "quota", ledgerBucket, grantReason, note, now).Scan(&grantID); err != nil {
 		return nil, err
 	}
 	var ledgerID int64
-	if err := tx.QueryRow(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, store_transaction_id, reason, grant_id, created_at)
-		VALUES ($1,$2,$3,$4,'',$5,$6,$7) RETURNING id`,
-		uid, ledgerBucket, amount, after, grantReason, grantID, now).Scan(&ledgerID); err != nil {
-		return nil, err
+	err = tx.QueryRow(ctx, `SELECT id FROM diamond_ledger WHERE user_id=$1 AND grant_id IS NULL AND reason=$2 ORDER BY id DESC LIMIT 1`, uid, grantReason).Scan(&ledgerID)
+	if err != nil {
+		// creditQuota does not set grant_id; update the newest quota row
+		_ = tx.QueryRow(ctx, `SELECT id FROM diamond_ledger WHERE user_id=$1 AND bucket=$2 ORDER BY id DESC LIMIT 1`, uid, iapBucketQuota).Scan(&ledgerID)
+	}
+	if ledgerID > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE diamond_ledger SET grant_id=$1 WHERE id=$2`, grantID, ledgerID); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE admin_grants SET diamond_ledger_id=$1 WHERE id=$2`, ledgerID, grantID); err != nil {
 		return nil, err
@@ -326,32 +311,24 @@ func writeGrantAudit(ctx context.Context, tx Tx, operatorID, grantID int64, deta
 }
 
 func grantBalances(ctx context.Context, q rowQuery, uid int64) (map[string]any, error) {
-	var sub, pack int
-	var periodEnd sql.NullTime
-	err := q.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds, subscription_period_end FROM diamond_balances WHERE user_id=$1`, uid).
-		Scan(&sub, &pack, &periodEnd)
-	if errors.Is(err, sql.ErrNoRows) {
-		sub, pack = 0, 0
-		err = nil
-	}
+	quota, err := loadQuotaBalance(ctx, q, uid)
 	if err != nil {
 		return nil, err
 	}
-	var free, reward int
-	err = q.QueryRow(ctx, `SELECT admin_grant_remaining, remaining FROM rewards WHERE user_id=$1`, uid).Scan(&free, &reward)
+	var free, invite int
+	err = q.QueryRow(ctx, `SELECT admin_grant_remaining, invite_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&free, &invite)
 	if errors.Is(err, sql.ErrNoRows) {
-		free, reward = 0, 0
+		free, invite = 0, 0
 		err = nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"pack_diamonds":                 pack,
-		"subscription_diamonds":         sub,
-		"subscription_period_end":       nullTime(periodEnd),
-		"free_count_remaining":          free,
-		"registration_reward_remaining": reward,
+		"quota_remaining":      quota,
+		"balance":              quota,
+		"free_count_remaining": free,
+		"invite_remaining":     invite,
 	}, nil
 }
 

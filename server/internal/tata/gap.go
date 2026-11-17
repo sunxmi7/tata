@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 func progressOf(status string) (label, next string) {
@@ -55,39 +53,38 @@ func (a *App) claimed(r *http.Request, kind, value string) bool {
 
 func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code string `json:"code"`
+		Code       string `json:"code"`
+		InviteCode string `json:"invite_code"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
 		return
 	}
-	openID, err := a.wechatIdentity(r.Context(), req.Code)
+	prof, err := a.wechatIdentity(r.Context(), req.Code)
 	if err != nil {
 		writeErr(w, r, http.StatusOK, err.Error())
 		return
 	}
 	var id int64
 	var cancelled *time.Time
-	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, openID).Scan(&id, &cancelled)
+	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, prof.ID).Scan(&id, &cancelled)
 	if err != nil {
-		if a.claimed(r, "wechat", openID) {
-			writeErr(w, r, http.StatusOK, "该微信已注销，不能重复领取注册奖励")
+		if a.claimed(r, "wechat", prof.ID) {
+			writeErr(w, r, http.StatusOK, "该微信已注销，不能重复注册")
 			return
 		}
-		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(wechat_openid) VALUES ($1) RETURNING id`, openID).Scan(&id)
+		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(wechat_openid) VALUES ($1) RETURNING id`, prof.ID).Scan(&id)
 		if err != nil {
 			writeErr(w, r, http.StatusOK, "微信登录失败")
 			return
-		}
-		if !a.claimed(r, "wechat", openID) {
-			exp := nextBeijingEight(time.Now())
-			_, _ = a.Store.Exec(r.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at) VALUES ($1, now(), $2) ON CONFLICT DO NOTHING`, id, exp)
 		}
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	a.applyWeChatProfile(r, id, prof)
+	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": T(r.Context(), wechatQuotaNote)})
@@ -96,6 +93,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IdentityToken string `json:"identity_token"`
+		InviteCode    string `json:"invite_code"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
@@ -111,7 +109,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE apple_sub=$1`, sub).Scan(&id, &cancelled)
 	if err != nil {
 		if a.claimed(r, "apple", sub) {
-			writeErr(w, r, http.StatusOK, "该苹果账号已注销，不能重复领取注册奖励")
+			writeErr(w, r, http.StatusOK, "该苹果账号已注销，不能重复注册")
 			return
 		}
 		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(apple_sub) VALUES ($1) RETURNING id`, sub).Scan(&id)
@@ -119,13 +117,12 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, http.StatusOK, "苹果登录失败")
 			return
 		}
-		exp := nextBeijingEight(time.Now())
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at) VALUES ($1, now(), $2) ON CONFLICT DO NOTHING`, id, exp)
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "apple"})
 }
@@ -146,25 +143,24 @@ func (a *App) appBindApple(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) appBindEmail(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Code     string `json:"code"`
+		Email string `json:"email"`
+		Code  string `json:"code"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if req.Email == "" || req.Password == "" {
-		return biz("邮箱和密码必填")
+	if req.Email == "" || req.Code == "" {
+		return biz("邮箱和验证码必填")
 	}
-	if err := a.matchEmailCode(r.Context(), "bind", req.Email, req.Code); err != nil {
+	email := normalizeEmail(req.Email)
+	if !validLoginEmail(email) {
+		return biz("邮箱不正确")
+	}
+	if err := a.matchEmailCode(r.Context(), "bind", email, req.Code); err != nil {
 		return err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	a.consumeEmailCode(r.Context(), "bind", req.Email)
-	return a.bindWithConfirm(w, r, bindSpec{kind: "email", value: req.Email, passwordHash: string(hash)})
+	a.consumeEmailCode(r.Context(), "bind", email)
+	return a.bindWithConfirm(w, r, bindSpec{kind: "email", value: email})
 }
 
 func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
@@ -174,11 +170,11 @@ func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	openID, err := a.wechatIdentity(r.Context(), req.Code)
+	prof, err := a.wechatIdentity(r.Context(), req.Code)
 	if err != nil {
 		return err
 	}
-	return a.bindWithConfirm(w, r, bindSpec{kind: "wechat", value: openID})
+	return a.bindWithConfirm(w, r, bindSpec{kind: "wechat", value: prof.ID, wechat: prof})
 }
 
 func (a *App) appCancel(w http.ResponseWriter, r *http.Request) error {
@@ -377,7 +373,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 			a.clearPendingIdem(r, scope, idemKey)
 			return biz("问题超过 200 个码点，正式计数口径尚未确认")
 		}
-		view, err := a.createNormal(r.Context(), uid, anon, strings.TrimSpace(req.Text), "normal", nil, false)
+		view, err := a.createNormal(r.Context(), uid, anon, strings.TrimSpace(req.Text), "normal", nil, false, "")
 		if err != nil {
 			a.clearPendingIdem(r, scope, idemKey)
 			return err
@@ -408,7 +404,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	}
 	if uid == 0 {
 		a.clearPendingIdem(r, scope, idemKey)
-		return biz("登录后才会扣次数或钻石")
+		return biz(paywallNeedLogin)
 	}
 	if strings.Contains(req.Text, "别这样说") || strings.Contains(req.Text, "不舒服") {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE app_users SET tease_off=true WHERE id=$1`, uid)

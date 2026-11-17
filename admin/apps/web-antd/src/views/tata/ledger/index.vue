@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { LedgerRow } from '#/api/tata';
+
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
@@ -9,7 +11,7 @@ import { listLedger } from '#/api/tata';
 
 import { useTataLookups } from '../use-tata-lookups';
 
-const rows = ref<Record<string, unknown>[]>([]);
+const rows = ref<LedgerRow[]>([]);
 const { loadLookups, readingLabel, userLabel } = useTataLookups();
 
 onMounted(async () => {
@@ -19,7 +21,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="次数流水只读，不能手改。人工补发钻石或免费次数走「人工补发」。" title="额度流水">
+  <Page description="次数流水只读，不能手改。人工补发额度或免费次数走「人工补发」。" title="额度流水">
     <Table
       :columns="[
         { title: '用户', dataIndex: 'user_id' },

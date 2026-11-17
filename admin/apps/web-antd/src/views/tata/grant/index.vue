@@ -1,9 +1,11 @@
 <script lang="ts" setup>
+import type { GrantList, GrantRow } from '#/api/tata';
+
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Input, InputNumber, Select, Table } from 'ant-design-vue';
+import { Button, Input, InputNumber, Table } from 'ant-design-vue';
 
 import { createGrant, listGrants } from '#/api/tata';
 
@@ -12,10 +14,9 @@ import { useTataLookups } from '../use-tata-lookups';
 const userId = ref('');
 const diamonds = ref<number | null>(null);
 const freeCount = ref<number | null>(null);
-const bucket = ref('pack');
 const note = ref('');
-const view = ref<Record<string, unknown>>({});
-const rows = ref<Record<string, unknown>[]>([]);
+const view = ref<GrantList>({ grants: [] });
+const rows = ref<GrantRow[]>([]);
 
 const { loadLookups, operatorLabel, userLabel } = useTataLookups();
 
@@ -25,7 +26,7 @@ async function load() {
   await loadLookups();
   const data = await listGrants(userId.value);
   view.value = data;
-  rows.value = (data.grants as Record<string, unknown>[]) || [];
+  rows.value = data.grants || [];
 }
 
 async function submit() {
@@ -33,7 +34,7 @@ async function submit() {
     user_id: Number(userId.value.trim()),
     diamonds: diamonds.value || 0,
     free_count: freeCount.value || 0,
-    diamond_bucket: bucket.value,
+    diamond_bucket: 'quota',
     reason: 'admin_grant',
     note: note.value,
   });
@@ -48,28 +49,20 @@ onMounted(load);
 
 <template>
   <Page
-    description="独立加账，不改历史 IAP 订单，也不代替付费成功后的自动续跑。钻石默认补到 pack_diamonds（流水桶 consumable）；选 subscription 则补到 subscription_diamonds。免费次数记入可消耗余额。role=admin 可写，readonly 只可查。"
+    description="独立加账，不改历史 IAP 订单，也不代替付费成功后的自动续跑。额度写入统一账户；免费次数记入可消耗余额。付费模块可写才能补发。"
     title="人工补发"
   >
     <div class="mb-4 flex flex-wrap items-center gap-2">
       <Input v-model:value="userId" placeholder="用户 ID" style="width: 160px" @press-enter="load" />
       <Button @click="load">查询流水</Button>
-      <InputNumber v-model:value="diamonds" :min="0" placeholder="钻石" style="width: 120px" />
-      <Select
-        v-model:value="bucket"
-        style="width: 280px"
-        :options="[
-          { label: 'pack（pack_diamonds，默认）', value: 'pack' },
-          { label: 'subscription（subscription_diamonds）', value: 'subscription' },
-        ]"
-      />
+      <InputNumber v-model:value="diamonds" :min="0" placeholder="额度" style="width: 120px" />
       <InputNumber v-model:value="freeCount" :min="0" placeholder="免费次数" style="width: 140px" />
       <Input v-model:value="note" placeholder="原因说明" style="width: 240px" />
       <Button type="primary" :disabled="!canWrite" @click="submit">补发</Button>
     </div>
     <p v-if="view.user_id" class="mb-4">
-      用户 {{ userLabel(view.user_id) }} · 次卡钻石 {{ view.pack_diamonds }} / 订阅钻石
-      {{ view.subscription_diamonds }} / 补发免费次数 {{ view.free_count_remaining }}
+      用户 {{ userLabel(view.user_id) }} · 额度 {{ view.quota_remaining ?? view.balance ?? 0 }} / 补发免费次数
+      {{ view.free_count_remaining }} / 邀请次数 {{ view.invite_remaining ?? 0 }}
     </p>
     <p class="mb-4 text-sm opacity-70">{{ view.permission_note }}</p>
     <Table
@@ -83,7 +76,7 @@ onMounted(load);
         { title: '流水桶', dataIndex: 'ledger_bucket' },
         { title: '原因', dataIndex: 'reason' },
         { title: '说明', dataIndex: 'note' },
-        { title: '钻石流水', dataIndex: 'diamond_ledger_id' },
+        { title: '额度流水', dataIndex: 'diamond_ledger_id' },
         { title: '次数流水', dataIndex: 'count_ledger_id' },
       ]"
       :data-source="rows"
@@ -97,6 +90,9 @@ onMounted(load);
         </template>
         <template v-else-if="column.dataIndex === 'operator_id'">
           {{ operatorLabel(record.operator_id) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'kind'">
+          {{ record.kind === 'free_count' ? '免费次数' : '额度' }}
         </template>
         <template v-else-if="column.dataIndex === 'diamond_ledger_id'">
           {{ record.diamond_ledger_id ? `#${record.diamond_ledger_id}` : '—' }}

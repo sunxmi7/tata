@@ -67,6 +67,9 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 	if kind == "explore" && strings.TrimSpace(question) == "" {
 		return biz("请先填写问题")
 	}
+	if uid == 0 {
+		return biz(paywallNeedLogin)
+	}
 	stop, err := a.gatePlay(w, r, resumeInterpret)
 	if err != nil || stop {
 		return err
@@ -297,6 +300,9 @@ func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) er
 		send := sseStart(w)
 		send("done", map[string]any{"report": view, "reused": true})
 		return nil
+	}
+	if err := a.chargeYearlyGenerate(r.Context(), uid, year); err != nil {
+		return err
 	}
 	run, err := a.ensureYearlyJob(r.Context(), uid, year, row)
 	if err != nil {

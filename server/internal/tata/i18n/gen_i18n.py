@@ -56,8 +56,10 @@ TRAD_OVERRIDE = {
     "侍从": "侍從",
     "骑士": "騎士",
     "莱德韦特": "萊德韋特",
+    "大阿尔卡纳": "大阿爾卡納",
     "经典韦特塔罗": "經典韋特塔羅",
     "塔塔币": "塔塔幣",
+    "兑换码类型只允许 diamonds 或 free_count": "兌換碼類型只允許 diamonds 或 free_count",
     "钻石": "鑽石",
     "次数": "次數",
     "正位": "正位",
@@ -112,6 +114,19 @@ add("王后", "Queen", "クイーン", "여왕")
 add("国王", "King", "キング", "왕")
 
 add("莱德韦特", "Rider-Waite Tarot", "ライダー・ウェイト・タロット", "라이더 웨이트 타로")
+add("大阿尔卡纳", "Major Arcana", "大アルカナ", "메이저 아르카나")
+add("我的自定义牌组", "My custom deck", "マイカスタムデッキ", "내 커스텀 덱")
+add("用户协议", "User Agreement", "利用規約", "이용약관")
+add("隐私政策", "Privacy Policy", "プライバシーポリシー", "개인정보 처리방침")
+add("塔塔 Tarot", "Tata Tarot", "タタ Tarot", "타타 Tarot")
+add("听见内心的答案", "Hear the answer within", "心の答えを聞く", "마음의 답을 듣다")
+add("为你生成的专属年度指引", "A yearly guide generated for you", "あなたのための年間ガイド", "당신을 위한 연간 안내")
+add("保存图片后即可分享给好友", "Save the image to share with friends", "画像を保存して友達にシェア", "이미지를 저장한 뒤 친구에게 공유")
+add("次", "reads", "回", "회")
+add("新朋友", "New friend", "新しい友達", "새 친구")
+add("好友 %s 通过你的邀请加入了塔塔", "Friend %s joined Tata through your invite", "友達 %s があなたの招待でタタに参加しました", "친구 %s 님이 초대로 타타에 가입했습니다")
+add("为%s生成", "Generated for %s", "%s さんのために生成", "%s님을 위해 생성")
+add("%d 年度运势报告", "%d Yearly Fortune Report", "%d 年の運勢レポート", "%d 연간 운세 리포트")
 add("经典韦特塔罗", SEED["deck"]["name_en"], SEED["deck"]["name_ja"], SEED["deck"]["name_ko"])
 
 # --- labels ---
@@ -188,6 +203,7 @@ add("该日已有结果，不重复扣次数或钻石",
     "그날 결과가 이미 있어 횟수와 다이아를 다시 차감하지 않았습니다.")
 add("充值入账", "Top-up credited", "チャージ入金", "충전 입고")
 add("会员钻石刷新", "Membership diamonds refreshed", "会員ダイヤモンド更新", "멤버십 다이아 갱신")
+add("会员额度刷新", "Membership quota refreshed", "会員クォータ更新", "멤버십 한도 갱신")
 add("占卜消耗", "Reading spend", "占い消費", "점술 소모")
 add("人工补发", "Admin grant", "運営補填", "운영 지급")
 add("兑换码", "Redeem code", "交換コード", "교환 코드")
@@ -333,6 +349,19 @@ ERRORS = {
     "兑换码已使用": ("Redeem code already used", "交換コードは使用済みです", "교환 코드가 이미 사용되었습니다"),
     "兑换码已过期": ("Redeem code expired", "交換コードの期限が切れています", "교환 코드가 만료되었습니다"),
     "兑换码无效": ("Redeem code is invalid", "交換コードが無効です", "교환 코드가 유효하지 않습니다"),
+    "兑换码类型只允许 diamonds 或 free_count": ("Redeem kind must be diamonds or free_count", "交換コード種別は diamonds または free_count のみです", "교환 코드 종류는 diamonds 또는 free_count만 가능합니다"),
+    "兑换数量不正确": ("Redeem amount is invalid", "交換数量が正しくありません", "교환 수량이 올바르지 않습니다"),
+    "请填写权益名称": ("Enter a benefit name", "特典名を入力してください", "혜택 이름을 입력하세요"),
+    "权益名称过长": ("Benefit name is too long", "特典名が長すぎます", "혜택 이름이 너무 깁니다"),
+    "兑换码格式不正确": ("Redeem code format is invalid", "交換コードの形式が正しくありません", "교환 코드 형식이 올바르지 않습니다"),
+    "兑换码已存在": ("Redeem code already exists", "交換コードは既に存在します", "교환 코드가 이미 있습니다"),
+    "生成数量不正确": ("Generate count is invalid", "生成数が正しくありません", "생성 수량이 올바르지 않습니다"),
+    "自定义兑换码不能批量生成": ("A custom redeem code cannot be generated in bulk", "カスタム交換コードは一括生成できません", "사용자 지정 교환 코드는 일괄 생성할 수 없습니다"),
+    "兑换码不存在": ("Redeem code not found", "交換コードがありません", "교환 코드가 없습니다"),
+    "核销上限不正确": ("Redemption limit is invalid", "利用上限が正しくありません", "사용 한도가 올바르지 않습니다"),
+    "核销上限不能低于已核销次数": ("Redemption limit cannot be below the used count", "利用上限は使用済み回数を下回れません", "사용 한도는 이미 사용한 횟수보다 작을 수 없습니다"),
+    "过期时间必须晚于现在": ("Expiry must be in the future", "有効期限は現在より後である必要があります", "만료 시간은 현재보다 이후여야 합니다"),
+    "兑换码生成失败": ("Failed to generate redeem codes", "交換コードの生成に失敗しました", "교환 코드 생성에 실패했습니다"),
     "全年节奏牌已固定": ("Year rhythm cards are already fixed", "年間リズムのカードは確定済みです", "연간 리듬 카드가 이미 확정되었습니다"),
     "公开 ID 生成失败": ("Failed to generate public ID", "公開IDの生成に失敗しました", "공개 ID 생성에 실패했습니다"),
     "六大领域牌已固定": ("Six-area cards are already fixed", "六領域のカードは確定済みです", "여섯 영역 카드가 이미 확정되었습니다"),
@@ -351,6 +380,9 @@ ERRORS = {
     "只有次卡可以发放解读次数": ("Only reading packs can grant reads", "回数パックのみ解読回数を付与できます", "횟수팩만 해석 횟수를 지급할 수 있습니다"),
     "只能确认自己发起的合并": ("You can only confirm a merge you started", "自分が開始した統合のみ確認できます", "직접 시작한 병합만 확인할 수 있습니다"),
     "只读账号不能修改": ("Read-only accounts cannot make changes", "閲覧専用アカウントは変更できません", "읽기 전용 계정은 수정할 수 없습니다"),
+    "只有管理员能管理操作员": ("Only admins can manage operators", "管理者のみオペレーターを管理できます", "관리자만 운영자를 관리할 수 있습니다"),
+    "没有该模块权限": ("You do not have access to this module", "このモジュールの権限がありません", "이 모듈 권한이 없습니다"),
+    "模块权限不正确": ("Module permissions are invalid", "モジュール権限が正しくありません", "모듈 권한이 올바르지 않습니다"),
     "可用牌不足": ("Not enough cards left", "使えるカードが足りません", "사용 가능한 카드가 부족합니다"),
     "合并结果缺失": ("Merge result is missing", "統合結果がありません", "병합 결과가 없습니다"),
     "合并请求不可确认": ("Merge request cannot be confirmed", "統合リクエストは確認できません", "병합 요청을 확인할 수 없습니다"),
@@ -393,6 +425,17 @@ ERRORS = {
     "微信登录失败": ("WeChat login failed", "WeChat ログインに失敗しました", "WeChat 로그인에 실패했습니다"),
     "微信登录未配置": ("WeChat login is not configured", "WeChat ログインは未設定です", "WeChat 로그인이 설정되지 않았습니다"),
     "性别选项不正确": ("Gender option is invalid", "性別の選択肢が正しくありません", "성별 옵션이 올바르지 않습니다"),
+    "探索偏好不正确": ("Explore preference is invalid", "探索の好みが正しくありません", "탐색 선호가 올바르지 않습니다"),
+    "邀请码不正确": ("Invite code is invalid", "招待コードが正しくありません", "초대 코드가 올바르지 않습니다"),
+    "不能填写自己的邀请码": ("You cannot use your own invite code", "自分の招待コードは使えません", "자신의 초대 코드는 사용할 수 없습니다"),
+    "已经绑定过邀请人": ("An inviter is already bound", "招待者は既に紐づいています", "이미 초대자가 연결되어 있습니다"),
+    "自定义牌组不存在": ("Custom deck not found", "カスタムデッキがありません", "커스텀 덱이 없습니다"),
+    "自定义牌组数量已达上限": ("Custom deck limit reached", "カスタムデッキの上限です", "커스텀 덱 한도에 도달했습니다"),
+    "牌组名称过长": ("Deck name is too long", "デッキ名が長すぎます", "덱 이름이 너무 깁니다"),
+    "请先保存牌组": ("Save the deck first", "先にデッキを保存してください", "먼저 덱을 저장하세요"),
+    "牌面来源不正确": ("Card face source is invalid", "カード面の出典が正しくありません", "카드 앞면 출처가 올바르지 않습니다"),
+    "牌背来源不正确": ("Card back source is invalid", "カード裏の出典が正しくありません", "카드 뒷면 출처가 올바르지 않습니다"),
+    "牌序号不正确": ("Card index is invalid", "カード番号が正しくありません", "카드 번호가 올바르지 않습니다"),
     "恢复购买钩子已关闭": ("Restore-purchase hook is disabled", "購入復元フックは無効です", "구매 복원 훅이 꺼져 있습니다"),
     "抽牌后不能修改问题": ("The question cannot be edited after cards are drawn", "カードを引いた後は質問を変更できません", "카드를 뽑은 뒤에는 질문을 수정할 수 없습니다"),
     "抽牌失败": ("Draw failed", "カードを引けませんでした", "카드 뽑기에 실패했습니다"),
@@ -505,6 +548,7 @@ ERRORS = {
     "记录已删除": ("Record deleted", "記録は削除済みです", "기록이 삭제되었습니다"),
     "记录类型不正确": ("Record type is invalid", "記録タイプが正しくありません", "기록 유형이 올바르지 않습니다"),
     "该微信已注销，不能重复领取注册奖励": ("This WeChat account was cancelled and cannot claim the signup reward again", "この WeChat は退会済みで、登録特典を再取得できません", "이 WeChat은 탈퇴되어 가입 보상을 다시 받을 수 없습니다"),
+    "该邮箱已注销，不能重复领取注册奖励": ("This email was cancelled and cannot claim the signup reward again", "このメールは退会済みで、登録特典を再取得できません", "이 이메일은 탈퇴되어 가입 보상을 다시 받을 수 없습니다"),
     "该牌面风格尚未开放": ("This deck style is not available yet", "このデッキスタイルはまだ開放されていません", "이 덱 스타일은 아직 열려 있지 않습니다"),
     "该登录方式已绑定，换绑未开放": ("This login is already bound. Rebinding is not available.", "このログイン方法は既に連携済みで、付け替えは未開放です", "이 로그인 방식은 이미 연결되어 있으며 재연결은 아직 없습니다"),
     "该苹果账号已注销，不能重复领取注册奖励": ("This Apple account was cancelled and cannot claim the signup reward again", "この Apple アカウントは退会済みで、登録特典を再取得できません", "이 Apple 계정은 탈퇴되어 가입 보상을 다시 받을 수 없습니다"),
@@ -522,6 +566,7 @@ ERRORS = {
     "请填写心愿内容": ("Enter a wish", "願いの内容を入力してください", "소원 내용을 입력하세요"),
     "请填写牌面名称": ("Enter a deck name", "デッキ名を入力してください", "덱 이름을 입력하세요"),
     "请填写补发原因": ("Enter a grant reason", "補填理由を入力してください", "지급 사유를 입력하세요"),
+    "请填写权益名称": ("Enter a benefit name", "特典名を入力してください", "혜택 이름을 입력하세요"),
     "请填写钻石或免费次数": ("Enter diamonds or free reads", "ダイヤモンドまたは無料回数を入力してください", "다이아 또는 무료 횟수를 입력하세요"),
     "请指定用户": ("Specify a user", "ユーザーを指定してください", "사용자를 지정하세요"),
     "请标明是否延续原问题": ("Say whether this continues the original question", "元の質問の継続かどうかを指定してください", "원래 질문을 이어가는지 표시하세요"),
@@ -544,7 +589,9 @@ ERRORS = {
     "邮件服务未配置": ("Mail is not configured", "メールサービスが未設定です", "메일 서비스가 설정되지 않았습니다"),
     "邮箱不正确": ("Email is invalid", "メールアドレスが正しくありません", "이메일이 올바르지 않습니다"),
     "邮箱和密码必填": ("Email and password are required", "メールとパスワードは必須です", "이메일과 비밀번호는 필수입니다"),
+    "邮箱和验证码必填": ("Email and verification code are required", "メールと認証コードは必須です", "이메일과 인증코드는 필수입니다"),
     "邮箱已注册": ("Email already registered", "このメールは登録済みです", "이미 등록된 이메일입니다"),
+    "邮箱登录失败": ("Email login failed", "メールログインに失敗しました", "이메일 로그인에 실패했습니다"),
     "邮箱已绑定或账号已注销": ("Email is already bound or the account was cancelled", "メールは連携済み、またはアカウント退会済みです", "이메일이 이미 연결되어 있거나 계정이 탈퇴되었습니다"),
     "邮箱或密码错误": ("Incorrect email or password", "メールまたはパスワード가 올바르지 않습니다", "이메일 또는 비밀번호가 올바르지 않습니다"),
     "邮箱格式不正确": ("Email format is invalid", "メール形式が正しくありません", "이메일 형식이 올바르지 않습니다"),
@@ -594,6 +641,26 @@ ERRORS["额度未扣减，记录已保留，不继续生成"] = (
     "Quota was not charged. Record kept; generation will not continue.",
     "クォータは未控除です。記録は保持し、生成は続けません。",
     "한도를 차감하지 않았습니다. 기록은 유지되고 생성은 이어지지 않습니다.",
+)
+ERRORS["额度补充包不能填写开通赠送"] = (
+    "Reading packs cannot set an opening grant",
+    "回数パックは開通付与を記入できません",
+    "횟수팩은 개통 지급을 입력할 수 없습니다",
+)
+ERRORS["年运解锁不能填写开通赠送"] = (
+    "Yearly unlock cannot set an opening grant",
+    "年運解除では開通付与を記入できません",
+    "연운 해제는 개통 지급을 입력할 수 없습니다",
+)
+ERRORS["只有额度补充包可以填写入账额度"] = (
+    "Only reading packs can set a credited quota",
+    "回数パックのみ入帳クォータを記入できます",
+    "횟수팩만 입금 한도를 입력할 수 있습니다",
+)
+ERRORS["会员单次额度须为正整数，或 null 表示未配置"] = (
+    "Member per-play quota must be a positive integer, or null if unconfigured",
+    "会員1回クォータは正の整数、または null で未設定です",
+    "회원 1회 한도는 양의 정수이거나, null이면 미설정입니다",
 )
 
 for zh, tri in ERRORS.items():

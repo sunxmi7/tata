@@ -75,6 +75,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/ledger/{id}", a.h(a.rejectLedgerWrite))
 	mux.HandleFunc("GET /api/admin/v1/grants", a.h(a.adminListGrants))
 	mux.HandleFunc("POST /api/admin/v1/grants", a.h(a.adminCreateGrant))
+	mux.HandleFunc("GET /api/admin/v1/redeem-codes", a.h(a.adminListRedeemCodes))
+	mux.HandleFunc("POST /api/admin/v1/redeem-codes", a.h(a.adminCreateRedeemCodes))
+	mux.HandleFunc("PUT /api/admin/v1/redeem-codes/{id}", a.h(a.adminUpdateRedeemCode))
 
 	mux.HandleFunc("GET /api/admin/v1/operators", a.h(a.adminListOperators))
 	mux.HandleFunc("POST /api/admin/v1/operators", a.h(a.adminCreateOperator))
@@ -92,7 +95,6 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/calendar", a.h(a.adminListCalendar))
 	mux.HandleFunc("POST /api/app/v1/auth/anonymous", a.appAnonymous)
 	mux.HandleFunc("POST /api/app/v1/auth/email/code", a.h(a.appSendEmailCode))
-	mux.HandleFunc("POST /api/app/v1/auth/register", a.appRegister)
 	mux.HandleFunc("POST /api/app/v1/auth/login", a.appLogin)
 	mux.HandleFunc("POST /api/app/v1/auth/wechat", a.appWechat)
 	mux.HandleFunc("POST /api/app/v1/auth/apple", a.appApple)
@@ -103,6 +105,15 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/auth/cancel", a.h(a.appCancel))
 	mux.HandleFunc("GET /api/app/v1/profile", a.h(a.appGetProfile))
 	mux.HandleFunc("PUT /api/app/v1/profile", a.h(a.appPutProfile))
+	mux.HandleFunc("GET /api/app/v1/legal", a.h(a.appLegal))
+	mux.HandleFunc("GET /api/app/v1/invites", a.h(a.appGetInvites))
+	mux.HandleFunc("POST /api/app/v1/invites/accept", a.h(a.appAcceptInvite))
+	mux.HandleFunc("GET /api/app/v1/cards", a.h(a.appListCards))
+	mux.HandleFunc("GET /api/app/v1/custom-decks", a.h(a.appListCustomDecks))
+	mux.HandleFunc("POST /api/app/v1/custom-decks", a.h(a.appCreateCustomDeck))
+	mux.HandleFunc("GET /api/app/v1/custom-decks/{id}", a.h(a.appGetCustomDeck))
+	mux.HandleFunc("PUT /api/app/v1/custom-decks/{id}", a.h(a.appPutCustomDeck))
+	mux.HandleFunc("POST /api/app/v1/custom-decks/{id}/use", a.h(a.appUseCustomDeck))
 	mux.HandleFunc("GET /api/app/v1/spreads", a.h(a.appSpreads))
 	mux.HandleFunc("GET /api/app/v1/preset-questions", a.h(a.appPresetQuestions))
 	mux.HandleFunc("GET /api/app/v1/banners", a.h(a.appBanners))
@@ -134,6 +145,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/monthly-reports", a.h(a.appMonthlyReports))
 	mux.HandleFunc("POST /api/app/v1/monthly-reports/save", a.h(a.appSaveMonthlyReport))
 	mux.HandleFunc("GET /api/app/v1/yearly-reports/{id}", a.h(a.appYearlyReport))
+	mux.HandleFunc("GET /api/app/v1/yearly-reports/{id}/share", a.h(a.appYearlyShare))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/unlock", a.h(a.appUnlockYearlyReport))
 	mux.HandleFunc("PUT /api/app/v1/yearly-reports/{id}/profile", a.h(a.appYearlyProfile))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/rhythm", a.h(a.appYearlyRhythm))
@@ -238,8 +250,8 @@ func (a *App) adminActor(r *http.Request, write bool) (actor, error) {
 	if err != nil || disabled {
 		return actor{}, authFail{}
 	}
-	if write && role != "admin" {
-		return actor{}, biz("只读账号不能修改")
+	if err := a.checkAdminAccess(r, id, role, write); err != nil {
+		return actor{}, err
 	}
 	return actor{id: id, role: role}, nil
 }

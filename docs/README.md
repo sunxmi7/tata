@@ -6,7 +6,7 @@
 
 路径、方法、请求体和响应形状来自 `server/internal/tata/routes.go` 及对应 handler，只收录已注册的接口。
 
-2026-10-28 起 App P0 壳层路径包括：`GET/PUT /api/app/v1/profile`（name/bio/avatar_url、account_display）、`GET /api/app/v1/explore/topics`、`POST /api/app/v1/redeem`、`GET /api/app/v1/wallet/ledger`、`POST /api/app/v1/uploads`、`POST /api/app/v1/wishlist`、`POST /api/app/v1/feedback`、`GET/PUT /api/app/v1/notification-preferences`。钻石账本的 UI 展示名为「塔塔币」（`display_label`）。
+2026-10-28 起 App P0 壳层路径包括：`GET/PUT /api/app/v1/profile`（name/bio/avatar_url、account_display）、`GET /api/app/v1/explore/topics`、`POST /api/app/v1/redeem`、`GET /api/app/v1/wallet/ledger`、`POST /api/app/v1/uploads`、`POST /api/app/v1/wishlist`、`POST /api/app/v1/feedback`、`GET/PUT /api/app/v1/notification-preferences`。额度账本的 UI 展示名为「额度」（`display_label`）。塔塔币已下线。
 
 同日 App P1：`GET /api/app/v1/redeem/records`、`GET /api/app/v1/campaigns`、`GET /api/app/v1/campaigns/{id}`、`GET /api/app/v1/campaigns/participations`、`GET /api/app/v1/campaigns/rewards`、`GET /api/app/v1/help/categories`、`GET /api/app/v1/help/articles`（`category`、`q`）、`GET /api/app/v1/help/articles/{id}`。兑换记录、活动详情、参与记录、奖励记录和 FAQ 正文仍是占位：列表可为空，不编造记录；FAQ `body` 为「待确认」。
 
@@ -17,20 +17,24 @@
 - **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
 - **错误码（有界）**：错误包络 `error_code` 供客户端按码分支，不随语言变化。`message` 按 `Accept-Language` / `X-Language` 读 `server/internal/tata/i18n/*.json`，缺省简体中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
 
-App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 **139** 条，与 `routes.go` 仍 1:1。
+App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 **151** 条，与 `routes.go` 仍 1:1。
+
+管理端兑换码：`GET/POST /api/admin/v1/redeem-codes`、`PUT /redeem-codes/{id}`。付费模块可写才能生成或停用。空码自动生成 `XXXX-XXXX`，App 仍走 `POST /api/app/v1/redeem` 核销。
+
+下线塔塔币字段：人工执行 [sql/drop_tata_coin_2026-11-17.sql](./sql/drop_tata_coin_2026-11-17.sql)，不随服务启动自动跑。执行前备份。代码只读写 `quota_balance`。
 
 内容导入：`GET /api/app/v1/preset-questions` 读预设题库，**公开，不需要 token**。`featured` 为首屏默认 15 条（与 backup 分开返回，混合排列）；`backup` 为备用题库。`?scene=` 只传场景码（relationship/career/study/growth/social/life）。同样公开的还有牌阵、塔罗师、提示窗、探索目录、活动列表/详情、帮助中心、SKU 目录。创建占卜、额度、档案、今日一牌仍要登录或匿名令牌。78 张韦特单牌写入 `cards` 表（图文件在 `server/uploads/cards/`）。SQL 见 [sql/seed_content_v1.sql](./sql/seed_content_v1.sql)。管理端 `GET/POST /api/admin/v1/cards`、`PUT /cards/{id}`、`PUT /card-settings`。App 文案 i18n 见 `server/internal/tata/i18n/*.json`，请求头 `Accept-Language` / `X-Language`；牌名优先读 `cards` 表多语言列。
 
 首屏 15 条（`featured`，文档《塔塔_预设问题库_V1》02 节）：最近的我最需要关注什么；TA 对这段关系的真实态度；三个月事业新机会；情绪困扰背后隐藏着什么；和 TA 接下来一个月；为了实现这个愿望可以做些什么；最近值得留意的新机会；职业方向是否继续坚持；这段关系还没看清的事；三个月财务变化；如何改善人际关系；主动迈出一步会怎样；尚未被发现的优势；一个月生活新可能；最需要听见什么样的提醒。详细 id/scene 见 `docs/openapi-app.yaml` 该接口说明。
 
-管理端价位三类：会员（`month_subscription` / `year_subscription` / `reading_pack`）、塔塔币（`consumable_pack`）、年运解锁（`yearly_unlock`）。种子已填设计价（分）和 App Store 占位商品号（`iap_skus.app_store_product_id`，如 `tata.membership.month`）；管理员改过的值保留。次卡用 `reading_grant` 发解读次数。App `GET /iap/skus?kind=` 按类型过滤。年运解锁价取已启用且已定价的 `yearly_unlock` SKU。
+管理端价位：会员月/年卡（`month_subscription` / `year_subscription`）、额度补充包（`reading_pack`，仅会员可买，种子 `pack_quota_20/60/100`）、年运解锁（`yearly_unlock`）。`consumable_pack` 塔塔币已下线。种子已填设计价（分）和 App Store 占位商品号；`reading_grant` 未配置为 null，不编造次数。App `GET /iap/skus` 对非会员隐藏补充包。年运解锁价取已启用且已定价的 `yearly_unlock` SKU；年运玩法需有效会员，生成扣统一额度。
 
 2026-11-06 对照定稿 UI 补接口（对齐项已确认，见 [design/ui-gap-vs-api-2026-11-06.md](./design/ui-gap-vs-api-2026-11-06.md)）：
 - **月度报告**：`GET /api/app/v1/monthly-reports`、`POST /api/app/v1/monthly-reports/save`。统计来自当月 readings；寄语截取已完成解读，不编造。
 - **年度运势**：`GET /yearly-reports/{id}`、`POST .../unlock`、`PUT .../profile`、`POST .../rhythm`（12 张全年节奏）、`POST .../domains`（6 张：感情/事业/财运/健康/人际/成长）、`POST .../generate`。年卡免费解锁；单独购买价取 `yearly_unlock` SKU。生成走 interpret 供应商，不编造。
 - **灵数抽牌**：`POST /readings/{id}/draw` 接受 `mode=numerology` + `numbers`（1–78 不重复，映射 Rider-Waite）。
 - **账号**：`account_display` 脱敏邮箱，无则微信/Apple；新增 6 位 `public_id`。App 不绑、不展示手机号。
-- **会员/塔塔币**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）；6 档消耗包 `pack_60`…`pack_3280` 已填设计价。追问上限管理端 `PUT /quota-params` 可改，null 不限制。
+- **会员/额度**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）。塔塔币 6 档已下线，改为额度补充包 `pack_quota_20/60/100`。追问上限管理端 `PUT /quota-params` 可改，null 不限制。免费用户每日免费全局 1 次；会员扣 `quota_balance`。邀请独立账本，最多 5 人、每人 +3。
 - **历史列表**：每条带 `short_text` / `card_name` / `status_label` / `card_thumbnail`（单牌 URL → 模板 → 默认图 → 内置 `/uploads/card-default.png`；无牌名才为 null）。
 - **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。`available[]` 含 `description` / `tags`（未填为空串与空数组，不编造）。种子仅 `rider-waite` / 莱德韦特；管理端 `PUT /copy/decks` 可改介绍、标签与预览图。未上架 code 仍拒。
 - **牌阵推荐 / 示意图**：`GET /spreads` 含 `recommended` 与 `thumbnail`。种子「时间流」为推荐；示意图未配用内置默认牌背。管理端勾选推荐时全表最多一张。
@@ -39,12 +43,28 @@ App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **今日一牌宜 / 牌面缩略图**：`yi` 取 `cards.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。管理端独立模块「牌面」维护 `cards` 表。
 - **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；年运等无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。单牌目录以 `/api/admin/v1/cards` 为准。
 - **管理端上传**：`POST /api/admin/v1/uploads?folder=`。后台图片字段走 Vben Form 的 Upload。`folder` 分子目录：牌阵 `spreads`、风格 `decks`、单牌/默认图 `cards`，缺省 `misc`。存哪由 `upload.driver` 决定：`local` 或阿里云 OSS。
-- **邮箱验证码**：`POST /api/app/v1/auth/email/code`。注册 / 绑邮箱要先发码再带 `code`。邮箱登录只验密码，不发码。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
-- **微信 / 苹果登录**：`POST /auth/wechat`、`/auth/apple` 以及对应 bind。微信填 `wechat.appId/appSecret`（iOS/Android 共用），客户端传 SDK `code`。苹果登录仅 iOS，填 `apple.clientId`（Bundle ID），传 `identity_token`。凭证空、`enabled=false` 即可先上代码；填上并把 `enabled` 设为 true 后直接可用。未配置分别返回「微信登录未配置」「苹果登录未配置」。
+- **邮箱验证码登录**：`POST /api/app/v1/auth/email/code` scene=`login` 或 `bind`，再 `POST /auth/login` `{email, code}`。没有单独注册接口；未注册邮箱首次验证码登录即创建账号。绑邮箱同样只验码、不设密码。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
+- **微信 / 苹果登录**：`POST /auth/wechat`、`/auth/apple` 以及对应 bind。微信填 `wechat.appId/appSecret`（iOS/Android 共用），客户端传 SDK `code`。换票后拉 `sns/userinfo`：档案名为空则写入微信昵称，头像为空则下载转存到 `uploads/misc`；已有资料不覆盖，userinfo 失败不挡登录。苹果登录仅 iOS，填 `apple.clientId`（Bundle ID），传 `identity_token`。凭证空、`enabled=false` 即可先上代码；填上并把 `enabled` 设为 true 后直接可用。未配置分别返回「微信登录未配置」「苹果登录未配置」。
 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 
-定稿 HTTP 字段已齐。还剩运营填文案/图与 Connect 商品号。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。
+2026-11-16 对照新 UI 补接口：
+- **个人档案**：`PUT /profile` 接受性别「女/男/其他」，新增 `explore_preferences`（八项多选）。
+- **用户协议**：公开 `GET /legal`；管理端 `PUT /copy/legal`。未填 pending，不编造条款。
+- **好友邀请**：`GET /invites` 返回 public_id；登录可带 `invite_code`，或 `POST /invites/accept`。成功给邀请人 +3 次。`GET /campaigns/rewards` 返回真实到账，fields_confirmed=true。参与记录仍占位。
+- **78 张牌**：`GET /cards?deck=` 对应「查看全部 78 张」。
+- **自定义塔罗牌**：`GET/POST /custom-decks`、`GET/PUT /custom-decks/{id}`、`POST .../use`。图片 `POST /uploads?folder=custom`。
+- **年运分享**：`GET /yearly-reports/{id}/share` 给分享图品牌/标题/昵称/报告正文，不编造关键词。
+- **探索牌阵文字总结**：`GET /spreads` 增加 theme_key / theme_title / theme_subtitle / short_sentence，运营填，不编造。
+
+定稿 HTTP 字段已齐。还剩运营填文案/图与 Connect 商品号。登录多步 UI（Q-N1）后置；删号 UI（Q-B7）占位。邮箱密码登录未做（产品为验证码登录）。
+
+2026-11-17 额度体系调整（对齐《塔塔 App 新人体验、每日免费次数及额度体系调整》一至五）：
+- 取消塔塔币与注册奖励。免费 / 会员每次提问按当前身份分流。
+- 免费：全局每日 1 次（普通 ≤3 张 + 今日/明日）；探索 / 年运 / AI / 超过三张需会员。邀请独立次数，最多 5×3，不过日清。
+- 会员：不享受每日免费，统一扣 `quota_balance`。补充包仅会员可买并入额度；会员过期后额度冻结不扣。
+- 新人：设备引导体验与 AI 试用（仅提问，禁止追问）独立，不扣每日/额度。
+- 待确认数字未编造：会员开通赠送、每次扣额度、补充包发放次数、剩余百分比分母。`diamond_cost` / `reading_grant` 为 null 时停住。
 
 ## 导入 Apifox
 
@@ -54,4 +74,4 @@ App 路由现为 **77** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。公开目录（预设问题、牌阵、塔罗师、提示窗、探索、活动、帮助、SKU）不用带 token。其余需要登录（或匿名令牌）的接口在 **Headers** 加 `Authorization`，值 `Bearer <accessToken>`（登录/注册/匿名返回的 token）。不要把 token 放进请求体。
 
-管理端只出现在完整契约里。登录后同样在 Headers 加 `Authorization: Bearer <accessToken>`。本地种子：`admin` / `admin123`（可写），`readonly` / `readonly123`（只读）。只读角色调用写接口会得到 `code=1`、`message=只读账号不能修改`。
+管理端只出现在完整契约里。登录后同样在 Headers 加 `Authorization: Bearer <accessToken>`。本地种子：`admin` / `admin123`（全部模块可写，可给别人按模块授权），`readonly` / `readonly123`（五个模块只读）。无模块权限调用对应接口得到 `没有该模块权限`；有读无写调用写接口得到 `只读账号不能修改`。只有 `admin` 能新建/停用操作员并分配模块。

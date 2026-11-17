@@ -29,7 +29,7 @@ info:
     两种令牌不能互换。已合并账号（`merged_into` 非空）、不存在的用户、已停用的操作员会被拒绝。
     App 登录接口不签发 refresh token。管理端 refresh token 是库存的不透明字符串（约 7 天），不是 JWT。
 
-    写操作调用 `adminActor(write=true)`，`readonly` 得到「只读账号不能修改」。
+    写操作调用 `adminActor(write=true)`。`role=admin` 拥有全部模块。`readonly` 按 `operator_module_perms` 的 content/ai/records/accounts/pay 授权：无该模块为「没有该模块权限」，有读无写为「只读账号不能修改」。只有 admin 能管理操作员。种子 `readonly` 五个模块均为只读。
 
     全局 CORS 允许头：`Authorization`、`Content-Type`、`Idempotency-Key`、`Accept-Language`、`X-Language`、`Accept`。`OPTIONS` 返回 204，没有单独业务路径。
 
@@ -37,11 +37,12 @@ info:
     语言偏好**不上云**（无 `profile.locale`）。客户端本地保存；App 请求携带 **`Accept-Language`**（推荐 `zh-Hans`、`zh-Hant`、`en`、`ja`、`ko`），亦可传 **`X-Language`**。未带头或无法识别时按 **`zh-Hans`**。服务端用该头查 `server/internal/tata/i18n/*.json`（简体原文为 key），本地化错误 `message`、额度提示、状态/类型标签、牌名、牌组名、预设问题和固定空状态文案。运营 CMS（帮助正文、活动详情、占卜师文案）和 AI 解读原文仍按入库语言返回。`error_code` 不随语言变化。
 
     ## 未配置的价格、验单与占位
-    - 种子 SKU（`sub_month`、`sub_year`、`sub_times`、`pack_consumable`）的 `price_amount_minor`、`price_currency`、`diamond_grant`、`reading_grant`、商店商品号、`period_count` 保持 null。接口不编造价格、钻石数或次卡次数。
+    - 种子 SKU：`sub_month` / `sub_year` 已填会员价；`pack_quota_20/60/100` 为额度补充包（20/60/100 元），`reading_grant` 未配置为 null；`unlock_yearly` 年运解锁。`consumable_pack`（塔塔币）已下线。接口不编造会员开通赠送额度或补充包次数。
     - `POST /api/app/v1/iap/verify` 与 restore **不调用** App Store / Google Play。只保存票据的 SHA-256，按 `product_id` 映射 `iap_skus`。发放量为 null 时 `credit_status=amount_unconfigured`，不写入账。
-    - `quota_settings.diamond_cost` 默认为 null。未配置时扣费走到钻石步会停住：`quota_outcome=diamond_cost_unconfigured`，不猜测单次消耗。
-    - IAP 入账只写钻石账本与次卡次数（rewards.admin_grant_remaining），不写次数占位表。
-    - 人工补发只加余额和审计，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
+    - `quota_settings.diamond_cost` 现为会员每次扣额度的单价，默认为 null。未配置时会员扣费停住：`quota_outcome=diamond_cost_unconfigured`，不猜测单次消耗。
+    - IAP：订阅发放写入统一 `quota_balance`（累加，不替换）；`reading_pack` 仅会员可买，入账 `quota_balance`；`consumable_pack` 验单失败「塔塔币已下线」。
+    - 人工补发 `diamonds` 写入统一额度，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
+    - 注册奖励已下线。免费用户扣费顺序：今日免费（全局 1 次）→ 邀请奖励 → 人工补发 → 开通会员。会员只扣统一额度。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
     - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心正文固定为「待确认」。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
     - 活动列表与帮助中心的「加载失败，请重试」是客户端在请求失败后的状态，重试同一 GET。服务端沿用现有 `code=1` 包络，不另开错误体。
@@ -56,15 +57,15 @@ tags:
   - name: 占卜解读
     description: 占卜记录与仪式流程（检测、牌阵、洗牌、切牌、抽牌、解读、追问、工作流）。
   - name: 额度钻石
-    description: 次数与钻石的查询、确认和付费等待。优先级见各接口说明。
+    description: 免费次数、邀请次数与会员统一额度。免费用户不展示额度余额；会员看 quota_remaining。
   - name: 内购
-    description: App 内购验单、恢复、余额与 SKU。价格与发放数量未配置时保持 null。
+    description: 会员订阅、额度补充包与年运解锁。塔塔币包已下线。价格与发放数量未配置时保持 null。
   - name: 每日一牌
     description: 今日 / 明日一牌与日历。
   - name: 探索
     description: 探索目录分组与主题条目。spread 映射可为空 stub。
   - name: 钱包兑换
-    description: 兑换码核销、兑换记录与钻石（展示名「塔塔币」）流水。不另开第二套账本。兑换记录行字段仍待确认。
+    description: 兑换码核销、兑换记录与额度流水。diamonds 类兑换写入统一额度。兑换记录行字段仍待确认。
   - name: 活动
     description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
   - name: 帮助
@@ -80,7 +81,7 @@ tags:
   - name: 供应商
     description: 模型供应商与任务绑定。
   - name: 额度补发
-    description: 额度参数（只读）、次数流水（只读）与人工补发。
+    description: 额度参数（只读）、次数流水（只读）、人工补发与兑换码生成。
   - name: 管理端内购
     description: 订单、SKU、钻石余额与 IAP 开关。管理端只读。
   - name: 审计账号
@@ -95,7 +96,7 @@ components:
       required: true
       description: |
         填 `Bearer ` + accessToken。Bearer 后面有一个空格。放在 Headers，不要放进请求体。
-        App 用登录/注册/匿名返回的 token；管理端用管理端登录返回的 token。两种不能混用。
+        App 用登录/匿名返回的 token；管理端用管理端登录返回的 token。两种不能混用。
       schema:
         type: string
         example: Bearer eyJhbGciOiJIUzI1NiJ9
@@ -104,7 +105,7 @@ components:
       in: header
       required: false
       description: |
-        注册发码不用填。scene=bind 时必填 `Bearer <accessToken>`。
+        登录发码不用填。scene=bind 时必填 `Bearer <accessToken>`。
       schema:
         type: string
         example: Bearer eyJhbGciOiJIUzI1NiJ9
@@ -181,7 +182,7 @@ components:
           description: 业务失败固定为 1。HTTP 多为 200；鉴权失败为 401。
         message:
           type: string
-          description: 失败原因，按 Accept-Language / X-Language 本地化；缺省简体中文。例如「邮箱或密码错误」或 Not logged in or token invalid。
+          description: 失败原因，按 Accept-Language / X-Language 本地化；缺省简体中文。例如「验证码不正确或已过期」或 Not logged in or token invalid。
         error_code:
           type: string
           description: |
@@ -526,6 +527,18 @@ components:
         thumbnail:
           type: string
           description: 选阵屏牌阵示意图完整 URL。未配置时为当前服务地址下的内置默认牌背，例如 http://127.0.0.1:8080/uploads/card-default.png。已配置的 http(s) 地址原样返回。
+        theme_key:
+          type: string
+          description: 探索牌阵主题键。空则未分组。对应文字总结版主题。
+        theme_title:
+          type: string
+          description: 探索牌阵主题标题，例如「Yes or No」。未填为空串。
+        theme_subtitle:
+          type: string
+          description: 探索牌阵主题副标题。未填为空串。
+        short_sentence:
+          type: string
+          description: 牌阵短句。未填为空串，不编造。
     SpreadBody:
       type: object
       additionalProperties: false
@@ -560,6 +573,20 @@ components:
           type: string
           nullable: true
           description: 牌阵示意图 URL。新建省略为空。更新省略保持原值。空字符串清除。
+        theme_key:
+          type: string
+          nullable: true
+          description: 探索主题键。新建省略为空。更新省略保持原值。
+        theme_title:
+          type: string
+          nullable: true
+        theme_subtitle:
+          type: string
+          nullable: true
+        short_sentence:
+          type: string
+          nullable: true
+          description: 牌阵短句。新建省略为空。更新省略保持原值。
     Card:
       type: object
       properties:
@@ -850,9 +877,10 @@ components:
     QuotaView:
       type: object
       description: |
-        用户可见「次数」与「钻石」分开。扣减顺序固定：注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费等待。
-        钻石先扣 pack（consumable），再扣 subscription，单次不拆桶。
-        diamond_cost 未配置时为 null，不会出现猜测出来的单价。
+        按当前是否会员分流。免费用户返回今日免费 / 邀请 / 人工补发，不返回额度余额。
+        会员返回统一额度 quota_remaining，不返回每日免费。
+        免费扣费顺序：今日免费（全局 1 次，含普通≤3 张牌与今日/明日）→ 邀请奖励 → 人工补发 → 开通会员。
+        会员每次扣 quota_settings.diamond_cost；未配置为 null，quota_outcome=diamond_cost_unconfigured。
         followup_limit 为每条解读可追问次数，种子默认 5，null 不限制。
       properties:
         cycle:
@@ -882,10 +910,32 @@ components:
           description: 今日已占用的免费次数标记位数，内部计数。
         reward_remaining:
           type: integer
-          description: 注册奖励剩余次数。
+          description: 历史字段。注册奖励已下线，当前不再发放，合并响应里仍可能为 0。
+        invite_remaining:
+          type: integer
+          description: 邀请奖励剩余次数。不过日清。仅免费用户返回。
+        invite_count:
+          type: integer
+          description: 已成功邀请人数。上限 5。
+        max_invites:
+          type: integer
+          example: 5
+          description: 邀请人数上限。
+        is_member:
+          type: boolean
+          description: 当前是否有效会员。
+        can_buy_pack:
+          type: boolean
+          description: 是否可买额度补充包。仅会员为 true。
+        quota_remaining:
+          type: integer
+          description: 会员统一额度。免费用户不返回。
+        membership:
+          type: object
+          description: 当前会员摘要。非会员为 null 或不出现。
         admin_grant_free_remaining:
           type: integer
-          description: 人工补发的免费次数剩余。
+          description: 人工补发的免费次数剩余。仅免费用户返回。
         subscription_prompt_required:
           type: boolean
           description: 合并账号后订阅需要用户选择时为 true。
@@ -895,36 +945,36 @@ components:
           description: 免费次数在 UI 上的名称。
         paid_label:
           type: string
-          example: 钻石
-          description: 付费额度在 UI 上的名称（与 display_label 塔塔币对应账本单位）。
+          example: 额度
+          description: 付费额度在 UI 上的名称。
         priority:
           type: string
-          example: 注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费
-          description: 扣减顺序说明文案。
+          example: 今日免费次数 → 邀请奖励次数
+          description: 扣减顺序说明文案。会员为「会员统一额度」。
         diamond_spend_order:
           type: string
-          example: pack_then_subscription
-          description: 钻石先扣消耗包再扣订阅余额。
+          description: 历史字段。两桶钻石已并入统一额度，当前不再返回。
         diamond_cost:
           type: integer
           nullable: true
-          description: quota_settings.diamond_cost。未配置为 null。
+          description: 会员每次扣额度的单价。未配置为 null。与 quota_cost 同值。
         diamond_cost_configured:
           type: boolean
-          description: diamond_cost 是否已配置。false 时走到钻石步会停住。
-        subscription_diamonds:
+          description: diamond_cost 是否已配置。false 时会员扣费停住。
+        quota_cost:
           type: integer
-          description: 订阅桶钻石余额。
-        pack_diamonds:
-          type: integer
-          description: 消耗包桶钻石余额。
+          nullable: true
+          description: 与 diamond_cost 相同，会员单价。
+        quota_cost_configured:
+          type: boolean
+          description: 与 diamond_cost_configured 相同。
         display_label:
           type: string
-          example: 塔塔币
-          description: UI 展示名。账本单位仍是钻石。
+          example: 额度
+          description: UI 展示名。
         balance:
           type: integer
-          description: pack_diamonds + subscription_diamonds。我的页余额用这个合计。
+          description: 会员统一额度，与 quota_remaining 相同。免费用户不返回。
         followup_limit:
           type: integer
           nullable: true
@@ -970,15 +1020,18 @@ components:
           nullable: true
         diamond_cost_configured:
           type: boolean
+        diamond_cost_editable:
+          type: boolean
+          example: true
         diamond_spend_order:
           type: string
-          example: pack_then_subscription
+          example: quota
         free_label:
           type: string
           example: 次数
         paid_label:
           type: string
-          example: 钻石
+          example: 额度
     AdminQuotaUpdateBody:
       type: object
       additionalProperties: false
@@ -995,6 +1048,14 @@ components:
           type: integer
           nullable: true
           description: 正整数；null 表示不限制。
+        diamond_cost:
+          type: integer
+          nullable: true
+          description: 会员每次扣额度的单价。正整数；null 表示未配置，不编造。
+        quota_cost:
+          type: integer
+          nullable: true
+          description: 与 diamond_cost 相同。
     Profile:
       type: object
       properties:
@@ -1012,7 +1073,18 @@ components:
         gender:
           type: string
           nullable: true
-          description: 女性 / 男性 / 不愿透露。未填为 null。
+          description: 女性 / 男性 / 不愿透露。未填为 null。PUT 也接受 UI 用的「女」「男」「其他」，入库仍是这三项。
+        explore_preferences:
+          type: array
+          description: 探索偏好，可多选。取值仅限个人档案八项。未填为空数组。
+          items:
+            type: string
+            enum: [感情与关系, 工作与学业, 自我成长, 人生选择, 日常生活, 财务与规划, 情绪与疗愈, 人际相处]
+        explore_preference_options:
+          type: array
+          description: 个人档案可选的探索偏好全集，便于客户端渲染选项。
+          items:
+            type: string
         wechat_openid:
           type: string
           nullable: true
@@ -1051,8 +1123,16 @@ components:
           description: 空字符串表示不修改。服务端不校验日期格式。
         gender:
           type: string
-          description: 空字符串表示不修改。非空只允许「女性」「男性」「不愿透露」。
-          enum: ['', 女性, 男性, 不愿透露]
+          description: |
+            空字符串表示不修改。非空允许「女性」「男性」「不愿透露」，以及个人档案 UI 的「女」「男」「其他」。
+            「女」存为女性，「男」存为男性，「其他」存为不愿透露。
+          enum: ['', 女性, 男性, 不愿透露, 女, 男, 其他]
+        explore_preferences:
+          type: array
+          description: 省略不修改。传数组则整表替换。只允许个人档案八项，可空数组清空。
+          items:
+            type: string
+            enum: [感情与关系, 工作与学业, 自我成长, 人生选择, 日常生活, 财务与规划, 情绪与疗愈, 人际相处]
         timezone:
           type: string
           description: 空字符串表示不修改。非空必须是 time.LoadLocation 可识别的 IANA 时区。
@@ -1079,7 +1159,7 @@ components:
           description: 登录用户数字 id。匿名进入不返回此字段。
         reward_consumed:
           type: boolean
-          description: 登录/注册后尝试结算未扣费占卜时，是否扣了注册奖励。
+          description: 登录后尝试结算未扣费占卜时，是否扣了注册奖励。
         needs_confirm:
           type: boolean
           description: 额度结算是否需要确认。当前实现多为 false。
@@ -1088,14 +1168,14 @@ components:
           description: 额度相关提示文案。无则空或不出现。
         reward_note:
           type: string
-          description: 微信登录成功时的额度说明，例如「注册奖励优先于今日免费次数，提问时自动扣减」。
+          description: 首次邮箱登录或微信登录成功时的额度说明。
         registration_reward_expires_at:
           type: string
           format: date-time
-          description: 注册奖励到期时间。该身份已领过时为零值时间。
+          description: 历史字段。注册奖励已下线，当前不再返回有效到期时间。
         login:
           type: string
-          description: 苹果登录成功时为 apple。其他登录方式可不出现。
+          description: 邮箱登录为 email，苹果登录为 apple。微信登录可不出现。
         anonymous_id:
           type: string
           description: 仅匿名进入返回。把尚未归属的占卜挂到这个 id。
@@ -1143,7 +1223,7 @@ components:
                   type: array
                   items:
                     type: string
-                    enum: [admin, readonly]
+                  description: 登录响应只含 role（admin 或 readonly）。菜单过滤以 GET /user/info 的 roles 为准，含 role 与已授权模块 id。
     AdminRefreshOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -1167,9 +1247,11 @@ components:
           type: array
           items:
             type: string
+          description: 第一项为 admin 或 readonly，其后为已授权模块 id（content/ai/records/accounts/pay）。前端 accessMode=frontend 用它过滤菜单。
         homePath:
           type: string
           example: /tata/spread
+          description: admin 或有内容权限时为 /tata/spread；否则落到该账号第一个有权限的模块首页。
         desc:
           type: string
         token:
@@ -1202,6 +1284,23 @@ components:
           enum: [admin, readonly]
         disabled:
           type: boolean
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorModule"
+          description: role=admin 时固定为五个模块且 can_write=true。readonly 为已授权模块，空数组表示无模块。
+    OperatorModule:
+      type: object
+      additionalProperties: false
+      required: [module, can_write]
+      properties:
+        module:
+          type: string
+          enum: [content, ai, records, accounts, pay]
+          description: content 内容、ai 模型、records 记录、accounts 账号、pay 付费。
+        can_write:
+          type: boolean
+          description: false 为该模块只读。
     OperatorCreate:
       type: object
       additionalProperties: false
@@ -1214,6 +1313,11 @@ components:
         role:
           type: string
           enum: [admin, readonly]
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorModule"
+          description: 仅 role=readonly 生效。省略或空数组表示暂无模块。admin 忽略此字段。
     OperatorPatch:
       type: object
       additionalProperties: false
@@ -1222,6 +1326,11 @@ components:
           type: boolean
           nullable: true
           description: 省略或 null 会把账号重新启用（写成 false）。不能停用自己。
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorModule"
+          description: 省略则不改模块权限。传空数组清空授权。role=admin 的账号忽略此字段。不能自己停用自己。
     AppUserAdmin:
       type: object
       properties:
@@ -1711,6 +1820,21 @@ components:
                 items:
                   type: string
                 description: 套装标签。未填为空数组，不编造。
+        custom_deck:
+          type: object
+          nullable: true
+          description: 当前正在使用的自定义牌组。未使用为 null。
+          properties:
+            id:
+              type: integer
+              format: int64
+            name:
+              type: string
+            code:
+              type: string
+              description: custom:{id}，可交给 PUT /deck-preference。
+            status:
+              type: string
     DeckPreferenceBody:
       type: object
       additionalProperties: false
@@ -1718,6 +1842,7 @@ components:
       properties:
         code:
           type: string
+          description: 已启用官方牌组 code，或 custom:{id}（须已保存且属于当前用户）。
     SKUBenefit:
       type: object
       properties:
@@ -1946,50 +2071,36 @@ components:
           type: string
           description: |
             必填。发码场景：
-            register 注册前发码，该邮箱已有账号时返回「邮箱已注册」；
+            login 邮箱验证码登录（未注册邮箱首次登录即创建账号），已有账号也可以发码；
             bind 绑定邮箱，必须先登录，未登录为 HTTP 401。
-            登录不发码。同一邮箱同一 scene 60 秒内只能发一次，每小时最多 10 次。
-          enum: [register, bind]
+            同一邮箱同一 scene 60 秒内只能发一次，每小时最多 10 次。
+          enum: [login, bind]
       example:
         email: demo@tata.local
-        scene: register
+        scene: login
     EmailCodeResult:
       type: object
       properties:
         expires_in:
           type: integer
           description: 验证码有效秒数，固定 300。响应里不回验证码，验证码只在邮件正文。
-    RegisterBody:
-      type: object
-      additionalProperties: false
-      required: [email, password, code]
-      properties:
-        email:
-          type: string
-          description: 必填。注册邮箱，按小写比较。已注册返回「邮箱已注册」。
-        password:
-          type: string
-          description: 必填。登录密码。
-        code:
-          type: string
-          description: 必填。邮箱验证码，6 位数字，5 分钟有效。先调 POST /auth/email/code 且 scene=register。不对或过期返回「验证码不正确或已过期」。
-        anonymous_id:
-          type: string
-          description: 选填。传入匿名进入拿到的 anonymous_id 时，把该 id 下尚未归属的占卜转到新用户。
     LoginBody:
       type: object
       additionalProperties: false
-      required: [email, password]
+      required: [email, code]
       properties:
         email:
           type: string
-          description: 必填。登录邮箱，按小写比较。
-        password:
+          description: 必填。登录邮箱，按小写比较。未注册时用验证码登录会创建账号。
+        code:
           type: string
-          description: 必填。登录密码。邮箱、密码错误或账号已注销，均返回「邮箱或密码错误」。
+          description: 必填。邮箱验证码，6 位数字，5 分钟有效。先调 POST /auth/email/code 且 scene=login。不对或过期返回「验证码不正确或已过期」。
         anonymous_id:
           type: string
           description: 选填。传入匿名进入拿到的 anonymous_id 时，把该 id 下尚未归属的占卜转到此用户。
+        invite_code:
+          type: string
+          description: 选填。邀请人 6 位 public_id。校验失败不挡登录；成功则给邀请人 +3 次并写入奖励记录。同一账号只能绑定一次。
     WechatBody:
       type: object
       additionalProperties: false
@@ -1998,6 +2109,9 @@ components:
         code:
           type: string
           description: 必填。微信开放平台移动应用 SDK 返回的临时授权码。iOS / Android 共用同一套 appId。服务端拿它向微信换 openid 或 unionid，客户端不要传 openid。
+        invite_code:
+          type: string
+          description: 选填。邀请人 6 位 public_id。校验失败不挡登录。
     AppleBody:
       type: object
       additionalProperties: false
@@ -2006,17 +2120,17 @@ components:
         identity_token:
           type: string
           description: 必填。仅 iOS。Sign in with Apple 返回的 identity_token（JWT）。服务端用 Apple JWKS 校验后取 sub，客户端不要传 sub。安卓没有苹果登录。
+        invite_code:
+          type: string
+          description: 选填。邀请人 6 位 public_id。校验失败不挡登录。
     EmailBindBody:
       type: object
       additionalProperties: false
-      required: [email, password, code]
+      required: [email, code]
       properties:
         email:
           type: string
           description: 必填。要绑定的邮箱，按小写比较。已绑过邮箱不能换绑。
-        password:
-          type: string
-          description: 必填。给该邮箱设置的登录密码。
         code:
           type: string
           description: 必填。邮箱验证码。先调 POST /auth/email/code 且 scene=bind。不对或过期返回「验证码不正确或已过期」。
@@ -2262,7 +2376,8 @@ components:
       type: object
       description: |
         本地验单结果。verify_status=verified 只表示商品映射通过，不是商店回执。
-        credit_status=amount_unconfigured 表示发放量未配置（钻石或次卡次数），对应 credited_* 为 null，余额不变。
+        credit_status=amount_unconfigured 表示发放量未配置（订阅额度或补充包次数），对应 credited_* 为 null，余额不变。
+        consumable_pack 验单失败「塔塔币已下线」。reading_pack 非会员失败「仅会员可购买额度补充包」。
         同一 platform+transaction_id 再次提交且已 verified 时 idempotent=true，不重复入账。
       properties:
         order_id:
@@ -2278,8 +2393,8 @@ components:
           description: 同一 platform+transaction_id 已 verified 时为 true，不重复入账。
         unit:
           type: string
-          example: diamond
-          description: 账本单位，钻石为 diamond。
+          example: quota
+          description: 账本单位，额度为 quota。
         sku_code:
           type: string
           description: 映射到的 iap_skus.code。
@@ -2288,7 +2403,7 @@ components:
           description: SKU 种类，见 IAPSKU.kind。
         ledger_bucket:
           type: string
-          description: subscription 或 consumable。订阅入账会把该桶余额替换为发放量；消耗型在原余额上累加。
+          description: SKU 的 ledger_bucket。实际入账写入 quota_balance，ledger 行为 quota。
         platform:
           type: string
           description: app_store 或 play。
@@ -2312,11 +2427,11 @@ components:
         credited_diamonds:
           type: integer
           nullable: true
-          description: 本次入账钻石。未配置或非钻石商品为 null。
+          description: 订阅入账额度。未配置为 null。
         credited_readings:
           type: integer
           nullable: true
-          description: 次卡入账的解读次数。未配置或非次卡为 null。
+          description: 额度补充包入账次数。未配置或非补充包为 null。
         period_start:
           type: string
           format: date-time
@@ -2334,12 +2449,9 @@ components:
         verify_message:
           type: string
           description: 验单说明或失败原因。成功可为空。
-        subscription_diamonds:
+        quota_remaining:
           type: integer
-          description: 入账后订阅桶余额。
-        pack_diamonds:
-          type: integer
-          description: 入账后消耗包桶余额。
+          description: 入账后统一额度。
         subscription:
           $ref: "#/components/schemas/IAPSubscription"
           description: 当前订阅摘要。无订阅为 null。
@@ -2357,9 +2469,9 @@ components:
     IAPSKU:
       type: object
       description: |
-        三类价位对应三块屏：会员（月卡 / 年卡 / 次卡）、塔塔币、年运单独解锁。
+        价位：会员月/年卡、额度补充包（仅会员目录可见）、年运解锁。consumable_pack（塔塔币）已下线，App 目录不返回。
         种子已填设计价（分）和 App Store 占位商品号；管理员改过的值保留。
-        kind：month_subscription（会员月卡）、year_subscription（会员年卡）、reading_pack（会员次卡）、consumable_pack（塔塔币）、yearly_unlock（年运解锁）。
+        kind：month_subscription、year_subscription、reading_pack（额度补充包）、consumable_pack（已停用）、yearly_unlock。
       properties:
         id:
           type: integer
@@ -2367,15 +2479,15 @@ components:
           description: SKU id。
         code:
           type: string
-          description: 内部编码，例如 sub_month、pack_60。
+          description: 内部编码，例如 sub_month、pack_quota_20。
         kind:
           type: string
           enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
-          description: 价位种类。会员月/年/次卡、塔塔币包、年运解锁。
+          description: 价位种类。会员月/年卡、额度补充包、已下线塔塔币、年运解锁。
         ledger_bucket:
           type: string
           enum: [subscription, consumable]
-          description: 入账桶。订阅类进 subscription，塔塔币包进 consumable。
+          description: SKU 标记桶。实际额度记在 quota_balance。
         display_name:
           type: string
           description: 客户端展示名。
@@ -2399,11 +2511,11 @@ components:
         diamond_grant:
           type: integer
           nullable: true
-          description: 未配置为 null。验单不会把 null 当成 0 颗钻石入账。次卡与年运解锁不使用此字段。
+          description: 历史列。订阅开通赠送额度未配置为 null，不编造。补充包与年运解锁不使用此字段。
         reading_grant:
           type: integer
           nullable: true
-          description: 仅次卡。解读次数，未配置为 null。验单不会把 null 当成 0 次入账。
+          description: 额度补充包入账次数。未配置为 null。验单不会把 null 当成 0。
         period_unit:
           type: string
           description: 订阅周期单位，如 month、year。消耗型为空。
@@ -2419,12 +2531,12 @@ components:
           description: 是否对 App 上架。目录只返回启用的。
         unit:
           type: string
-          example: diamond
-          description: 发放单位。钻石为 diamond。
+          example: quota
+          description: 发放单位 quota。
         display_label:
           type: string
-          example: 塔塔币
-          description: UI 展示名。档位数量来自 diamond_grant。
+          example: 额度
+          description: UI 展示名。
         benefits:
           type: array
           description: 订阅 SKU 的权益结构。followup.count 取 quota_settings.followup_limit（种子 5）。年卡 campaign_perk.body 取本行 copy。消耗包为空数组。
@@ -2458,11 +2570,11 @@ components:
         diamond_grant:
           type: integer
           nullable: true
-          description: 塔塔币档位颗数。次卡与年运解锁不可填。
+          description: 历史字段。订阅开通赠送额度，未配置为 null。补充包与年运解锁不可填。
         reading_grant:
           type: integer
           nullable: true
-          description: 仅次卡。解读次数，未填为 null。
+          description: 仅额度补充包。入账次数，未填为 null。
         period_count:
           type: integer
           nullable: true
@@ -2483,23 +2595,29 @@ components:
     DiamondView:
       type: object
       properties:
+        is_member:
+          type: boolean
+          description: 当前是否有效会员。
+        can_buy_pack:
+          type: boolean
+          description: 仅会员可买额度补充包。
         unit:
           type: string
-          example: diamond
-          description: 账本单位 diamond。
+          example: quota
+          description: 账本单位 quota。
         display_label:
           type: string
-          example: 塔塔币
+          example: 额度
           description: UI 展示名。
         balance:
           type: integer
-          description: pack_diamonds + subscription_diamonds。
-        subscription_diamonds:
+          description: 会员统一额度。非会员不返回。
+        quota_remaining:
           type: integer
-          description: 订阅桶钻石。
-        pack_diamonds:
-          type: integer
-          description: 消耗包桶钻石。
+          description: 会员统一额度。非会员不返回。
+        membership:
+          type: object
+          description: 当前会员。非会员为 null。
         subscription_period_end:
           type: string
           format: date-time
@@ -2511,7 +2629,7 @@ components:
         user_id:
           type: integer
           format: int64
-          description: 仅管理端钻石查询附带。
+          description: 仅管理端额度查询附带。
         ledger:
           type: array
           description: 仅管理端，最近 50 条。
@@ -2526,8 +2644,8 @@ components:
           description: 流水 id。
         bucket:
           type: string
-          enum: [subscription, consumable]
-          description: 变动所在桶。
+          enum: [subscription, consumable, quota]
+          description: 新流水为 quota。历史行可能仍是 subscription / consumable。
         delta:
           type: integer
           description: 变动量，带符号。正为入账，负为扣减。
@@ -2583,7 +2701,7 @@ components:
         credited_readings:
           type: integer
           nullable: true
-          description: 次卡入账的解读次数。未配置或非次卡为 null。
+          description: 额度补充包入账数量。未配置或非补充包为 null。
         period_start:
           type: string
           format: date-time
@@ -2650,13 +2768,13 @@ components:
           example: admin_grant
         diamond_bucket_default:
           type: string
-          example: pack
+          example: quota
         diamond_bucket_column:
           type: string
-          example: pack_diamonds
+          example: quota_balance
         diamond_ledger_bucket_for_pack:
           type: string
-          example: consumable
+          example: quota
         writes_iap_orders:
           type: boolean
           example: false
@@ -2665,11 +2783,13 @@ components:
           example: false
         can_write:
           type: boolean
+          description: 当前账号是否有付费模块写权限（admin 恒为 true）。
         write_role:
           type: string
           example: admin
         permission_note:
           type: string
+          description: 付费模块可写才能补发。
         user_id:
           type: integer
           format: int64
@@ -2686,19 +2806,18 @@ components:
           items:
             type: object
           maxItems: 0
-        pack_diamonds:
+        quota_remaining:
           type: integer
-        subscription_diamonds:
+          description: 统一额度。
+        balance:
           type: integer
-        subscription_period_end:
-          type: string
-          format: date-time
-          nullable: true
+          description: 与 quota_remaining 相同。
         free_count_remaining:
           type: integer
           description: rewards.admin_grant_remaining。
-        registration_reward_remaining:
+        invite_remaining:
           type: integer
+          description: 邀请奖励剩余次数。
     GrantRow:
       type: object
       properties:
@@ -2718,10 +2837,10 @@ components:
           type: integer
         bucket:
           type: string
-          description: diamonds 为 pack 或 subscription；free_count 为空字符串。
+          description: diamonds 为 quota；free_count 为空字符串。
         ledger_bucket:
           type: string
-          description: pack 对应 consumable；subscription 对应 subscription；免费次数为空。
+          description: diamonds 对应 quota；免费次数为空。
         reason:
           type: string
           example: admin_grant
@@ -2754,16 +2873,16 @@ components:
           type: integer
           minimum: 0
           maximum: 100000
-          description: 与 free_count 至少一个大于 0。默认进入 pack 桶（pack_diamonds / diamond_ledger.bucket=consumable）。
+          description: 与 free_count 至少一个大于 0。写入统一额度 quota_balance。
         diamond_bucket:
           type: string
-          enum: ["", pack, subscription]
-          description: 省略或空字符串等于 pack。subscription 只累加 subscription_diamonds，不改订阅周期。
+          enum: ["", pack, subscription, quota]
+          description: 兼容历史值，一律写入 quota。
         free_count:
           type: integer
           minimum: 0
           maximum: 100000
-          description: 加到 rewards.admin_grant_remaining，不改注册奖励 remaining。
+          description: 加到 rewards.admin_grant_remaining。不改邀请次数。
         reason:
           type: string
           description: 省略或 admin_grant。其他值拒绝。
@@ -2853,7 +2972,7 @@ components:
           description: 给用户看的说明。无则空。
     UseRewardData:
       type: object
-      description: 尽管路径叫 use-reward，实际走共享优先级，不保证扣的是注册奖励。
+      description: 尽管路径叫 use-reward，实际走当前身份的扣费规则。
       properties:
         reward_consumed:
           type: boolean
@@ -2869,7 +2988,7 @@ components:
           description: 额度结果。
         note:
           type: string
-          example: 已按优先级处理：注册奖励，今日免费次数，人工补发免费次数，然后钻石
+          example: 已按优先级处理：今日免费次数，邀请奖励次数，人工补发免费次数；会员扣统一额度
           description: 优先级说明文案。
     PaywallResult:
       type: object
@@ -3028,26 +3147,23 @@ components:
         kind:
           type: string
           enum: [diamonds, free_count]
-          description: diamonds 入塔塔币；free_count 入免费次数。
+          description: diamonds 入额度；free_count 入免费次数。
         amount:
           type: integer
           description: 到账数量。
         unit:
           type: string
-          description: diamond 或 count。
+          description: quota 或 count。
         display_label:
           type: string
-          example: 塔塔币
-          description: kind=diamonds 时为「塔塔币」。
-        pack_diamonds:
+          example: 额度
+          description: kind=diamonds 时为「额度」。
+        quota_remaining:
           type: integer
-          description: 核销后消耗包余额。
-        subscription_diamonds:
-          type: integer
-          description: 核销后订阅桶余额。
+          description: 核销后统一额度。
         balance:
           type: integer
-          description: 核销后塔塔币合计。
+          description: 核销后统一额度。
     WalletLedger:
       type: object
       properties:
@@ -3058,21 +3174,18 @@ components:
             $ref: "#/components/schemas/WalletLedgerItem"
         display_label:
           type: string
-          example: 塔塔币
+          example: 额度
           description: UI 展示名。
         unit:
           type: string
-          example: diamond
+          example: quota
           description: 账本单位。
-        pack_diamonds:
+        quota_remaining:
           type: integer
-          description: 消耗包余额。
-        subscription_diamonds:
-          type: integer
-          description: 订阅桶余额。
+          description: 统一额度。
         balance:
           type: integer
-          description: 两桶合计。
+          description: 与 quota_remaining 相同。
     WalletLedgerItem:
       type: object
       properties:
@@ -3352,7 +3465,109 @@ components:
         display_label:
           type: string
           nullable: true
-          description: kind=diamonds 时为「塔塔币」。免费次数不是塔塔币，为 null。
+          description: kind=diamonds 时为「额度」。免费次数为 null。
+    RedeemCode:
+      type: object
+      description: 管理端兑换码。App 核销走 POST /redeem。
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+          description: 大写。自动生成形如 AB3K-9MPQ，不含 0/O/1/I。
+        kind:
+          type: string
+          enum: [diamonds, free_count]
+        amount:
+          type: integer
+          description: 到账数量。diamonds 为额度，free_count 为免费次数。
+        benefit_name:
+          type: string
+        max_redemptions:
+          type: integer
+          nullable: true
+          description: 总核销上限。null 表示不限。同一用户对同一码只能核销一次。
+        enabled:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: RFC3339。null 表示不过期。
+        created_at:
+          type: string
+          format: date-time
+        redeemed_count:
+          type: integer
+          description: 已核销次数。
+    RedeemCodeList:
+      type: object
+      properties:
+        can_write:
+          type: boolean
+          description: 当前账号是否有付费模块写权限。
+        permission_note:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RedeemCode"
+    RedeemCodeCreate:
+      type: object
+      additionalProperties: false
+      required: [kind, amount, benefit_name]
+      properties:
+        kind:
+          type: string
+          enum: [diamonds, free_count]
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        benefit_name:
+          type: string
+          maxLength: 64
+          description: 必填，按码点最多 64。
+        code:
+          type: string
+          description: 可选自定义码。空则自动生成。只允许 A-Z、0-9 与连字符，4–64 个字符。会转成大写。与 count>1 不能同时使用。
+        count:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: 生成个数，默认 1，上限 100。自定义码时必须为 1。
+        max_redemptions:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: 省略表示不限人数。每个用户仍只能核销一次。
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC3339。省略或空表示不过期。创建时必须晚于现在。
+        enabled:
+          type: boolean
+          description: 默认 true。
+    RedeemCodeUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        benefit_name:
+          type: string
+          maxLength: 64
+          description: 空字符串表示不修改。
+        max_redemptions:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: 省略不改。0 表示改为不限。不能低于已核销次数。
+        expires_at:
+          type: string
+          format: date-time
+          description: 省略不改。空字符串清除过期时间。
     CampaignList:
       type: object
       properties:
@@ -3431,12 +3646,12 @@ components:
           description: 详情未交付时为 false。
     PlaceholderList:
       type: object
-      description: 参与记录 / 奖励记录。字段未确认，items 恒为空数组。
+      description: 参与记录占位。字段未确认，items 恒为空数组。
       properties:
         items:
           type: array
           maxItems: 0
-          description: 恒为空数组，不编造参与/奖励记录。
+          description: 恒为空数组，不编造参与记录。
           items:
             type: object
         empty_title:
@@ -3449,6 +3664,218 @@ components:
           type: boolean
           enum: [false]
           description: 恒为 false。
+    CampaignRewardList:
+      type: object
+      description: 奖励记录。当前仅好友邀请到账，不编造未发生的邀请。
+      properties:
+        items:
+          type: array
+          description: 邀请人视角的到账列表，按时间倒序。
+          items:
+            $ref: "#/components/schemas/CampaignRewardItem"
+        empty_title:
+          type: string
+          example: 暂无奖励记录
+        fields_confirmed:
+          type: boolean
+          enum: [true]
+          description: 奖励记录字段已按定稿 UI 确认。
+    CampaignRewardItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [friend_invite]
+        title:
+          type: string
+          description: 例如「好友 小星星 通过你的邀请加入了塔塔」。未填姓名时用「新朋友」。
+        friend_name:
+          type: string
+        avatar_url:
+          type: string
+          nullable: true
+        amount:
+          type: integer
+          description: 到账次数，邀请固定为 3。
+        unit:
+          type: string
+          enum: [count]
+        amount_label:
+          type: string
+          example: "+3 次"
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    InviteInfo:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 当前用户 public_id，6 位，作邀请码。
+        reward_amount:
+          type: integer
+          description: 每成功邀请一人给邀请人的次数，固定 3。
+        reward_unit:
+          type: string
+          enum: [count]
+        invited_count:
+          type: integer
+          description: 已成功邀请人数。
+        amount_label:
+          type: string
+          example: "+3 次"
+    InviteAcceptBody:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: 邀请人 public_id。自己的码、不存在、或已经绑定过会失败。
+    LegalDocs:
+      type: object
+      properties:
+        user_agreement:
+          $ref: "#/components/schemas/LegalDoc"
+        privacy_policy:
+          $ref: "#/components/schemas/LegalDoc"
+    LegalDoc:
+      type: object
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+          description: 未配置时为「待确认」。
+        body_status:
+          type: string
+          enum: [pending, ready]
+    CustomDeck:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          description: 最多 20 个字，可重复。缺省「我的自定义牌组」。
+        status:
+          type: string
+          enum: [draft, saved]
+        face_source:
+          type: string
+          description: upload 或已启用官方 decks.code。空表示未设置。
+        back_source:
+          type: string
+          description: upload 或已启用官方 decks.code。空表示未设置。
+        back_url:
+          type: string
+          nullable: true
+        uploaded_count:
+          type: integer
+          description: 已上传或已套用的牌面张数。官方牌面来源记 78。
+        card_count:
+          type: integer
+          description: 恒为 78。
+        in_use:
+          type: boolean
+        code:
+          type: string
+          description: custom:{id}。
+        faces:
+          type: array
+          description: 仅详情返回。78 张牌位。
+          items:
+            type: object
+    CustomDeckBody:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [draft, saved]
+        face_source:
+          type: string
+        back_source:
+          type: string
+        back_url:
+          type: string
+        faces:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [card_id]
+            properties:
+              card_id:
+                type: integer
+                minimum: 0
+                maximum: 77
+              image_url:
+                type: string
+    CustomDeckList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomDeck"
+        limit:
+          type: integer
+          description: 每用户上限，固定 10。
+    CardCatalog:
+      type: object
+      description: 我的塔罗牌 / 自定义牌组用的 78 张目录。
+      properties:
+        deck:
+          type: object
+        groups:
+          type: array
+          description: 大阿尔卡纳 / 权杖 / 圣杯 / 宝剑 / 星币。
+          items:
+            type: object
+        items:
+          type: array
+          description: 78 张平铺，顺序与 groups 一致。
+          items:
+            $ref: "#/components/schemas/Card"
+    YearlyShare:
+      type: object
+      description: 年运分享报告构图数据。关键词/四季文案由客户端用 report 自行排版，服务端不编造结构化金句。
+      properties:
+        year:
+          type: integer
+        unlocked:
+          type: boolean
+        report_status:
+          type: string
+        report:
+          nullable: true
+        user_name:
+          nullable: true
+        brand:
+          type: string
+        slogan:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        generated_for:
+          nullable: true
+          description: 有昵称时为「为{name}生成」，否则 null。
+        share_hint:
+          type: string
+        rhythm_cards:
+          type: array
+        domain_cards:
+          type: array
     HelpCategoryList:
       type: object
       properties:
@@ -3651,8 +4078,8 @@ paths:
       operationId: appSendEmailCode
       summary: 发送邮箱验证码
       description: |
-        注册发码不用带 Header。scene=bind 时在 Headers 加 `Authorization: Bearer <accessToken>`。邮箱登录不发码、不验码。
-        scene 为 register / bind。register 时已注册邮箱返回「邮箱已注册」。
+        登录发码不用带 Header。scene=bind 时在 Headers 加 `Authorization: Bearer <accessToken>`。
+        scene 为 login / bind。login 时无论邮箱是否已有账号都发码。bind 必须先登录，未登录为 HTTP 401。
         同一邮箱同一 scene 60 秒内只能发一次，同一邮箱每小时最多 10 次。验证码 6 位、5 分钟有效，校验成功后作废。
         邮件走 config.yaml 的 mail SMTP；未配置返回「邮件服务未配置」。不在响应里回验证码。
       parameters:
@@ -3665,10 +4092,10 @@ paths:
               $ref: "#/components/schemas/EmailCodeBody"
             examples:
               成功:
-                summary: 注册发码
+                summary: 登录发码
                 value:
                   email: demo@tata.local
-                  scene: register
+                  scene: login
               绑定发码:
                 summary: 绑定发码
                 value:
@@ -3698,54 +4125,18 @@ paths:
                       expires_in: 300
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/auth/register:
-    post:
-      tags: [登录绑定]
-      operationId: appRegister
-      summary: 邮箱注册
-      description: |
-        邮箱、密码和验证码必填。先调 POST /auth/email/code，scene=register。
-        邮箱冲突返回「邮箱已注册」。
-        该邮箱未在 identity_claims 出现过时发放注册奖励，到期为下一个北京时间 08:00。
-        若带 anonymous_id，会把匿名占卜转给新用户。
-        若该用户已有未结算的占卜，会按共享优先级立刻扣一次（一开始提问就消耗）。
-        不签发 refresh。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterBody"
-            examples:
-              成功:
-                summary: 邮箱注册
-                value:
-                  email: demo@tata.local
-                  password: demo1234
-                  code: "123456"
-      responses:
-        "200":
-          description: code=0 时 data 含 accessToken、id、registration_reward_expires_at、reward_consumed、reward_note。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/AppAuthSession"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
   /api/app/v1/auth/login:
     post:
       tags: [登录绑定]
       operationId: appLogin
-      summary: 邮箱登录
+      summary: 邮箱验证码登录
       description: |
-        邮箱和密码必填，不需要验证码。
-        邮箱或密码错误、或账号已注销，均为 HTTP 200、code=1、「邮箱或密码错误」。
-        成功时 needs_confirm 恒为 false。若未在登录时扣掉未结算占卜，且本周期已用过免费次数，quota_prompt 为「今日免费体验额度已用完，本次记录已保存到历史记录」。
+        邮箱和验证码必填。没有单独注册接口：未注册邮箱首次用验证码登录会创建账号；已有账号则登录。不再发放注册奖励。
+        先调 POST /auth/email/code，scene=login。已注册邮箱也可以发码。验证码不对或过期返回「验证码不正确或已过期」。
+        该邮箱曾注销过则「该邮箱已注销，不能重复注册」。账号已注销返回「账号已注销」。
+        若带 anonymous_id，会把匿名占卜转给此用户。若该用户已有未结算占卜，会按共享优先级立刻扣一次。
+        已有账号成功时 needs_confirm 恒为 false。若未在登录时扣掉未结算占卜，且本周期已用过免费次数，quota_prompt 为「今日免费体验额度已用完，本次记录已保存到历史记录」。
+        不签发 refresh。
       requestBody:
         required: true
         content:
@@ -3754,13 +4145,13 @@ paths:
               $ref: "#/components/schemas/LoginBody"
             examples:
               成功:
-                summary: 邮箱登录
+                summary: 邮箱验证码登录
                 value:
                   email: demo@tata.local
-                  password: demo1234
+                  code: "123456"
       responses:
         "200":
-          description: code=0 时 data 含 accessToken、id、reward_consumed、needs_confirm、quota_prompt。
+          description: code=0 时 data 含 accessToken、id、login=email。首次创建账号时还有 registration_reward_expires_at、reward_note；已有账号还有 needs_confirm、quota_prompt。
           content:
             application/json:
               schema:
@@ -3780,9 +4171,9 @@ paths:
       description: |
         客户端把微信 SDK 的 code 交给服务端。iOS / Android 共用微信开放平台同一个移动应用。
         服务端用 config.yaml 的 wechat.appId/appSecret 向微信换 openid/unionid（优先存 unionid），再查找或创建用户。
+        换票后会请求 sns/userinfo。档案 name / avatar_url 为空时写入微信昵称，并把头像下载转存到 uploads/misc；已有资料不覆盖。userinfo 失败不挡登录。
         wechat.enabled=false 或凭证空时返回「微信登录未配置」。code 无效返回「微信授权码无效」。
-        已注销身份不能再次领取注册奖励。新用户会发注册奖励。成功后会尝试结算未扣费的占卜。
-        data.reward_note 为「注册奖励优先于今日免费次数，提问时自动扣减」。
+        已注销身份不能再次注册。不再发放注册奖励。成功后会尝试结算未扣费的占卜。
       requestBody:
         required: true
         content:
@@ -3817,7 +4208,7 @@ paths:
         仅 iOS。安卓没有苹果三方登录。客户端把 Sign in with Apple 的 identity_token 交给服务端。
         服务端用 Apple JWKS 验 RS256，iss 必须是 https://appleid.apple.com，aud 为 apple.clientId（iOS Bundle ID）。
         apple.enabled=false 或 clientId 空时返回「苹果登录未配置」。令牌无效返回「苹果身份令牌无效」。
-        验过的 sub 用来查找或创建用户。已注销身份不能再次领取注册奖励。
+        验过的 sub 用来查找或创建用户。已注销身份不能再次注册。不再发放注册奖励。
         与微信登录不同：成功响应不调用提问结算，data 只有 accessToken、id、login=apple。
       requestBody:
         required: true
@@ -3853,6 +4244,7 @@ paths:
         - $ref: "#/components/parameters/Authorization"
       description: |
         需要登录用户。身份空闲则直接绑定，data=true。
+        绑定成功或重复绑定同一微信时，若档案 name / avatar_url 为空则写入微信昵称和转存后的头像。
         已被其他未注销、未合并账号占用时不搬迁数据，返回 BindConflictEnvelope，并留下 pending_confirm 合并请求。
         换绑未开放。重复绑定同一个微信身份返回 true。请求体同微信登录，传 code 不是 openid。
       requestBody:
@@ -3917,8 +4309,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        邮箱按小写比较。邮箱、密码和验证码必填。先调 POST /auth/email/code，scene=bind。
-        空闲则写入邮箱和密码哈希。
+        邮箱按小写比较。邮箱和验证码必填，不设密码。先调 POST /auth/email/code，scene=bind。
+        空闲则写入邮箱。
         冲突时同样只创建待确认合并，不立刻并账。已绑定过邮箱不能换绑。
       requestBody:
         required: true
@@ -3931,7 +4323,6 @@ paths:
                 summary: 绑定邮箱
                 value:
                   email: demo@tata.local
-                  password: demo1234
                   code: "123456"
       responses:
         "200":
@@ -3954,8 +4345,8 @@ paths:
         - $ref: "#/components/parameters/Authorization"
       description: |
         只有发起绑定的主账号可以确认。confirm=false 不会合并。
-        成功后次账号标记 merged_into，占卜、消息、注册奖励、人工补发次数、今日免费和钻石余额并入主账号。
-        钻石加总不在响应里返回数字。订阅到期相同且多于一条时 subscription_resolution=prompt_required。
+        成功后次账号标记 merged_into，占卜、消息、邀请次数、人工补发次数、今日免费和统一额度并入主账号。
+        额度加总不在响应里返回数字。订阅到期相同且多于一条时 subscription_resolution=prompt_required。
         已经合并的请求会重放当时保存的结果。
       requestBody:
         required: true
@@ -4037,6 +4428,7 @@ paths:
         - $ref: "#/components/parameters/Authorization"
       description: |
         更新非空的 birth_date、gender、timezone、name、bio、avatar_url。
+        个人档案屏还可传 explore_preferences（整表替换）。性别接受「女 / 男 / 其他」。
         改头像：先 POST /api/app/v1/uploads（folder 缺省 misc），把返回的 data.url 写入 avatar_url。没有单独的上传头像 path。
         账号主展示见 GET 的 account_display（脱敏邮箱）与 public_id。无手机号。
       requestBody:
@@ -4064,6 +4456,259 @@ paths:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/legal:
+    get:
+      tags: [登录绑定]
+      operationId: appLegal
+      summary: 用户协议与隐私政策
+      description: |
+        公开，不需要登录。正文取 app_config legal.user_agreement / legal.privacy_policy。
+        未配置时 body=待确认、body_status=pending，不编造条款。管理端 PUT /copy/legal 填写。
+      responses:
+        "200":
+          description: data 为 LegalDocs。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/LegalDocs"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+  /api/app/v1/invites:
+    get:
+      tags: [活动]
+      operationId: appGetInvites
+      summary: 我的邀请码
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      description: 必须登录。返回 6 位 public_id 作为邀请码，以及每成功邀请一人 +3 次。
+      responses:
+        "200":
+          description: data 为 InviteInfo。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/InviteInfo"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/invites/accept:
+    post:
+      tags: [活动]
+      operationId: appAcceptInvite
+      summary: 绑定邀请人
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      description: |
+        必须登录。code 为邀请人 public_id。成功给邀请人 +3 次（admin_grant_remaining），并写奖励记录。
+        自己的码「不能填写自己的邀请码」；不存在「邀请码不正确」；已绑定「已经绑定过邀请人」。
+        登录接口也可带 invite_code，失败不挡登录。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteAcceptBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/cards:
+    get:
+      tags: [占卜解读]
+      operationId: appListCards
+      summary: 78 张牌目录
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - name: deck
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 官方 decks.code，或 custom:{id}。省略则用当前选用的牌组。
+      description: |
+        必须登录。对应「我的塔罗牌 / 查看全部 78 张」与自定义牌组牌位。
+        groups 按大阿尔卡纳 / 四牌组拆开。自定义且 face_source=upload 时用已上传图覆盖 thumbnail。
+      responses:
+        "200":
+          description: data 为 CardCatalog。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CardCatalog"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/custom-decks:
+    get:
+      tags: [占卜解读]
+      operationId: appListCustomDecks
+      summary: 自定义牌组列表
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      description: 必须登录。每用户最多 10 套。不返回 faces。
+      responses:
+        "200":
+          description: data 为 CustomDeckList。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CustomDeckList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [占卜解读]
+      operationId: appCreateCustomDeck
+      summary: 新建自定义牌组
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      description: 必须登录。默认草稿「我的自定义牌组」。图片先 POST /uploads?folder=custom。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomDeckBody"
+      responses:
+        "200":
+          description: data 为 CustomDeck（含 faces）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CustomDeck"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/custom-decks/{id}:
+    get:
+      tags: [占卜解读]
+      operationId: appGetCustomDeck
+      summary: 自定义牌组详情
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: data 为 CustomDeck（含 faces）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CustomDeck"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [占卜解读]
+      operationId: appPutCustomDeck
+      summary: 更新自定义牌组
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      description: faces 若传入则整表替换。未保存改动能改草稿；立即使用须 status=saved 后再 POST .../use。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomDeckBody"
+      responses:
+        "200":
+          description: data 为 CustomDeck。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CustomDeck"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/custom-decks/{id}/use:
+    post:
+      tags: [占卜解读]
+      operationId: appUseCustomDeck
+      summary: 立即使用自定义牌组
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      description: 必须已保存。之后的占卜用这套牌；已完成记录仍按牌名解析官方图，不受影响。
+      responses:
+        "200":
+          description: data 为 CustomDeck。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/CustomDeck"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -4183,10 +4828,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        匿名用户仍返回结构，次数与钻石为 0，daily_free_used=false。
-        diamond_cost 未配置时为 null，diamond_cost_configured=false。
-        followup_limit 为每条解读可追问次数，种子默认 5，null 不限制。
-        display_label 为「塔塔币」（展示名）；paid_label 仍为「钻石」。balance 为两桶合计。
+        匿名与免费用户返回今日免费 / 邀请次数，不返回额度余额。
+        会员返回 is_member、membership、quota_remaining。
+        diamond_cost / quota_cost 未配置时为 null。
+        display_label 与 paid_label 均为「额度」。
       responses:
         "200":
           description: data 为 QuotaView。
@@ -4607,9 +5252,9 @@ paths:
       operationId: appUseReward
       summary: 按共享优先级扣一次
       description: |
-        无请求体。名字是 use-reward，实现是 chargeOwned(play)，顺序仍是注册奖励、今日免费、人工补发、钻石。
-        不保证扣到注册奖励。reward_consumed 仅在 entitlement=registration_reward 时为 true。
-        钻石单价未配置或余额不足时返回 QuotaBlockEnvelope，不编造消耗数量。
+        无请求体。名字是 use-reward，实现是 settleSharedQuota(play)。
+        免费用户：今日免费 → 邀请奖励 → 人工补发 → 开通会员。会员扣统一额度。
+        单价未配置或额度不足时返回 QuotaBlockEnvelope，不编造消耗数量。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -4927,16 +5572,16 @@ paths:
     post:
       tags: [内购]
       operationId: appIAPVerify
-      summary: 验单并入账钻石
+      summary: 验单并入账额度
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
         必须登录，且账号未注销、未合并。
         不调用 App Store 或 Google Play。票据非空且商品映射到启用的 SKU 时 verify_status=verified。
-        diamond_grant 为 null：credit_status=amount_unconfigured，不写钻石，不把 null 当成 0。
+        发放量为 null：credit_status=amount_unconfigured，不写入账，不把 null 当成 0。
         订阅缺少 expires_at、商品未映射、商品未启用、交易号已被别人使用，都会失败。
-        订阅钻石按周期刷新（替换该桶余额）；消耗型累加 pack。免费次数不会被这次入账改动。
-        本次若真正入账（credited），会尝试继续该用户挂起的 paywall。
+        订阅发放累加统一额度；reading_pack 仅会员可买并入额度；consumable_pack 返回「塔塔币已下线」。
+        免费次数不会被这次入账改动。
       requestBody:
         required: true
         content:
@@ -5025,10 +5670,10 @@ paths:
     get:
       tags: [内购]
       operationId: appIAPEntitlements
-      summary: 钻石余额
+      summary: 会员额度与身份
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。没有余额行时两个桶为 0。不返回价格。display_label 为「塔塔币」，balance 为两桶合计。
+      description: 必须登录。非会员不返回额度余额。会员返回 quota_remaining。display_label 为「额度」。
       responses:
         "200":
           description: data 为 DiamondView，不含 ledger。
@@ -5051,9 +5696,9 @@ paths:
       operationId: appIAPSKUs
       summary: 已启用的 SKU
       description: |
-        公开，不需要登录或匿名令牌。
-        只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、reading_pack、consumable_pack、yearly_unlock。
-        种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。
+        公开，不需要登录或匿名令牌。登录后按身份过滤：consumable_pack 永不返回；reading_pack 仅会员可见。
+        只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、reading_pack、yearly_unlock。
+        种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。 unit=quota。
       parameters:
         - name: kind
           in: query
@@ -5119,7 +5764,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        必须登录。成功时按码的 kind 写入钻石账本（pack_diamonds）或免费次数，不另开塔塔币账本。
+        必须登录。成功时按码的 kind 写入统一额度或免费次数。
         无效码 message=兑换码无效；已核销=兑换码已使用；过期=兑换码已过期。到账数量以账本为准。
       requestBody:
         required: true
@@ -5152,10 +5797,10 @@ paths:
     get:
       tags: [钱包兑换]
       operationId: appWalletLedger
-      summary: 钻石余额流水
+      summary: 额度流水
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。items 无数据时为空数组，不编造收支。字段为 time/type/amount/balance/note。展示名 display_label=塔塔币。
+      description: 必须登录。items 无数据时为空数组，不编造收支。字段为 time/type/amount/balance/note。展示名 display_label=额度。
       responses:
         "200":
           description: data 为 WalletLedger。
@@ -5190,7 +5835,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [spreads, decks, cards, feedback, misc]
+            enum: [spreads, decks, cards, feedback, misc, custom]
           description: 子目录。头像用 misc（缺省）；心愿/反馈用 feedback。
       requestBody:
         required: true
@@ -5548,10 +6193,12 @@ paths:
       summary: 奖励记录
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。占位屏。items 恒为空数组。不写未确认的奖励承诺。
+      description: |
+        必须登录。返回真实邀请到账，不编造。每条为「好友 {name} 通过你的邀请加入了塔塔」+3 次。
+        无记录时 items 为空数组，empty_title=暂无奖励记录，fields_confirmed=true。
       responses:
         "200":
-          description: data 为 PlaceholderList。
+          description: data 为 CampaignRewardList。
           content:
             application/json:
               schema:
@@ -5561,7 +6208,7 @@ paths:
                       - type: object
                         properties:
                           data:
-                            $ref: "#/components/schemas/PlaceholderList"
+                            $ref: "#/components/schemas/CampaignRewardList"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -5773,6 +6420,33 @@ paths:
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/app/v1/yearly-reports/{id}/share:
+    get:
+      tags: [占卜解读]
+      operationId: appYearlyShare
+      summary: 年运分享报告
+      description: |
+        必须登录。路径 id 为年份。返回分享图所需的品牌、标题、昵称和已生成报告正文。
+        不编造年度关键词或春夏秋冬金句；客户端用 report 自行排版或截图。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: data 为 YearlyShare。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/YearlyShare"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/yearly-reports/{id}/unlock:
     post:
       tags: [占卜解读]
@@ -5980,7 +6654,7 @@ paths:
       description: |
         必须登录。available 来自 decks 表已启用项；种子仅 rider-waite（莱德韦特）。
         每项含 name / thumbnail / description / tags。介绍与标签未填时为空串和空数组，不编造。
-        预览图未配则用内置默认牌背。78 张牌预览由客户端按牌名拼接，不另开 path。
+        预览图未配则用内置默认牌背。78 张牌预览走 GET /cards?deck=。
       responses:
         "200":
           description: data 为 DeckPreference。
@@ -6127,7 +6801,10 @@ paths:
         - $ref: "#/components/parameters/Authorization"
       responses:
         "200":
-          description: homePath 固定为 /tata/spread。token 字段为空字符串。
+          description: |
+        roles 含 role 与已授权模块 id，供前端过滤菜单。
+        homePath：admin 或有内容权限为 /tata/spread，否则为第一个有权限模块的首页。
+        token 字段为空字符串。
           content:
             application/json:
               schema:
@@ -6146,7 +6823,9 @@ paths:
       summary: 权限码
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: role=admin 时 data 为 ["write"]，否则为空数组。
+      description: |
+        role=admin 时含 write 以及五个模块与对应 :write（如 content、content:write）。
+        readonly 只含已授权模块 id，可写时再加 module:write。无模块则为空数组。
       responses:
         "200":
           description: data 为字符串数组。
@@ -6170,7 +6849,7 @@ paths:
       summary: 后台菜单
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 固定菜单，含牌阵、塔罗师、供应商、额度、提示窗、占卜、流水、操作员、用户、日历、追问、审计、IAP 订单、人工补发。
+      description: 按当前账号模块权限过滤。admin 返回全部；操作员项仅 admin 可见。前端默认 accessMode=frontend，菜单以后端 roles 过滤本地路由为准。
       responses:
         "200":
           description: data 为菜单项数组。
@@ -6728,7 +7407,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [spreads, decks, cards, feedback, misc]
+            enum: [spreads, decks, cards, feedback, misc, custom]
           description: 子目录。缺省 misc。
       requestBody:
         required: true
@@ -6765,9 +7444,10 @@ paths:
       operationId: adminGetCopy
       summary: 读取运营文案
       description: |
-        kind 为 yearly、cards、help、campaigns、decks。
+        kind 为 yearly、cards、help、campaigns、decks、legal。
         年运存在 app_config（yearly.{year}.{section}）。单牌目录在 cards 表；GET/PUT copy/cards 仍可用，写 yi/thumbnail 进 cards，模板/默认图仍在 app_config。
         牌组风格在 decks 表（含 description / tags）；帮助、活动改已有表。会员专属活动文案在 iap_skus.copy，不走本接口。
+        legal 读写 app_config legal.user_agreement / legal.privacy_policy，给登录页协议链接。未填 App 返回 pending。
         cards 的 data 含 thumbnail_template、thumbnail_default 与固定 78 张 items（deck() 顺序）。完整目录含新建项见 GET /api/admin/v1/cards。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -6776,7 +7456,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [yearly, cards, help, campaigns, decks]
+            enum: [yearly, cards, help, campaigns, decks, legal]
         - name: year
           in: query
           required: false
@@ -6801,7 +7481,7 @@ paths:
       tags: [管理端内容]
       operationId: adminPutCopy
       summary: 保存运营文案
-      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格表（name/thumbnail/description/tags，至少保留一套启用）；help/campaigns 更新已有表。
+      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格表（name/thumbnail/description/tags，至少保留一套启用）；help/campaigns 更新已有表；legal 写 app_config 协议正文。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind
@@ -6809,7 +7489,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [yearly, cards, help, campaigns, decks]
+            enum: [yearly, cards, help, campaigns, decks, legal]
       requestBody:
         required: true
         content:
@@ -7144,8 +7824,9 @@ paths:
       operationId: adminListGrants
       summary: 人工补发记录
       description: |
-        只读角色可查。最多 200 条。
-        带 user_id 时附带该用户的钻石桶、订阅周期结束时间、人工补发剩余次数和注册奖励剩余次数。
+        需要付费模块读权限。最多 200 条。
+        带 user_id 时附带该用户的统一额度、邀请剩余、人工补发剩余次数。
+        can_write 表示当前账号是否有付费模块写权限。
         响应声明 writes_iap_orders=false、resumes_paywall=false。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -7172,11 +7853,11 @@ paths:
     post:
       tags: [额度补发]
       operationId: adminCreateGrant
-      summary: 人工补发钻石或免费次数
+      summary: 人工补发额度或免费次数
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        需要 role=admin。note 必填。reason 只能是 admin_grant。
+        需要付费模块写权限。note 必填。reason 只能是 admin_grant。
         钻石默认进 pack。不改 iap_orders，不唤醒 paywall，resumed_tasks 恒为 []。
         不接受价格字段。注销或已合并账号拒绝；已合并请补发到主账号。
       requestBody:
@@ -7201,6 +7882,112 @@ paths:
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/redeem-codes:
+    get:
+      tags: [额度补发]
+      operationId: adminListRedeemCodes
+      summary: 兑换码列表
+      description: |
+        需要付费模块读权限。最多 200 条，按 id 降序。
+        含 redeemed_count。can_write 表示当前账号是否有付费模块写权限。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      responses:
+        "200":
+          description: data 为 RedeemCodeList。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RedeemCodeList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [额度补发]
+      operationId: adminCreateRedeemCodes
+      summary: 生成兑换码
+      description: |
+        需要付费模块写权限。code 为空则自动生成 XXXX-XXXX（不含 0/O/1/I）。
+        count 默认 1、上限 100。自定义码不能批量。
+        生成后用户用 POST /api/app/v1/redeem 核销。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemCodeCreate"
+            examples:
+              auto:
+                summary: 自动生成 10 个额度码
+                value:
+                  kind: diamonds
+                  amount: 60
+                  benefit_name: 新春礼
+                  count: 10
+                  max_redemptions: 1
+              custom:
+                summary: 指定一条共用码
+                value:
+                  kind: free_count
+                  amount: 1
+                  benefit_name: 内测次数
+                  code: TATA-BETA
+                  max_redemptions: 100
+      responses:
+        "200":
+          description: code=0 时 data.items 为新建的码。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/RedeemCodeList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/redeem-codes/{id}:
+    put:
+      tags: [额度补发]
+      operationId: adminUpdateRedeemCode
+      summary: 更新兑换码
+      description: |
+        需要付费模块写权限。不能改 code、kind、amount。
+        可改启用、权益名、核销上限、过期时间。停用后 App 核销返回「兑换码无效」。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemCodeUpdate"
+      responses:
+        "200":
+          description: code=0 时 data.items 含更新后的这一条。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        properties:
+                          data:
+                            $ref: "#/components/schemas/RedeemCodeList"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/operators:
     get:
       tags: [审计账号]
@@ -7208,7 +7995,7 @@ paths:
       summary: 操作员列表
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 不返回密码哈希。
+      description: 不返回密码哈希。每条含 modules。需要账号模块读权限。
       responses:
         "200":
           description: data 为 Operator 数组。
@@ -7231,7 +8018,10 @@ paths:
       summary: 新建操作员
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: role 只允许 admin 或 readonly。用户名冲突为「用户名已存在」。
+      description: |
+        只有 role=admin 能调用。role 只允许 admin 或 readonly。
+        readonly 的 modules 为按模块授权，省略则无模块。admin 忽略 modules。
+        用户名冲突为「用户名已存在」。非管理员为「只有管理员能管理操作员」。
       requestBody:
         required: true
         content:
@@ -7253,8 +8043,10 @@ paths:
     put:
       tags: [审计账号]
       operationId: adminUpdateOperator
-      summary: 停用或启用操作员
-      description: 只能改 disabled。停用时吊销该操作员的 admin refresh。不能停用自己。省略 disabled 会启用账号。
+      summary: 停用、启用或改模块权限
+      description: |
+        只有 role=admin 能调用。可改 disabled 与 modules。停用时吊销该操作员的 admin refresh。不能停用自己。
+        省略 disabled 会启用账号。省略 modules 不改权限；传空数组清空。目标若是 admin 角色则忽略 modules。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -7421,8 +8213,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        需要 role=admin。三类价位：会员（月卡 / 年卡 / 次卡）、塔塔币、年运解锁。ledger_bucket 与 period_unit 由类型推导。
-        价格单位为分；不填则为 null。次卡填 reading_grant、不能带 diamond_grant；年运解锁不能带 diamond_grant。
+        需要 role=admin。三类价位：会员（月卡 / 年卡）、额度补充包、年运解锁。ledger_bucket 与 period_unit 由类型推导。
+        价格单位为分；不填则为 null。补充包填 reading_grant、不能带 diamond_grant；年运解锁不能带 diamond_grant。
       requestBody:
         required: true
         content:
@@ -7480,7 +8272,7 @@ paths:
     get:
       tags: [管理端内购]
       operationId: adminIAPDiamonds
-      summary: 用户钻石余额与流水
+      summary: 用户额度余额与流水
       description: user_id 必填。流水最多 50 条。不返回价格。
       parameters:
         - $ref: "#/components/parameters/Authorization"

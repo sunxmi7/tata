@@ -14,15 +14,16 @@ import (
 	"time"
 )
 
-// IAP credits diamonds (会员点数). Free 次数 stay on rewards / daily_free / ledger.
-// Subscription period refresh and consumable packs use separate buckets.
-// Price and diamond_grant are nullable; this file never invents amounts.
+// IAP credits unified quota_balance for membership grants and reading packs.
+// consumable_pack（塔塔币）已下线。reading_pack 仅会员可买。
+// Price and grant amounts are nullable; this file never invents amounts.
 
 const (
 	iapPlatformAppStore = "app_store"
 	iapPlatformPlay     = "play"
 	iapBucketSub        = "subscription"
 	iapBucketPack       = "consumable"
+	iapBucketQuota      = "quota"
 	iapVerifyVerified   = "verified"
 	iapVerifyFailed     = "failed"
 	iapCreditNone       = "none"
@@ -103,8 +104,8 @@ func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
 		if tasks := a.resumeQuotaAfterCredit(r.Context(), uid); len(tasks) > 0 {
 			out["resumed_tasks"] = tasks
 			if view, viewErr := diamondView(r.Context(), a.Store, uid); viewErr == nil {
-				out["subscription_diamonds"] = view["subscription_diamonds"]
-				out["pack_diamonds"] = view["pack_diamonds"]
+				out["quota_remaining"] = view["quota_remaining"]
+				out["balance"] = view["balance"]
 			}
 		}
 	}
@@ -197,7 +198,7 @@ func (a *App) appIAPEntitlements(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if uid == 0 {
-		return biz("登录后才能查看钻石余额")
+		return biz("登录后才能查看权益")
 	}
 	out, err := diamondView(r.Context(), a.Store, uid)
 	if err != nil {
@@ -216,7 +217,28 @@ func (a *App) appIAPSKUs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeOK(w, list)
+	uid, _, _ := a.appActor(r)
+	member := false
+	if uid > 0 {
+		member, err = hasActiveMembership(r.Context(), a.Store, uid)
+		if err != nil {
+			return err
+		}
+	}
+	filtered := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		k, _ := item["kind"].(string)
+		if k == iapKindPack {
+			continue
+		}
+		if k == iapKindReadingPack && !member {
+			continue
+		}
+		item["unit"] = "quota"
+		item["display_label"] = T(r.Context(), displayLabelQuota)
+		filtered = append(filtered, item)
+	}
+	writeOK(w, filtered)
 	return nil
 }
 
@@ -274,7 +296,7 @@ func (a *App) adminListIAPOrders(w http.ResponseWriter, r *http.Request) error {
 			"source": source, "verify_message": message, "created_at": created, "verified_at": nullTime(verifiedAt),
 			"subscription_status": nullString(subStatus), "subscription_expires_at": nullTime(subExpires),
 			"subscription_sku_kind": nullString(subKind),
-			"unit":                  "diamond",
+			"unit":                  "quota",
 		})
 	}
 	writeOK(w, list)
@@ -424,12 +446,12 @@ func validateIAPSKUBody(req iapSKUBody, creating bool) (iapSKUWrite, error) {
 	}
 	if (kind == iapKindYearlyUnlock || kind == iapKindReadingPack) && req.DiamondGrant != nil {
 		if kind == iapKindReadingPack {
-			return iapSKUWrite{}, biz("次卡不能发放钻石")
+			return iapSKUWrite{}, biz("额度补充包不能填写开通赠送")
 		}
-		return iapSKUWrite{}, biz("年运解锁不能发放钻石")
+		return iapSKUWrite{}, biz("年运解锁不能填写开通赠送")
 	}
 	if kind != iapKindReadingPack && req.ReadingGrant != nil {
-		return iapSKUWrite{}, biz("只有次卡可以发放解读次数")
+		return iapSKUWrite{}, biz("只有额度补充包可以填写入账额度")
 	}
 	out.appID = emptyAsNil(strings.TrimSpace(req.AppStoreProductID))
 	out.playID = emptyAsNil(strings.TrimSpace(req.PlayProductID))
@@ -551,6 +573,12 @@ func (a *App) adminIAPDiamonds(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	quota, err := loadQuotaBalance(r.Context(), a.Store, userID)
+	if err != nil {
+		return err
+	}
+	view["quota_remaining"] = quota
+	view["balance"] = quota
 	rows, err := a.Store.Query(r.Context(), `SELECT id, bucket, delta, balance_after, order_id, store_transaction_id, reason, created_at
 		FROM diamond_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 50`, userID)
 	if err != nil {
@@ -790,23 +818,36 @@ func (a *App) verifyPurchase(ctx context.Context, uid int64, in iapPurchase) (ma
 		}
 	} else if sku.Kind == iapKindReadingPack {
 		if write.CreditStatus == iapCreditCredited {
-			if !sku.ReadingGrant.Valid {
+			member, err := hasActiveMembership(ctx, tx, uid)
+			if err != nil {
+				return nil, err
+			}
+			if !member {
+				write.VerifyStatus = iapVerifyFailed
+				write.CreditStatus = iapCreditNone
+				write.Message = "仅会员可购买额度补充包"
+			} else if !sku.ReadingGrant.Valid {
 				write.CreditStatus = iapCreditUnconfig
 			} else {
 				grant := int(sku.ReadingGrant.Int64)
 				write.ReadingCredited = &grant
-				if err := creditRedeemFree(ctx, tx, uid, grant); err != nil {
+				oid := orderID
+				if _, err := creditQuota(ctx, tx, uid, grant, &oid, in.TransactionID, "iap_quota_pack"); err != nil {
 					return nil, err
 				}
 			}
 		}
+	} else if sku.Kind == iapKindPack {
+		write.VerifyStatus = iapVerifyFailed
+		write.CreditStatus = iapCreditNone
+		write.Message = "塔塔币已下线"
 	} else if write.CreditStatus == iapCreditCredited && !sku.Grant.Valid {
 		write.CreditStatus = iapCreditUnconfig
 	} else if write.CreditStatus == iapCreditCredited {
 		grant := int(sku.Grant.Int64)
 		write.Credited = &grant
-		reason := diamondReason(in.Source, sku.Bucket)
-		if err := applyDiamonds(ctx, tx, uid, sku.Bucket, grant, periodEnd, in.Platform+":"+in.TransactionID, in.TransactionID, orderID, reason); err != nil {
+		oid := orderID
+		if _, err := creditQuota(ctx, tx, uid, grant, &oid, in.TransactionID, diamondReason(in.Source, sku.Bucket)); err != nil {
 			return nil, err
 		}
 	}
@@ -909,43 +950,6 @@ func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, i
 	return id, err
 }
 
-func applyDiamonds(ctx context.Context, tx Tx, uid int64, bucket string, grant int, periodEnd *time.Time, periodKey, txn string, orderID int64, reason string) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return err
-	}
-	var subBal, packBal int
-	if err := tx.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds
-		FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&subBal, &packBal); err != nil {
-		return err
-	}
-	var delta, after int
-	switch bucket {
-	case iapBucketSub:
-		delta = grant - subBal
-		after = grant
-		var end any
-		if periodEnd != nil {
-			end = *periodEnd
-		}
-		if _, err := tx.Exec(ctx, `UPDATE diamond_balances
-			SET subscription_diamonds=$1, subscription_period_end=$2, subscription_period_key=$3, updated_at=now()
-			WHERE user_id=$4`, after, end, periodKey, uid); err != nil {
-			return err
-		}
-	case iapBucketPack:
-		delta = grant
-		after = packBal + grant
-		if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET pack_diamonds=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown diamond bucket %s", bucket)
-	}
-	_, err := tx.Exec(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, order_id, store_transaction_id, reason)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`, uid, bucket, delta, after, orderID, txn, reason)
-	return err
-}
-
 func diamondReason(source, bucket string) string {
 	if bucket == iapBucketPack {
 		if source == iapSourceRestore {
@@ -985,19 +989,19 @@ func iapOrderSnapshot(ctx context.Context, q rowQuery, orderID int64, idempotent
 	var subStatus, subKind sql.NullString
 	var subExpires sql.NullTime
 	var auto sql.NullBool
-	var subDiamonds, packDiamonds int
+	var quotaBal int
 	err := q.QueryRow(ctx, `SELECT o.user_id, o.sku_code, o.sku_kind, o.ledger_bucket,
 		o.platform, o.product_id, o.store_transaction_id, o.original_transaction_id,
 		o.verify_status, o.credit_status, o.credited_diamonds, o.credited_readings,
 		o.period_start, o.period_end, o.source, o.verify_message, o.created_at, o.verified_at,
 		s.status, s.expires_at, s.sku_kind, s.auto_renew,
-		COALESCE(d.subscription_diamonds, 0), COALESCE(d.pack_diamonds, 0)
+		COALESCE(d.quota_balance, 0)
 		FROM iap_orders o
 		LEFT JOIN subscriptions s ON s.id = o.subscription_id
 		LEFT JOIN diamond_balances d ON d.user_id = o.user_id
 		WHERE o.id=$1`, orderID).Scan(&uid, &skuCode, &skuKind, &bucket, &platform, &productID, &txn, &original,
 		&verifyStatus, &creditStatus, &credited, &readings, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
-		&subStatus, &subExpires, &subKind, &auto, &subDiamonds, &packDiamonds)
+		&subStatus, &subExpires, &subKind, &auto, &quotaBal)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,55 +1015,53 @@ func iapOrderSnapshot(ctx context.Context, q rowQuery, orderID int64, idempotent
 		}
 	}
 	return map[string]any{
-		"order_id": orderID, "user_id": uid, "idempotent": idempotent, "unit": "diamond",
+		"order_id": orderID, "user_id": uid, "idempotent": idempotent, "unit": "quota",
 		"sku_code": skuCode, "sku_kind": skuKind, "ledger_bucket": bucket,
 		"platform": platform, "product_id": productID,
 		"store_transaction_id": txn, "original_transaction_id": original,
 		"verify_status": verifyStatus, "credit_status": creditStatus,
-		"credited_diamonds": nullInt(credited),
+		"credited_diamonds":     nullInt(credited),
+		"quota_remaining":       quotaBal,
+		"balance":               quotaBal,
 		"credited_readings": nullInt(readings),
 		"period_start":      nullTime(periodStart), "period_end": nullTime(periodEnd),
 		"source": source, "verify_message": message,
-		"subscription_diamonds": subDiamonds, "pack_diamonds": packDiamonds,
 		"subscription": subscription,
 	}, nil
 }
 
 func diamondView(ctx context.Context, q rowQuery, uid int64) (map[string]any, error) {
-	var sub, pack int
-	var periodEnd sql.NullTime
-	err := q.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds, subscription_period_end FROM diamond_balances WHERE user_id=$1`, uid).
-		Scan(&sub, &pack, &periodEnd)
-	if errors.Is(err, sql.ErrNoRows) {
-		sub, pack = 0, 0
-		err = nil
-	}
+	quota, err := loadQuotaBalance(ctx, q, uid)
 	if err != nil {
 		return nil, err
 	}
-	var kind, status string
-	var exp time.Time
-	var auto sql.NullBool
-	err = q.QueryRow(ctx, `SELECT sku_kind, status, expires_at, auto_renew FROM subscriptions
-		WHERE user_id=$1 AND status='active' AND expires_at > now() AND merge_state NOT IN ('superseded','expired')
-		ORDER BY expires_at DESC LIMIT 1`, uid).Scan(&kind, &status, &exp, &auto)
-	var subscription any
-	if err == nil {
-		subscription = map[string]any{
-			"sku_kind": kind, "status": status, "expires_at": exp, "auto_renew": nullBool(auto),
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	kind, exp, auto, member, err := loadActiveMembership(ctx, q, uid)
+	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		"unit":                    "diamond",
-		"display_label":           T(ctx, displayLabelTataCoin),
-		"balance":                 sub + pack,
-		"subscription_diamonds":   sub,
-		"pack_diamonds":           pack,
-		"subscription_period_end": nullTime(periodEnd),
-		"subscription":            subscription,
-	}, nil
+	out := map[string]any{
+		"is_member":    member,
+		"unit":         "quota",
+		"display_label": T(ctx, displayLabelQuota),
+		"can_buy_pack": member,
+		"membership":   nil,
+		"subscription": nil,
+	}
+	if member {
+		label := "月度会员"
+		if kind == "year" {
+			label = "年度会员"
+		}
+		sub := map[string]any{
+			"sku_kind": kind, "status": "active", "expires_at": exp, "auto_renew": nullBool(auto),
+			"type_label": label,
+		}
+		out["membership"] = sub
+		out["subscription"] = sub
+		out["quota_remaining"] = quota
+		out["balance"] = quota
+	}
+	return out, nil
 }
 
 func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool, kind string) ([]map[string]any, error) {
@@ -1108,7 +1110,7 @@ func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool, kind string) ([
 			"price_amount_minor": nullInt(price), "price_currency": nullString(currency),
 			"diamond_grant": nullInt(grant), "reading_grant": nullInt(readingGrant),
 			"period_unit": periodUnit, "period_count": nullInt(periodCount),
-			"copy": copyText, "enabled": enabled, "unit": "diamond", "display_label": T(ctx, displayLabelTataCoin),
+			"copy": copyText, "enabled": enabled, "unit": "quota", "display_label": T(ctx, displayLabelQuota),
 			"benefits": skuBenefits(ctx, kind, tarotistCount, followupLimit, followupReady, copyText),
 		})
 	}

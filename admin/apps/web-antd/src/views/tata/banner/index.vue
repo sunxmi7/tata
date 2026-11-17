@@ -1,15 +1,17 @@
 <script lang="ts" setup>
+import type { Banner } from '#/api/tata';
+
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Form, Input, InputNumber, Modal, Table, message } from 'ant-design-vue';
 
 import { createBanner, listBanners } from '#/api/tata';
 
-const access = useAccessStore();
-const rows = ref<Record<string, unknown>[]>([]);
+import { hasTataWrite } from '../access';
+
+const rows = ref<Banner[]>([]);
 const open = ref(false);
 const form = ref({
   copy: '',
@@ -33,7 +35,7 @@ onMounted(load);
 <template>
   <Page description="按北京时间和优先级下发。" title="首页提示窗">
     <template #extra>
-      <Button v-if="access.accessCodes.includes('write')" type="primary" @click="open = true">新建</Button>
+      <Button v-if="hasTataWrite('content')" type="primary" @click="open = true">新建</Button>
     </template>
     <Table
       :columns="[

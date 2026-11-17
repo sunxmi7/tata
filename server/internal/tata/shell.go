@@ -148,20 +148,15 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now().UTC()
 	var ledgerID any
-	pack, sub := 0, 0
 	switch kind {
 	case "diamonds":
-		id, p, s, err := creditRedeemDiamonds(r.Context(), tx, uid, amount, codeID, now)
+		id, err := creditRedeemDiamonds(r.Context(), tx, uid, amount, codeID)
 		if err != nil {
 			return err
 		}
-		ledgerID, pack, sub = id, p, s
+		ledgerID = id
 	case "free_count":
 		if err := creditRedeemFree(r.Context(), tx, uid, amount); err != nil {
-			return err
-		}
-		pack, sub, err = diamondTotals(r.Context(), tx, uid)
-		if err != nil {
 			return err
 		}
 	default:
@@ -174,38 +169,29 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	unit := "diamond"
+	unit := "quota"
 	if kind == "free_count" {
 		unit = "count"
 	}
+	quota, _ := loadQuotaBalance(r.Context(), a.Store, uid)
 	writeOK(w, map[string]any{
 		"code": code, "benefit_name": benefit, "kind": kind, "amount": amount,
-		"unit": unit, "display_label": T(r.Context(), displayLabelTataCoin),
-		"pack_diamonds": pack, "subscription_diamonds": sub, "balance": pack + sub,
+		"unit": unit, "display_label": T(r.Context(), displayLabelQuota),
+		"quota_remaining": quota, "balance": quota,
 	})
 	return nil
 }
 
-func creditRedeemDiamonds(ctx context.Context, tx Tx, uid int64, amount int, codeID int64, now time.Time) (int64, int, int, error) {
-	if _, err := tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return 0, 0, 0, err
-	}
-	var pack, sub int
-	if err := tx.QueryRow(ctx, `SELECT pack_diamonds, subscription_diamonds FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&pack, &sub); err != nil {
-		return 0, 0, 0, err
-	}
-	after := pack + amount
-	if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET pack_diamonds=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
-		return 0, 0, 0, err
+func creditRedeemDiamonds(ctx context.Context, tx Tx, uid int64, amount int, codeID int64) (int64, error) {
+	txn := "redeem:" + fmtID(codeID) + ":" + fmtID(uid)
+	if _, err := creditQuota(ctx, tx, uid, amount, nil, txn, redeemReason); err != nil {
+		return 0, err
 	}
 	var ledgerID int64
-	txn := "redeem:" + fmtID(codeID) + ":" + fmtID(uid)
-	if err := tx.QueryRow(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, store_transaction_id, reason, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		uid, iapBucketPack, amount, after, txn, redeemReason, now).Scan(&ledgerID); err != nil {
-		return 0, 0, 0, err
+	if err := tx.QueryRow(ctx, `SELECT id FROM diamond_ledger WHERE user_id=$1 AND store_transaction_id=$2 ORDER BY id DESC LIMIT 1`, uid, txn).Scan(&ledgerID); err != nil {
+		return 0, err
 	}
-	return ledgerID, after, sub, nil
+	return ledgerID, nil
 }
 
 func creditRedeemFree(ctx context.Context, tx Tx, uid int64, amount int) error {
@@ -218,15 +204,6 @@ func creditRedeemFree(ctx context.Context, tx Tx, uid int64, amount int) error {
 	return err
 }
 
-func diamondTotals(ctx context.Context, q rowQuery, uid int64) (int, int, error) {
-	var pack, sub int
-	err := q.QueryRow(ctx, `SELECT pack_diamonds, subscription_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&pack, &sub)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, nil
-	}
-	return pack, sub, err
-}
-
 func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
 	uid, _, err := a.appActor(r)
 	if err != nil {
@@ -235,7 +212,7 @@ func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能查看余额流水")
 	}
-	pack, sub, err := diamondTotals(r.Context(), a.Store, uid)
+	quota, err := loadQuotaBalance(r.Context(), a.Store, uid)
 	if err != nil {
 		return err
 	}
@@ -262,8 +239,8 @@ func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, map[string]any{
-		"items": items, "display_label": T(r.Context(), displayLabelTataCoin), "unit": "diamond",
-		"pack_diamonds": pack, "subscription_diamonds": sub, "balance": pack + sub,
+		"items": items, "display_label": T(r.Context(), displayLabelQuota), "unit": "quota",
+		"quota_remaining": quota, "balance": quota,
 	})
 	return nil
 }
@@ -273,7 +250,7 @@ func ledgerNote(reason string) string {
 	case "iap_pack_grant", "iap_restore_pack_grant":
 		return "充值入账"
 	case "iap_period_refresh", "iap_restore_period_refresh":
-		return "会员钻石刷新"
+		return "会员额度刷新"
 	case "quota_spend":
 		return "占卜消耗"
 	case grantReason:
@@ -411,6 +388,7 @@ var uploadFolders = map[string]bool{
 	"cards":    true,
 	"feedback": true,
 	"misc":     true,
+	"custom":   true,
 }
 
 func parseUploadFolder(r *http.Request) (string, error) {
@@ -481,19 +459,31 @@ func validUploadName(name string) bool {
 	return false
 }
 
+func forwardedFirst(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	return v
+}
+
 func requestBaseURL(r *http.Request) string {
 	scheme := "http"
-	if r != nil && r.TLS != nil {
-		scheme = "https"
-	}
-	if r != nil {
-		if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
-			scheme = proto
-		}
-	}
 	host := ""
 	if r != nil {
-		host = strings.TrimSpace(r.Host)
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if proto := forwardedFirst(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+			scheme = proto
+		}
+		host = forwardedFirst(r.Header.Get("X-Forwarded-Host"))
+		if host == "" {
+			host = strings.TrimSpace(r.Host)
+		}
 	}
 	if host == "" {
 		host = "127.0.0.1:8080"

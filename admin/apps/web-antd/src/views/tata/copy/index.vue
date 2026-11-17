@@ -2,14 +2,14 @@
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Form, Input, InputNumber, Table, Tabs, message } from 'ant-design-vue';
 
 import { getCopy, updateCopy } from '#/api/tata';
 
-const access = useAccessStore();
-const canWrite = access.accessCodes.includes('write');
+import { hasTataWrite } from '../access';
+
+const canWrite = hasTataWrite('content');
 const year = ref(new Date().getFullYear());
 const yearly = ref<Record<string, unknown>>({});
 const cards = ref<Record<string, unknown>[]>([]);

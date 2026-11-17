@@ -1,15 +1,17 @@
 <script lang="ts" setup>
+import type { ReadingRow } from '#/api/tata';
+
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Table, message } from 'ant-design-vue';
 
 import { listReadings, retryReading } from '#/api/tata';
 
-const access = useAccessStore();
-const rows = ref<Record<string, unknown>[]>([]);
+import { hasTataWrite } from '../access';
+
+const rows = ref<ReadingRow[]>([]);
 async function load() {
   rows.value = await listReadings();
 }
@@ -40,7 +42,7 @@ onMounted(load);
     >
       <template #bodyCell="{ column, record }">
         <Button
-          v-if="column.dataIndex === 'action' && access.accessCodes.includes('write') && record.status === 'FAILED_RETRYABLE'"
+          v-if="column.dataIndex === 'action' && hasTataWrite('records') && record.status === 'FAILED_RETRYABLE'"
           type="link"
           @click="retry(record.id)"
         >

@@ -24,7 +24,6 @@ const (
 	participationEmptyTitle  = "暂无参与记录"
 	participationPendingNote = "列表字段与空状态待产品确认。此处不展示伪造记录。"
 	rewardEmptyTitle         = "暂无奖励记录"
-	rewardPendingNote        = "奖励发放与记录字段待产品确认。集合页不写未确认的奖励承诺。"
 
 	helpSearchEmptyTitle = "暂时没有找到相关问题"
 	helpSearchEmptyHint  = "换个关键词，或向我们反馈"
@@ -58,8 +57,8 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 		if err := rows.Scan(&id, &created, &code, &benefit, &kind, &amount); err != nil {
 			return err
 		}
-		unit := "diamond"
-		var label any = T(r.Context(), displayLabelTataCoin)
+		unit := "quota"
+		var label any = T(r.Context(), displayLabelQuota)
 		if kind == "free_count" {
 			unit = "count"
 			label = nil
@@ -166,7 +165,40 @@ func (a *App) appCampaignRewards(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能查看奖励记录")
 	}
-	writeOK(w, placeholderList(r, rewardEmptyTitle, rewardPendingNote))
+	rows, err := a.Store.Query(r.Context(), `SELECT id, invitee_name, invitee_avatar, amount, created_at
+		FROM invite_rewards WHERE inviter_id=$1 ORDER BY id DESC LIMIT 100`, uid)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var name, avatar string
+		var amount int
+		var created sql.NullTime
+		if err := rows.Scan(&id, &name, &avatar, &amount, &created); err != nil {
+			return err
+		}
+		var at any
+		if created.Valid {
+			at = created.Time
+		}
+		items = append(items, map[string]any{
+			"id": id, "kind": "friend_invite", "title": inviteRewardTitle(r, name),
+			"friend_name": inviteFriendName(name),
+			"avatar_url":  emptyAsNil(absoluteAssetURL(r, avatar)),
+			"amount":      amount, "unit": "count", "amount_label": inviteAmountLabel(r, amount),
+			"created_at": at,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{
+		"items": items, "empty_title": T(r.Context(), rewardEmptyTitle),
+		"fields_confirmed": true,
+	})
 	return nil
 }
 

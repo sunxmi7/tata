@@ -24,6 +24,9 @@ func TestAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	protectLiveAIConfig(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE spreads SET enabled=true, recommended=true WHERE name='时间流'`)
+	})
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
@@ -118,8 +121,8 @@ func TestAcceptance(t *testing.T) {
 	}
 	reading := create(t, ts, appToken, "/api/app/v1/readings", map[string]any{"question": "工作怎么选", "type": "normal"})
 	rid := int64(reading["id"].(float64))
-	if reading["reward_consumed"] != true || reading["quota_consumed"] == true {
-		t.Fatalf("new user should spend registration reward first: %#v", reading)
+	if reading["quota_outcome"] != quotaDeferred {
+		t.Fatalf("new user defers charge until spread: %#v", reading)
 	}
 	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
 	drawn := create(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
@@ -207,11 +210,11 @@ func TestAcceptance(t *testing.T) {
 	}
 
 	firstDaily, _ := call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if strings.Contains(firstDaily, "已用完") {
-		t.Fatalf("daily consumed before the daily quota: %s", firstDaily)
+	if !strings.Contains(firstDaily, "已用完") && !strings.Contains(firstDaily, "开通会员") {
+		t.Fatalf("ordinary reading should consume the shared daily free: %s", firstDaily)
 	}
 	dailyMsg, _ := call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(dailyMsg, "已用完") && !strings.Contains(dailyMsg, "已占用") {
+	if !strings.Contains(dailyMsg, "已用完") && !strings.Contains(dailyMsg, "已占用") && !strings.Contains(dailyMsg, "开通会员") {
 		t.Fatalf("second daily: %s", dailyMsg)
 	}
 	must(t, ts, appToken, http.MethodDelete, fmt.Sprintf("/api/app/v1/readings/%d", rid), nil)
@@ -245,8 +248,8 @@ func sendEmailCode(t *testing.T, ts *httptest.Server, token, email, scene string
 
 func register(t *testing.T, ts *httptest.Server, email string) string {
 	t.Helper()
-	code := sendEmailCode(t, ts, "", email, "register")
-	data := create(t, ts, "", "/api/app/v1/auth/register", map[string]string{"email": email, "password": "demo1234", "code": code})
+	code := sendEmailCode(t, ts, "", email, "login")
+	data := create(t, ts, "", "/api/app/v1/auth/login", map[string]string{"email": email, "code": code})
 	return data["accessToken"].(string)
 }
 

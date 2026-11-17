@@ -76,7 +76,7 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if len(items) != 0 {
 		t.Fatalf("empty ledger must not invent rows: %#v", ledger)
 	}
-	if ledger["display_label"] != displayLabelTataCoin || ledger["balance"].(float64) != 0 {
+	if ledger["display_label"] != displayLabelQuota || ledger["balance"].(float64) != 0 {
 		t.Fatalf("empty ledger meta: %#v", ledger)
 	}
 
@@ -125,18 +125,14 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 	if out["benefit_name"] != "新春钻石礼" || out["amount"].(float64) != 60 || out["kind"] != "diamonds" {
 		t.Fatalf("redeem: %#v", out)
 	}
-	if out["display_label"] != displayLabelTataCoin || out["pack_diamonds"].(float64) != 60 || out["balance"].(float64) != 60 {
+	if out["display_label"] != displayLabelQuota || quotaNum(out) != 60 {
 		t.Fatalf("redeem balance: %#v", out)
 	}
 	if msg, _ := call(t, ts, token, http.MethodPost, "/api/app/v1/redeem", map[string]any{"code": code}); msg != "兑换码已使用" {
 		t.Fatalf("second redeem: %s", msg)
 	}
-	var pack int
-	if err := store.QueryRow(t.Context(), `SELECT pack_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&pack); err != nil {
-		t.Fatal(err)
-	}
-	if pack != 60 {
-		t.Fatalf("pack_diamonds=%d", pack)
+	if quotaOf(t, store, uid) != 60 {
+		t.Fatalf("quota_balance=%d", quotaOf(t, store, uid))
 	}
 
 	ledger := listOne(t, ts, token, "/api/app/v1/wallet/ledger")
@@ -150,11 +146,14 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 	}
 
 	quota := listOne(t, ts, token, "/api/app/v1/quota")
-	if quota["display_label"] != displayLabelTataCoin || quota["paid_label"] != "钻石" || quota["balance"].(float64) != 60 {
+	if quota["display_label"] != displayLabelQuota || quota["paid_label"] != displayLabelQuota || quota["is_member"] != false {
 		t.Fatalf("quota labels: %#v", quota)
 	}
+	if _, ok := quota["quota_remaining"]; ok {
+		t.Fatalf("free user should hide quota: %#v", quota)
+	}
 	ent := listOne(t, ts, token, "/api/app/v1/iap/entitlements")
-	if ent["display_label"] != displayLabelTataCoin || ent["unit"] != "diamond" || ent["balance"].(float64) != 60 {
+	if ent["display_label"] != displayLabelQuota || ent["unit"] != "quota" || ent["is_member"] != false {
 		t.Fatalf("entitlements: %#v", ent)
 	}
 	skus := list(t, ts, token, "/api/app/v1/iap/skus")
@@ -162,15 +161,15 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 		t.Fatal("skus empty")
 	}
 	for _, sku := range skus {
-		if sku["display_label"] != displayLabelTataCoin || sku["unit"] != "diamond" {
+		if sku["display_label"] != displayLabelQuota || sku["unit"] != "quota" {
 			t.Fatalf("sku label: %#v", sku)
 		}
 		code, _ := sku["code"].(string)
 		if code == "sub_month" && sku["price_amount_minor"].(float64) != 3900 {
 			t.Fatalf("month price: %#v", sku)
 		}
-		if code == "pack_60" && sku["app_store_product_id"] != "tata.coin.60" {
-			t.Fatalf("apple id: %#v", sku)
+		if code == "pack_quota_20" || code == "pack_60" {
+			t.Fatalf("free user saw pack sku: %#v", sku)
 		}
 	}
 

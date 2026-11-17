@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { AuditRow } from '#/api/tata';
+
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
@@ -9,7 +11,7 @@ import { listAudit } from '#/api/tata';
 
 import { useTataLookups } from '../use-tata-lookups';
 
-const rows = ref<Record<string, unknown>[]>([]);
+const rows = ref<AuditRow[]>([]);
 const { loadLookups, operatorLabel } = useTataLookups();
 
 onMounted(async () => {

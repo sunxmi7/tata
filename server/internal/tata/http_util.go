@@ -27,8 +27,7 @@ func biz(msg string) error { return &bizError{msg: msg} }
 // bizCode 带稳定错误码的业务错误，供 App 端按码分支，而不是匹配中文 message。
 func bizCode(code, msg string) error { return &bizError{msg: msg, code: code} }
 
-// displayLabelTataCoin is the UI name for diamonds. The ledger unit stays diamond.
-const displayLabelTataCoin = "塔塔币"
+const displayLabelQuota = "额度"
 
 type authFail struct{}
 

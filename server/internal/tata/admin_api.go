@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-
-	"tata/server/internal/service"
 )
 
 func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {
@@ -45,9 +43,14 @@ func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if role == "readonly" {
 		name = "只读"
 	}
+	perms, err := a.loadOperatorPerms(r.Context(), id)
+	if err != nil {
+		writeErr(w, r, http.StatusOK, "内部错误")
+		return
+	}
 	writeOK(w, map[string]any{
 		"accessToken": access, "refreshToken": refresh,
-		"id": id, "username": req.Username, "realName": name, "roles": []string{role},
+		"id": id, "username": req.Username, "realName": name, "roles": operatorMenuRoles(role, perms),
 	})
 }
 
@@ -102,7 +105,15 @@ func (a *App) adminInfo(w http.ResponseWriter, r *http.Request) error {
 	if err := a.Store.QueryRow(r.Context(), `SELECT username, role FROM operators WHERE id=$1`, act.id).Scan(&username, &role); err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"id": act.id, "username": username, "realName": username, "roles": []string{role}, "homePath": "/tata/spread", "desc": role, "token": ""})
+	perms, err := a.loadOperatorPerms(r.Context(), act.id)
+	if err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{
+		"id": act.id, "username": username, "realName": username,
+		"roles": operatorMenuRoles(role, perms), "homePath": operatorHomePath(role, perms),
+		"desc": role, "token": "",
+	})
 	return nil
 }
 
@@ -111,16 +122,21 @@ func (a *App) adminCodes(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	codes := []string{}
-	if act.role == "admin" {
-		codes = []string{"write"}
+	perms, err := a.loadOperatorPerms(r.Context(), act.id)
+	if err != nil {
+		return err
 	}
-	writeOK(w, codes)
+	writeOK(w, operatorAccessCodes(act.role, perms))
 	return nil
 }
 
 func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
-	if _, err := a.adminActor(r, false); err != nil {
+	act, err := a.adminActor(r, false)
+	if err != nil {
+		return err
+	}
+	perms, err := a.loadOperatorPerms(r.Context(), act.id)
+	if err != nil {
 		return err
 	}
 	type item struct {
@@ -128,39 +144,65 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		Path string         `json:"path"`
 		Meta map[string]any `json:"meta"`
 	}
-	items := []item{
-		{Name: "Spread", Path: "/spread", Meta: map[string]any{"title": "牌阵", "order": 1}},
-		{Name: "Card", Path: "/cards", Meta: map[string]any{"title": "牌面", "order": 2}},
-		{Name: "Deck", Path: "/deck", Meta: map[string]any{"title": "牌组", "order": 3}},
-		{Name: "Tarotist", Path: "/tarotist", Meta: map[string]any{"title": "塔罗师", "order": 4}},
-		{Name: "Vendor", Path: "/vendor", Meta: map[string]any{"title": "模型供应商", "order": 5}},
-		{Name: "Quota", Path: "/quota", Meta: map[string]any{"title": "额度参数", "order": 6}},
-		{Name: "Copy", Path: "/copy", Meta: map[string]any{"title": "运营文案", "order": 7}},
-		{Name: "Banner", Path: "/banner", Meta: map[string]any{"title": "首页提示窗", "order": 8}},
-		{Name: "Reading", Path: "/reading", Meta: map[string]any{"title": "占卜记录", "order": 9}},
-		{Name: "Ledger", Path: "/ledger", Meta: map[string]any{"title": "额度流水", "order": 10}},
-		{Name: "Operator", Path: "/operator", Meta: map[string]any{"title": "操作员", "order": 11}},
-		{Name: "Users", Path: "/users", Meta: map[string]any{"title": "用户账号", "order": 12}},
-		{Name: "Calendar", Path: "/calendar", Meta: map[string]any{"title": "日历", "order": 13}},
-		{Name: "Messages", Path: "/messages", Meta: map[string]any{"title": "追问消息", "order": 14}},
-		{Name: "Audit", Path: "/audit", Meta: map[string]any{"title": "审计日志", "order": 15}},
-		{Name: "IAPOrders", Path: "/iap-orders", Meta: map[string]any{"title": "IAP 订单", "order": 16}},
-		{Name: "IAPSkus", Path: "/iap-skus", Meta: map[string]any{"title": "价位", "order": 17}},
-		{Name: "Grant", Path: "/grant", Meta: map[string]any{"title": "人工补发", "order": 18}},
+	type spec struct {
+		item
+		module string
+		admin  bool
+	}
+	all := []spec{
+		{item{"Spread", "/spread", map[string]any{"title": "牌阵", "order": 1}}, adminModuleContent, false},
+		{item{"Card", "/cards", map[string]any{"title": "牌面", "order": 2}}, adminModuleContent, false},
+		{item{"Deck", "/deck", map[string]any{"title": "牌组", "order": 3}}, adminModuleContent, false},
+		{item{"Tarotist", "/tarotist", map[string]any{"title": "塔罗师", "order": 4}}, adminModuleContent, false},
+		{item{"Vendor", "/vendor", map[string]any{"title": "模型供应商", "order": 5}}, adminModuleAI, false},
+		{item{"Quota", "/quota", map[string]any{"title": "额度参数", "order": 6}}, adminModuleAI, false},
+		{item{"Copy", "/copy", map[string]any{"title": "运营文案", "order": 7}}, adminModuleContent, false},
+		{item{"Banner", "/banner", map[string]any{"title": "首页提示窗", "order": 8}}, adminModuleContent, false},
+		{item{"Reading", "/reading", map[string]any{"title": "占卜记录", "order": 9}}, adminModuleRecords, false},
+		{item{"Ledger", "/ledger", map[string]any{"title": "额度流水", "order": 10}}, adminModuleRecords, false},
+		{item{"Operator", "/operator", map[string]any{"title": "操作员", "order": 11}}, "", true},
+		{item{"Users", "/users", map[string]any{"title": "用户账号", "order": 12}}, adminModuleAccounts, false},
+		{item{"Calendar", "/calendar", map[string]any{"title": "日历", "order": 13}}, adminModuleRecords, false},
+		{item{"Messages", "/messages", map[string]any{"title": "追问消息", "order": 14}}, adminModuleRecords, false},
+		{item{"Audit", "/audit", map[string]any{"title": "审计日志", "order": 15}}, adminModuleAccounts, false},
+		{item{"IAPOrders", "/iap-orders", map[string]any{"title": "IAP 订单", "order": 16}}, adminModulePay, false},
+		{item{"IAPSkus", "/iap-skus", map[string]any{"title": "价位", "order": 17}}, adminModulePay, false},
+		{item{"Grant", "/grant", map[string]any{"title": "人工补发", "order": 18}}, adminModulePay, false},
+		{item{"RedeemCodes", "/redeem-codes", map[string]any{"title": "兑换码", "order": 19}}, adminModulePay, false},
+	}
+	items := []item{}
+	for _, row := range all {
+		if row.admin {
+			if act.role == "admin" {
+				items = append(items, row.item)
+			}
+			continue
+		}
+		if act.role == "admin" {
+			items = append(items, row.item)
+			continue
+		}
+		if _, ok := perms[row.module]; ok {
+			items = append(items, row.item)
+		}
 	}
 	writeOK(w, items)
 	return nil
 }
 
 type spreadBody struct {
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	CardCount   int        `json:"card_count"`
-	Positions   []position `json:"positions"`
-	Enabled     *bool      `json:"enabled"`
-	Charged     *bool      `json:"charged"`
-	Recommended *bool      `json:"recommended"`
-	Thumbnail   *string    `json:"thumbnail"`
+	Name          string     `json:"name"`
+	Description   string     `json:"description"`
+	CardCount     int        `json:"card_count"`
+	Positions     []position `json:"positions"`
+	Enabled       *bool      `json:"enabled"`
+	Charged       *bool      `json:"charged"`
+	Recommended   *bool      `json:"recommended"`
+	Thumbnail     *string    `json:"thumbnail"`
+	ThemeKey      *string    `json:"theme_key"`
+	ThemeTitle    *string    `json:"theme_title"`
+	ThemeSubtitle *string    `json:"theme_subtitle"`
+	ShortSentence *string    `json:"short_sentence"`
 }
 
 func (b spreadBody) enabled() bool {
@@ -168,22 +210,49 @@ func (b spreadBody) enabled() bool {
 }
 func (b spreadBody) charged() bool { return b.Charged != nil && *b.Charged }
 
+func spreadText(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
+}
+
+func spreadNullText(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return strings.TrimSpace(*v)
+}
+
 func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := service.ListSpreads(r.Context())
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, enabled, charged, recommended, thumbnail,
+		theme_key, theme_title, theme_subtitle, short_sentence
+		FROM spreads ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	list := []map[string]any{}
-	for _, row := range rows {
+	for rows.Next() {
+		var id int64
+		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short string
+		var count int
+		var enabled, charged, recommended bool
+		if err := rows.Scan(&id, &name, &desc, &count, &pos, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short); err != nil {
+			return err
+		}
 		list = append(list, map[string]any{
-			"id": row.Id, "name": row.Name, "description": row.Description,
-			"card_count": row.CardCount, "positions": json.RawMessage(row.Positions),
-			"enabled": row.Enabled, "charged": row.Charged, "recommended": row.Recommended,
-			"thumbnail": nullableConfig(row.Thumbnail), "preview": deckPreviewURL(row.Thumbnail),
+			"id": id, "name": name, "description": desc, "card_count": count,
+			"positions": json.RawMessage(pos), "enabled": enabled, "charged": charged, "recommended": recommended,
+			"thumbnail": nullableConfig(thumb), "preview": deckPreviewURL(thumb),
+			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub, "short_sentence": short,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 	writeOK(w, list)
 	return nil
@@ -207,8 +276,10 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
 	}
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended, thumbnail) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb).Scan(&id)
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
+		spreadText(req.ThemeKey), spreadText(req.ThemeTitle), spreadText(req.ThemeSubtitle), spreadText(req.ShortSentence)).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -267,8 +338,11 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7, thumbnail=$8 WHERE id=$9`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb, id)
+	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7, thumbnail=$8,
+		theme_key=COALESCE($9, theme_key), theme_title=COALESCE($10, theme_title), theme_subtitle=COALESCE($11, theme_subtitle), short_sentence=COALESCE($12, short_sentence)
+		WHERE id=$13`,
+		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
+		spreadNullText(req.ThemeKey), spreadNullText(req.ThemeTitle), spreadNullText(req.ThemeSubtitle), spreadNullText(req.ShortSentence), id)
 	if err != nil {
 		return err
 	}
@@ -444,7 +518,7 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 		"reset_at":                "北京时间 08:00",
 		"daily_free_count":        dailyFree,
 		"daily_slot_count":        dailySlot,
-		"shared_scope":            "全玩法共用：注册奖励，今日免费次数，人工补发免费次数，然后钻石",
+		"shared_scope":            "免费用户：今日免费次数，邀请奖励次数；会员：统一额度。探索/年运/AI 不适用每日免费。",
 		"failure_policy":          "已扣不退",
 		"editable":                false,
 		"daily_free_editable":     true,
@@ -453,9 +527,12 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 		"followup_limit_editable": true,
 		"diamond_cost":            diamondCost,
 		"diamond_cost_configured": configured,
-		"diamond_spend_order":     "pack_then_subscription",
+		"diamond_cost_editable":   true,
+		"quota_cost":              diamondCost,
+		"quota_cost_configured":   configured,
+		"diamond_spend_order":     "quota",
 		"free_label":              "次数",
-		"paid_label":              "钻石",
+		"paid_label":              "额度",
 	})
 	return nil
 }
@@ -503,6 +580,37 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 				return biz("追问次数上限须为正整数，或 null 表示不限制")
 			}
 			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET followup_limit=$1, updated_at=now() WHERE id=1`, limit); err != nil {
+				return err
+			}
+		}
+		changed = true
+	}
+	if costRaw, ok := raw["diamond_cost"]; ok {
+		if string(costRaw) == "null" {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=NULL, updated_at=now() WHERE id=1`); err != nil {
+				return err
+			}
+		} else {
+			var cost int
+			if err := json.Unmarshal(costRaw, &cost); err != nil || cost <= 0 {
+				return biz("会员单次额度须为正整数，或 null 表示未配置")
+			}
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=$1, updated_at=now() WHERE id=1`, cost); err != nil {
+				return err
+			}
+		}
+		changed = true
+	} else if costRaw, ok := raw["quota_cost"]; ok {
+		if string(costRaw) == "null" {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=NULL, updated_at=now() WHERE id=1`); err != nil {
+				return err
+			}
+		} else {
+			var cost int
+			if err := json.Unmarshal(costRaw, &cost); err != nil || cost <= 0 {
+				return biz("会员单次额度须为正整数，或 null 表示未配置")
+			}
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=$1, updated_at=now() WHERE id=1`, cost); err != nil {
 				return err
 			}
 		}
@@ -667,6 +775,10 @@ func (a *App) adminListOperators(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer rows.Close()
+	perms, err := a.listOperatorPerms(r.Context())
+	if err != nil {
+		return err
+	}
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
@@ -675,7 +787,14 @@ func (a *App) adminListOperators(w http.ResponseWriter, r *http.Request) error {
 		if err := rows.Scan(&id, &username, &role, &disabled); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": id, "username": username, "role": role, "disabled": disabled})
+		modules := perms[id]
+		if modules == nil {
+			modules = []operatorModule{}
+		}
+		if role == "admin" {
+			modules = allAdminModulePerms()
+		}
+		list = append(list, map[string]any{"id": id, "username": username, "role": role, "disabled": disabled, "modules": modules})
 	}
 	writeOK(w, list)
 	return nil
@@ -687,15 +806,19 @@ func (a *App) adminCreateOperator(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Username string           `json:"username"`
+		Password string           `json:"password"`
+		Role     string           `json:"role"`
+		Modules  []operatorModule `json:"modules"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
 	if req.Username == "" || req.Password == "" || (req.Role != "admin" && req.Role != "readonly") {
 		return biz("操作员字段不正确")
+	}
+	if req.Modules == nil {
+		req.Modules = []operatorModule{}
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -705,6 +828,11 @@ func (a *App) adminCreateOperator(w http.ResponseWriter, r *http.Request) error 
 	err = a.Store.QueryRow(r.Context(), `INSERT INTO operators(username, password_hash, role) VALUES ($1,$2,$3) RETURNING id`, req.Username, string(hash), req.Role).Scan(&id)
 	if err != nil {
 		return biz("用户名已存在")
+	}
+	if req.Role != "admin" {
+		if err := a.replaceOperatorModules(r.Context(), id, req.Modules); err != nil {
+			return err
+		}
 	}
 	a.Store.audit(r.Context(), act.id, "create", "operator", fmtID(id), req.Role)
 	writeOK(w, map[string]any{"id": id})
@@ -721,13 +849,19 @@ func (a *App) adminUpdateOperator(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	var req struct {
-		Disabled *bool `json:"disabled"`
+		Disabled *bool             `json:"disabled"`
+		Modules  *[]operatorModule `json:"modules"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
 	if id == act.id && req.Disabled != nil && *req.Disabled {
 		return biz("不能停用自己")
+	}
+	var role string
+	err = a.Store.QueryRow(r.Context(), `SELECT role FROM operators WHERE id=$1`, id).Scan(&role)
+	if err != nil {
+		return biz("操作员不存在")
 	}
 	disabled := req.Disabled != nil && *req.Disabled
 	tag, err := a.Store.Exec(r.Context(), `UPDATE operators SET disabled=$1 WHERE id=$2`, disabled, id)
@@ -736,6 +870,11 @@ func (a *App) adminUpdateOperator(w http.ResponseWriter, r *http.Request) error 
 	}
 	if tag.RowsAffected() == 0 {
 		return biz("操作员不存在")
+	}
+	if req.Modules != nil && role != "admin" {
+		if err := a.replaceOperatorModules(r.Context(), id, *req.Modules); err != nil {
+			return err
+		}
 	}
 	if disabled {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE refresh_tokens SET revoked=true WHERE audience='admin' AND subject_id=$1`, id)

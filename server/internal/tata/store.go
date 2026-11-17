@@ -367,10 +367,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS iap_orders_platform_txn ON iap_orders(platform
 CREATE INDEX IF NOT EXISTS iap_orders_user_idx ON iap_orders(user_id, id DESC);
 CREATE TABLE IF NOT EXISTS diamond_balances (
   user_id BIGINT PRIMARY KEY,
-  subscription_diamonds INT NOT NULL DEFAULT 0,
-  subscription_period_end TIMESTAMPTZ,
-  subscription_period_key TEXT NOT NULL DEFAULT '',
-  pack_diamonds INT NOT NULL DEFAULT 0,
+  quota_balance INT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS diamond_ledger (
@@ -383,7 +380,7 @@ CREATE TABLE IF NOT EXISTS diamond_ledger (
   store_transaction_id TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT diamond_ledger_bucket_chk CHECK (bucket IN ('subscription','consumable'))
+  CONSTRAINT diamond_ledger_bucket_chk CHECK (bucket = 'quota')
 );
 CREATE UNIQUE INDEX IF NOT EXISTS diamond_ledger_order_bucket
   ON diamond_ledger(order_id, bucket) WHERE order_id IS NOT NULL;
@@ -439,8 +436,7 @@ CREATE TABLE IF NOT EXISTS quota_paywall (
 		return err
 	}
 	// Controlled admin grant. This is a new credit, not an edit of ledger rows or IAP orders.
-	// Free counts land on rewards.admin_grant_remaining (still 次数). Diamonds add to
-	// pack_diamonds by default (ledger bucket consumable) or subscription_diamonds.
+	// Free counts land on rewards.admin_grant_remaining. Diamonds credit quota_balance.
 	_, err = s.Exec(ctx, `
 ALTER TABLE rewards ADD COLUMN IF NOT EXISTS admin_grant_remaining INT NOT NULL DEFAULT 0;
 ALTER TABLE ledger ALTER COLUMN reading_id DROP NOT NULL;
@@ -472,7 +468,7 @@ CREATE INDEX IF NOT EXISTS admin_grants_user_idx ON admin_grants(user_id, id DES
 	if err != nil {
 		return err
 	}
-	// App UI P0 shell. Diamonds stay the only currency ledger; 塔塔币 is display_label.
+	// App UI P0 shell. Display label is 额度.
 	_, err = s.Exec(ctx, `
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
@@ -735,6 +731,102 @@ CREATE TABLE IF NOT EXISTS preset_questions (
 );
 ALTER TABLE preset_questions ADD COLUMN IF NOT EXISTS scene TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS preset_questions_scene_idx ON preset_questions (scene, pool, sort_order);
+CREATE TABLE IF NOT EXISTS operator_module_perms (
+  operator_id BIGINT NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
+  module TEXT NOT NULL,
+  can_write BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (operator_id, module)
+);
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS explore_preferences TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS custom_deck_id BIGINT;
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_subtitle TEXT NOT NULL DEFAULT '';
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS short_sentence TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS invite_rewards (
+  id BIGSERIAL PRIMARY KEY,
+  inviter_id BIGINT NOT NULL,
+  invitee_id BIGINT NOT NULL UNIQUE,
+  invite_code TEXT NOT NULL,
+  invitee_name TEXT NOT NULL DEFAULT '',
+  invitee_avatar TEXT NOT NULL DEFAULT '',
+  amount INT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS invite_rewards_inviter_idx ON invite_rewards(inviter_id, id DESC);
+CREATE TABLE IF NOT EXISTS custom_decks (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  name TEXT NOT NULL DEFAULT '我的自定义牌组',
+  status TEXT NOT NULL DEFAULT 'draft',
+  face_source TEXT NOT NULL DEFAULT '',
+  back_source TEXT NOT NULL DEFAULT '',
+  back_url TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT custom_decks_status_chk CHECK (status IN ('draft','saved'))
+);
+CREATE INDEX IF NOT EXISTS custom_decks_user_idx ON custom_decks(user_id, id DESC);
+CREATE TABLE IF NOT EXISTS custom_deck_faces (
+  deck_id BIGINT NOT NULL REFERENCES custom_decks(id) ON DELETE CASCADE,
+  card_id INT NOT NULL,
+  image_url TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (deck_id, card_id),
+  CONSTRAINT custom_deck_faces_card_chk CHECK (card_id >= 0 AND card_id < 78)
+);
+ALTER TABLE diamond_balances ADD COLUMN IF NOT EXISTS quota_balance INT NOT NULL DEFAULT 0;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'diamond_balances' AND column_name = 'pack_diamonds'
+  ) THEN
+    UPDATE diamond_balances
+       SET quota_balance = pack_diamonds + subscription_diamonds
+     WHERE quota_balance = 0 AND (pack_diamonds > 0 OR subscription_diamonds > 0);
+  END IF;
+END $$;
+DO $$
+DECLARE def text;
+BEGIN
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'diamond_ledger_bucket_chk';
+  IF def IS NULL THEN
+    ALTER TABLE diamond_ledger ADD CONSTRAINT diamond_ledger_bucket_chk
+      CHECK (bucket IN ('subscription','consumable','quota'));
+  ELSIF position('quota' in def) = 0 THEN
+    ALTER TABLE diamond_ledger DROP CONSTRAINT diamond_ledger_bucket_chk;
+    ALTER TABLE diamond_ledger ADD CONSTRAINT diamond_ledger_bucket_chk
+      CHECK (bucket IN ('subscription','consumable','quota'));
+  END IF;
+END $$;
+ALTER TABLE rewards ADD COLUMN IF NOT EXISTS invite_remaining INT NOT NULL DEFAULT 0;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS onboard_experience BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS device_experiences (
+  device_id TEXT PRIMARY KEY,
+  anonymous_id TEXT NOT NULL DEFAULT '',
+  user_id BIGINT,
+  reading_id BIGINT,
+  consumed BOOLEAN NOT NULL DEFAULT FALSE,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS device_experiences_anon_idx ON device_experiences(anonymous_id);
+CREATE TABLE IF NOT EXISTS anon_devices (
+  anonymous_id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE kind='consumable_pack';
+UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE code='sub_times';
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'admin_grants_bucket_chk') THEN
+    ALTER TABLE admin_grants ADD CONSTRAINT admin_grants_bucket_chk CHECK (
+      (kind = 'diamonds' AND bucket IN ('pack','subscription','quota'))
+      OR (kind = 'free_count' AND bucket = '')
+    );
+  END IF;
+END $$;
 `)
 	if err != nil {
 		return err
@@ -744,13 +836,17 @@ CREATE INDEX IF NOT EXISTS preset_questions_scene_idx ON preset_questions (scene
 
 func (s *Store) commentSchema(ctx context.Context) error {
 	_, err := s.Exec(ctx, `
-COMMENT ON TABLE operators IS '管理端账号。对应 /api/admin/v1/auth/*；role=admin 可写，readonly 只读。';
-COMMENT ON COLUMN operators.role IS 'admin 或 readonly。';
+COMMENT ON TABLE operators IS '管理端账号。对应 /api/admin/v1/auth/*；role=admin 拥有全部模块读写并可分配权限，readonly 按 operator_module_perms 授权。';
+COMMENT ON COLUMN operators.role IS 'admin 或 readonly。admin 不读权限表，隐含全部模块。';
+COMMENT ON TABLE operator_module_perms IS '运营账号的模块权限。module=content/ai/records/accounts/pay；can_write=false 为只读。admin 角色不写此表。';
+COMMENT ON COLUMN operator_module_perms.module IS 'content 内容、ai 模型、records 记录、accounts 账号、pay 付费。与后台菜单分组一致。';
 
 COMMENT ON TABLE app_users IS 'App 用户。对应 /api/app/v1/auth/*、/profile。merged_into 非空表示已并入另一账号。';
 COMMENT ON COLUMN app_users.public_id IS '对外短 ID，6 位。对应「我的」短码，首次读 profile 生成。';
 COMMENT ON COLUMN app_users.phone IS '历史列，App 不再绑定或展示手机号。注销/合并时仍会清空。';
-COMMENT ON COLUMN app_users.deck_code IS '当前牌面风格 code，须对应 decks 中已启用项。对应 GET/PUT /deck-preference。';
+COMMENT ON COLUMN app_users.deck_code IS '当前官方牌面风格 code，须对应 decks 中已启用项。使用自定义牌组时仍作名称解析兜底。';
+COMMENT ON COLUMN app_users.explore_preferences IS '探索偏好 JSON 字符串数组。对应个人档案多选项，PUT /profile。';
+COMMENT ON COLUMN app_users.custom_deck_id IS '当前使用的自定义牌组。空则用 deck_code 官方风格。';
 COMMENT ON COLUMN app_users.merged_into IS '并账后指向主账号 id。被合并账号不可再登录。';
 
 COMMENT ON TABLE refresh_tokens IS '刷新令牌。App 登录不签发；管理端会话用。';
@@ -760,6 +856,13 @@ COMMENT ON TABLE spreads IS '牌阵。对应 GET /spreads；抽牌 spread_id。�
 COMMENT ON COLUMN spreads.positions IS 'JSON 牌位：index/name/meaning。';
 COMMENT ON COLUMN spreads.recommended IS '推荐牌阵。全表最多一张。App 列表推荐的排前面。';
 COMMENT ON COLUMN spreads.thumbnail IS '选阵屏牌阵示意图。空则 App 返回内置默认牌背，不编造构图。';
+COMMENT ON COLUMN spreads.theme_key IS '探索牌阵主题键，如 yes_or_no。空则未分组。';
+COMMENT ON COLUMN spreads.theme_title IS '探索牌阵主题标题。';
+COMMENT ON COLUMN spreads.theme_subtitle IS '探索牌阵主题副标题。';
+COMMENT ON COLUMN spreads.short_sentence IS '牌阵短句，对应文字总结版。';
+COMMENT ON TABLE invite_rewards IS '好友邀请到账。邀请人 public_id 为邀请码；被邀请人只能绑定一次；每人数 +3 写入 rewards.invite_remaining，最多 5 人。';
+COMMENT ON TABLE custom_decks IS '用户自定义牌组。face_source/back_source 为 upload 或官方 decks.code。';
+COMMENT ON TABLE custom_deck_faces IS '自定义牌组已上传的牌面。card_id 对应韦特 0–77。';
 COMMENT ON TABLE tarotists IS '塔罗师。对应 GET /tarotists；会员权益 benefits.tarotists.count 统计 enabled=true。';
 COMMENT ON TABLE vendors IS '大模型供应商。api_key_enc 用 KEK 加密。';
 COMMENT ON TABLE bindings IS '任务到供应商+模型的绑定。task=detect/rewrite/recommend/interpret/tarotist。';
@@ -791,46 +894,51 @@ COMMENT ON COLUMN yearly_reports.domain_cards IS '6 张六大领域牌 JSON（�
 COMMENT ON COLUMN yearly_reports.report IS '模型生成的年度报告正文。未生成前为空，不编造。';
 COMMENT ON COLUMN yearly_reports.report_status IS 'pending / generating / ready / failed。';
 
-COMMENT ON TABLE iap_skus IS '内购价位，三类对应三块屏：会员（月/年/次卡 593:1905）、塔塔币 6 档（565:1904）、年运单独解锁（574:2423）。种子已填设计价与 App Store 占位商品号；管理员改过的价与商品号 COALESCE 保留。对应 GET /iap/skus 与管理端价位页。';
-COMMENT ON COLUMN iap_skus.kind IS 'month_subscription 会员月卡；year_subscription 会员年卡；reading_pack 会员次卡；consumable_pack 塔塔币；yearly_unlock 年运解锁。';
-COMMENT ON COLUMN iap_skus.ledger_bucket IS 'subscription=订阅钻石桶（月/年卡）；consumable=消耗桶（次卡/塔塔币/年运）。';
-COMMENT ON COLUMN iap_skus.price_amount_minor IS '价格，单位分。种子已填；管理员可改。未配置为 null。';
-COMMENT ON COLUMN iap_skus.diamond_grant IS '塔塔币/订阅发放钻石数。次卡与年运解锁必须为 null。未配置验单 credit_status=amount_unconfigured。';
-COMMENT ON COLUMN iap_skus.reading_grant IS '仅次卡。解读次数，入账到 rewards.admin_grant_remaining。未配置为 null。';
+COMMENT ON TABLE iap_skus IS '内购价位：会员月/年卡、额度补充包、年运解锁。塔塔币 consumable_pack 已停用。管理员改过的价与商品号 COALESCE 保留。';
+COMMENT ON COLUMN iap_skus.kind IS 'month_subscription 月卡；year_subscription 年卡；reading_pack 额度补充包；consumable_pack 已下线塔塔币；yearly_unlock 年运解锁。';
+COMMENT ON COLUMN iap_skus.ledger_bucket IS 'subscription=订阅身份；consumable=额度补充包/年运。会员额度记在 diamond_balances.quota_balance。';
+COMMENT ON COLUMN iap_skus.price_amount_minor IS '价格，单位分。补充包种子 20/60/100 元；入账额度 reading_grant 未配置为 null，不编造次数。';
+COMMENT ON COLUMN iap_skus.diamond_grant IS '历史列。塔塔币已下线；订阅发放额度未配置为 null。';
+COMMENT ON COLUMN iap_skus.reading_grant IS '额度补充包入账到 quota_balance。未配置验单 credit_status=amount_unconfigured。';
 COMMENT ON COLUMN iap_skus.period_unit IS '月卡 month、年卡 year；其余空。';
-COMMENT ON COLUMN iap_skus.code IS '稳定编码。种子：sub_month/sub_year/sub_times（会员），pack_*（塔塔币档），unlock_yearly（年运）。';
+COMMENT ON COLUMN iap_skus.code IS '稳定编码。种子：sub_month/sub_year，pack_quota_20/60/100，unlock_yearly。';
 COMMENT ON COLUMN iap_skus.app_store_product_id IS 'App Store 商品 ID。验单按票据 product_id 映射本列。种子为占位编码，上架前换成 App Store Connect 正式 ID。';
 
 COMMENT ON TABLE iap_settings IS 'IAP 开关单行表 id=1。restore_hook_enabled 控制恢复购买。';
 COMMENT ON TABLE iap_orders IS '本地验单订单。不请求苹果/谷歌，只按 product_id 映射 iap_skus。对应 POST /iap/verify、/iap/restore。';
 COMMENT ON COLUMN iap_orders.sku_kind IS '下单时拷贝的 iap_skus.kind。';
-COMMENT ON COLUMN iap_orders.credited_diamonds IS '本次入账钻石。未配置或非钻石商品为 null。';
-COMMENT ON COLUMN iap_orders.credited_readings IS '次卡本次入账解读次数。未配置或非次卡为 null。';
+COMMENT ON COLUMN iap_orders.credited_diamonds IS '本次入账额度。未配置或非额度商品为 null。';
+COMMENT ON COLUMN iap_orders.credited_readings IS '额度补充包本次入账。未配置或非补充包为 null。';
 COMMENT ON COLUMN iap_orders.credit_status IS 'none/credited/amount_unconfigured/skipped_expired。';
 
 COMMENT ON TABLE subscriptions IS '商店订阅有效期。sku_kind 这里是 month/year（与 iap_skus.kind 不同）。年卡有效则年运免费解锁。';
 COMMENT ON COLUMN subscriptions.sku_kind IS 'month 或 year，由 month_subscription/year_subscription 推导。';
 
-COMMENT ON TABLE diamond_balances IS '塔塔币余额。subscription_diamonds 月/年卡周期桶，pack_diamonds 消耗包。扣费先 pack 后 subscription。';
-COMMENT ON TABLE diamond_ledger IS '塔塔币流水。bucket=subscription|consumable。对应 GET /wallet/ledger。';
+COMMENT ON TABLE diamond_balances IS '会员统一额度。只保留 quota_balance。塔塔币分账列由 docs/sql/drop_tata_coin_2026-11-17.sql 删除。';
+COMMENT ON TABLE diamond_ledger IS '统一额度流水。新写入 bucket=quota。历史 subscription/consumable 由 drop SQL 回写。';
+COMMENT ON COLUMN diamond_balances.quota_balance IS '会员统一额度。补充包与后台补发入账；仅有效会员可扣。到期后余额保留但不可用。';
 
-COMMENT ON TABLE rewards IS '免费次数账本。remaining=注册奖励；admin_grant_remaining=后台补发+次卡入账。';
-COMMENT ON COLUMN rewards.remaining IS '注册/过期型免费次数。每日免费不在此列。';
-COMMENT ON COLUMN rewards.admin_grant_remaining IS '可扣的解读次数：管理端补发、兑换码 free_count、次卡 reading_pack。';
+COMMENT ON TABLE rewards IS '免费次数账本。invite_remaining=邀请奖励；admin_grant_remaining=后台补发/兑换码。remaining 注册奖励已下线。';
+COMMENT ON COLUMN rewards.remaining IS '历史注册奖励，扣费不再读取。';
+COMMENT ON COLUMN rewards.admin_grant_remaining IS '管理端补发、兑换码 free_count。免费用户在邀请次数之后可扣。';
+COMMENT ON COLUMN rewards.invite_remaining IS '邀请奖励次数。不过日清，最多 15。与每日免费分开记账。';
 
-COMMENT ON TABLE quota_settings IS '共用额度。id=1。diamond_cost 为单次解读钻石成本，未配置为 null。followup_limit 为每条解读可追问次数，null 表示不限制。daily_free_count 为每日免费次数。daily_slot_count 为每日今日一牌次数。';
+COMMENT ON TABLE quota_settings IS '计费参数。id=1。diamond_cost 现为会员单次额度消耗，未配置为 null 不猜测。daily_free_count 默认 1。';
 COMMENT ON COLUMN quota_settings.followup_limit IS '每条解读追问上限。管理端 PUT /quota-params 可改；null 不限制。种子默认 5（设计稿）。';
 COMMENT ON COLUMN quota_settings.daily_free_count IS '每个业务日的共用免费次数。管理端可改，默认 1。';
 COMMENT ON COLUMN quota_settings.daily_slot_count IS '每个业务日可抽今日一牌（含明日运势）的次数。管理端可改，默认 1。';
-COMMENT ON TABLE quota_charges IS '单次解读实际扣费记录。entitlement=daily_free/reward/admin_grant/diamond。';
+COMMENT ON TABLE quota_charges IS '单次解读扣费。entitlement=daily_free/invite_reward/admin_grant_free/member_quota/ai_trial/onboard_trial。';
+COMMENT ON TABLE device_experiences IS '设备维度新人引导体验。每设备 1 次；解读成功展示时消耗，不扣每日免费或会员额度。';
+COMMENT ON TABLE anon_devices IS '匿名会话绑定的设备识别。';
+COMMENT ON COLUMN readings.onboard_experience IS '是否占用设备引导体验。登录后出解读时消耗。';
 COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume。';
 COMMENT ON TABLE quota_use IS '每日免费占用（同一 reading 唯一）。条数受 quota_settings.daily_free_count 限制。并账后写入 daily_free_*。';
 COMMENT ON TABLE daily_free_balance IS '并账后的每日免费余额快照。';
 COMMENT ON TABLE daily_free_uses IS '并账后每日免费消耗明细。';
-COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 钻石不写入此表。';
+COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 额度记在 diamond_ledger。';
 
-COMMENT ON TABLE admin_grants IS '管理端人工补发。kind=diamonds 入 diamond_*；free_count 入 rewards.admin_grant_remaining。';
-COMMENT ON TABLE redeem_codes IS '兑换码。kind=diamonds|free_count。对应 POST /redeem。';
+COMMENT ON TABLE admin_grants IS '管理端人工补发。kind=diamonds 入 quota_balance；free_count 入 rewards.admin_grant_remaining。';
+COMMENT ON TABLE redeem_codes IS '兑换码。kind=diamonds 入额度，free_count 入免费次数。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
 COMMENT ON TABLE redeem_redemptions IS '兑换码核销记录。对应 GET /redeem/records。';
 
 COMMENT ON TABLE notification_preferences IS '通知三开关。今日/明日抽牌走本地通知；messages_enabled 控制优惠/活动推送。对应 /notification-preferences。';
@@ -865,6 +973,9 @@ func (s *Store) seed(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureOperator(ctx, "readonly", "readonly123", "readonly"); err != nil {
+		return err
+	}
+	if err := s.seedReadonlyModulePerms(ctx); err != nil {
 		return err
 	}
 	var n int
@@ -1092,13 +1203,9 @@ func (s *Store) seedIAP(ctx context.Context) error {
 	slots := []sku{
 		{"sub_month", "month_subscription", "subscription", "月卡", "month", "tata.membership.month", 3900, nil, nil, 1},
 		{"sub_year", "year_subscription", "subscription", "年卡", "year", "tata.membership.year", 19800, nil, nil, 1},
-		{"sub_times", "reading_pack", "consumable", "次卡", "", "tata.membership.times", 1990, nil, 5, nil},
-		{"pack_60", "consumable_pack", "consumable", "60 塔塔币", "", "tata.coin.60", 600, 60, nil, nil},
-		{"pack_180", "consumable_pack", "consumable", "180 塔塔币", "", "tata.coin.180", 1800, 180, nil, nil},
-		{"pack_300", "consumable_pack", "consumable", "300 塔塔币", "", "tata.coin.300", 3000, 300, nil, nil},
-		{"pack_680", "consumable_pack", "consumable", "680 塔塔币", "", "tata.coin.680", 6800, 680, nil, nil},
-		{"pack_1280", "consumable_pack", "consumable", "1280 塔塔币", "", "tata.coin.1280", 12800, 1280, nil, nil},
-		{"pack_3280", "consumable_pack", "consumable", "3280 塔塔币", "", "tata.coin.3280", 32800, 3280, nil, nil},
+		{"pack_quota_20", "reading_pack", "consumable", "额度补充包 20元", "", "tata.quota.20", 2000, nil, nil, nil},
+		{"pack_quota_60", "reading_pack", "consumable", "额度补充包 60元", "", "tata.quota.60", 6000, nil, nil, nil},
+		{"pack_quota_100", "reading_pack", "consumable", "额度补充包 100元", "", "tata.quota.100", 10000, nil, nil, nil},
 		{"unlock_yearly", "yearly_unlock", "consumable", "年运解锁", "", "tata.unlock.yearly", 2880, nil, nil, nil},
 	}
 	const upsert = `INSERT INTO iap_skus(
@@ -1122,6 +1229,17 @@ func (s *Store) seedIAP(ctx context.Context) error {
 		}
 	}
 	_, err := s.Exec(ctx, `INSERT INTO iap_settings(id) VALUES (1) ON CONFLICT (id) DO NOTHING`)
+	return err
+}
+
+func (s *Store) seedReadonlyModulePerms(ctx context.Context) error {
+	_, err := s.Exec(ctx, `
+INSERT INTO operator_module_perms (operator_id, module, can_write)
+SELECT o.id, m.module, FALSE
+FROM operators o
+CROSS JOIN (VALUES ('content'),('ai'),('records'),('accounts'),('pay')) AS m(module)
+WHERE o.username = 'readonly'
+ON CONFLICT (operator_id, module) DO NOTHING`)
 	return err
 }
 

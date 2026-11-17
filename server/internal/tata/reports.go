@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -89,6 +90,42 @@ func (a *App) appYearlyReport(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, view)
+	return nil
+}
+
+func (a *App) appYearlyShare(w http.ResponseWriter, r *http.Request) error {
+	uid, err := a.requireAppUser(r)
+	if err != nil {
+		return err
+	}
+	year, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if year < 2000 || year > 2100 {
+		return biz("年份不正确")
+	}
+	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
+	if err != nil {
+		return err
+	}
+	var name string
+	_ = a.Store.QueryRow(r.Context(), `SELECT COALESCE(name,'') FROM app_users WHERE id=$1`, uid).Scan(&name)
+	name = strings.TrimSpace(name)
+	var generatedFor any
+	if name != "" {
+		generatedFor = fmt.Sprintf(T(r.Context(), "为%s生成"), name)
+	}
+	writeOK(w, map[string]any{
+		"year": year, "unlocked": view["unlocked"], "report_status": view["report_status"],
+		"report": view["report"], "user_name": emptyAsNil(name),
+		"brand": T(r.Context(), "塔塔 Tarot"), "slogan": T(r.Context(), "听见内心的答案"),
+		"title":         fmt.Sprintf(T(r.Context(), "%d 年度运势报告"), year),
+		"subtitle":      T(r.Context(), "为你生成的专属年度指引"),
+		"generated_for": generatedFor,
+		"share_hint":    T(r.Context(), "保存图片后即可分享给好友"),
+		"rhythm_cards":  view["rhythm_cards"], "domain_cards": view["domain_cards"],
+	})
 	return nil
 }
 
@@ -400,11 +437,11 @@ func (a *App) appGetDeckPreference(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	code, available, err := a.resolveUserDeck(r.Context(), uid, r)
+	code, available, custom, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"code": code, "available": available})
+	writeOK(w, map[string]any{"code": code, "available": available, "custom_deck": custom})
 	return nil
 }
 
@@ -420,18 +457,31 @@ func (a *App) appPutDeckPreference(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	code := strings.TrimSpace(req.Code)
-	if _, ok, err := a.enabledDeck(r.Context(), code); err != nil {
-		return err
-	} else if !ok {
-		return biz("该牌面风格尚未开放")
+	if customID, ok := parseCustomDeckCode(code); ok {
+		d, err := a.loadCustomDeck(r.Context(), uid, customID)
+		if err != nil {
+			return err
+		}
+		if d.Status != "saved" {
+			return biz("请先保存牌组")
+		}
+		if err := a.setUserDeck(r.Context(), uid, d.fallbackOfficial(), customID); err != nil {
+			return err
+		}
+	} else {
+		if _, ok, err := a.enabledDeck(r.Context(), code); err != nil {
+			return err
+		} else if !ok {
+			return biz("该牌面风格尚未开放")
+		}
+		if err := a.setUserDeck(r.Context(), uid, code, 0); err != nil {
+			return err
+		}
 	}
-	if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET deck_code=$1 WHERE id=$2`, code, uid); err != nil {
-		return err
-	}
-	_, available, err := a.resolveUserDeck(r.Context(), uid, r)
+	code, available, custom, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"code": code, "available": available})
+	writeOK(w, map[string]any{"code": code, "available": available, "custom_deck": custom})
 	return nil
 }

@@ -4,11 +4,12 @@ import type { Binding, Vendor } from '#/api/tata';
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Card, Form, Input, Modal, Select, Switch, Table, Tag, message } from 'ant-design-vue';
 
 import { createVendor, listBindings, listVendors, probeVendor, putBinding, updateVendor } from '#/api/tata';
+
+import { hasTataWrite } from '../access';
 
 import {
   modelSelectOptions,
@@ -27,7 +28,6 @@ const tasks = [
 ];
 const taskLabelByValue = Object.fromEntries(tasks.map((item) => [item.value, item.label]));
 
-const access = useAccessStore();
 const vendors = ref<Vendor[]>([]);
 const bindings = ref<Binding[]>([]);
 const open = ref(false);
@@ -130,7 +130,7 @@ async function load() {
 }
 
 function canWrite() {
-  return access.accessCodes.includes('write');
+  return hasTataWrite('ai');
 }
 async function save() {
   const payload = {

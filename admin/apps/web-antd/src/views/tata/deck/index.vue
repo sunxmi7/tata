@@ -3,16 +3,15 @@ import { onMounted, ref } from 'vue';
 
 import { Page, useVbenModal } from '@vben/common-ui';
 import { Plus } from '@vben/icons';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Image, Switch, Table } from 'ant-design-vue';
 
 import { getCopy } from '#/api/tata';
 
+import { hasTataWrite } from '../access';
 import StyleForm from './modules/style-form.vue';
 
-const access = useAccessStore();
-const canWrite = access.accessCodes.includes('write');
+const canWrite = hasTataWrite('content');
 const decks = ref<Record<string, unknown>[]>([]);
 
 const [StyleModal, styleModalApi] = useVbenModal({

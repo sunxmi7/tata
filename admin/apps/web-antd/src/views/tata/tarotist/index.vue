@@ -4,13 +4,13 @@ import type { Tarotist } from '#/api/tata';
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Form, Input, Modal, Switch, Table, Tag, message } from 'ant-design-vue';
 
 import { createTarotist, listTarotists, updateTarotist } from '#/api/tata';
 
-const access = useAccessStore();
+import { hasTataWrite } from '../access';
+
 const rows = ref<Tarotist[]>([]);
 const open = ref(false);
 const editing = ref<null | Tarotist>(null);
@@ -26,7 +26,7 @@ async function load() {
   rows.value = await listTarotists();
 }
 function canWrite() {
-  return access.accessCodes.includes('write');
+  return hasTataWrite('content');
 }
 function showCreate() {
   editing.value = null;

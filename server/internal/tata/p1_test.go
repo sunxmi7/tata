@@ -63,7 +63,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		}
 	}
 	diamonds := byKind["diamonds"]
-	if diamonds["benefit_name"] != "新春钻石礼" || diamonds["amount"].(float64) != 60 || diamonds["unit"] != "diamond" || diamonds["display_label"] != displayLabelTataCoin {
+	if diamonds["benefit_name"] != "新春钻石礼" || diamonds["amount"].(float64) != 60 || diamonds["unit"] != "quota" || diamonds["display_label"] != displayLabelQuota {
 		t.Fatalf("diamond record: %#v", diamonds)
 	}
 	if diamonds["created_at"] == "" || diamonds["code"] == "" {
@@ -157,7 +157,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	}
 	rewards := listOne(t, ts, token, "/api/app/v1/campaigns/rewards")
 	rewardItems, _ := rewards["items"].([]any)
-	if len(rewardItems) != 0 || rewards["empty_title"] != "暂无奖励记录" || rewards["fields_confirmed"] != false {
+	if len(rewardItems) != 0 || rewards["empty_title"] != "暂无奖励记录" || rewards["fields_confirmed"] != true {
 		t.Fatalf("rewards: %#v", rewards)
 	}
 	if strings.Contains(fmt.Sprint(rewards["placeholder_note"]), "28.8") {

@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { IAPDiamonds, IAPOrder, IAPSku } from '#/api/tata';
+
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
@@ -10,10 +12,10 @@ import { getIAPDiamonds, listIAPOrders, listIAPSkus } from '#/api/tata';
 import { useTataLookups } from '../use-tata-lookups';
 
 const userId = ref('');
-const orders = ref<Record<string, unknown>[]>([]);
-const skus = ref<Record<string, unknown>[]>([]);
-const diamonds = ref<Record<string, unknown> | null>(null);
-const ledger = ref<Record<string, unknown>[]>([]);
+const orders = ref<IAPOrder[]>([]);
+const skus = ref<IAPSku[]>([]);
+const diamonds = ref<IAPDiamonds | null>(null);
+const ledger = ref<Array<Record<string, unknown>>>([]);
 
 const { loadLookups, userLabel } = useTataLookups();
 const filterUserLabel = ref('');
@@ -24,7 +26,7 @@ async function load() {
   orders.value = await listIAPOrders(id);
   if (id) {
     diamonds.value = await getIAPDiamonds(id);
-    ledger.value = (diamonds.value.ledger as Record<string, unknown>[]) || [];
+    ledger.value = diamonds.value.ledger || [];
     filterUserLabel.value = userLabel(Number(id));
   } else {
     diamonds.value = null;
@@ -41,7 +43,7 @@ onMounted(async () => {
 
 <template>
   <Page
-    description="按用户查看验单状态、有效期和钻石入账。价格与发放数量未配置时为空。订阅钻石和次卡钻石分账。"
+    description="按用户查看验单状态、有效期和额度入账。价格与发放数量未配置时为空。补充包仅会员可买，入账统一额度。"
     title="IAP 订单"
   >
     <div class="mb-4 flex flex-wrap gap-2">
@@ -49,8 +51,7 @@ onMounted(async () => {
       <Button type="primary" @click="load">查询</Button>
     </div>
     <p v-if="diamonds" class="mb-4">
-      {{ filterUserLabel }} · 订阅钻石
-      {{ diamonds.subscription_diamonds }} / 次卡钻石 {{ diamonds.pack_diamonds }}
+      {{ filterUserLabel }} · 额度 {{ diamonds.quota_remaining ?? diamonds.balance ?? 0 }}
     </p>
     <Table
       :columns="[
@@ -61,7 +62,7 @@ onMounted(async () => {
         { title: '平台', dataIndex: 'platform' },
         { title: '验单', dataIndex: 'verify_status' },
         { title: '入账', dataIndex: 'credit_status' },
-        { title: '钻石', dataIndex: 'credited_diamonds' },
+        { title: '入账额度', dataIndex: 'credited_diamonds' },
         { title: '有效期', dataIndex: 'period_end' },
         { title: '订阅态', dataIndex: 'subscription_status' },
       ]"
@@ -99,7 +100,7 @@ onMounted(async () => {
         { title: 'App Store', dataIndex: 'app_store_product_id' },
         { title: 'Play', dataIndex: 'play_product_id' },
         { title: '价格', dataIndex: 'price_amount_minor' },
-        { title: '钻石发放', dataIndex: 'diamond_grant' },
+        { title: '开通赠送额度', dataIndex: 'diamond_grant' },
       ]"
       :data-source="skus"
       row-key="id"

@@ -1,7 +1,7 @@
 # 塔塔 App 定稿 UI ↔ HTTP（2026-11-06）
 
 **设计：** Pixso「手机界面」`619:7`（浅色主屏；深色 / 平板 / 折叠为同一流程的主题与设备变体）。  
-**代码：** `server/internal/tata/routes.go`，App **74** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
+**代码：** `server/internal/tata/routes.go`，App **86** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
 
 **结论：** 定稿各模块 HTTP path 与字段已对齐，下表标 **已确认**。运营填值见 content backlog。
 
@@ -37,6 +37,14 @@
 | 小组件 | `610:82` | 复用 `POST /daily`，不新开 sync | 已确认（无 path） |
 | 消息中心 | 定稿无入口 | `GET /messages` `POST /messages/{id}/read` 已有 | 已确认（入口客户端可选） |
 | 登录多步 / 删号 | — | 钩子在，UI 后置 / 占位 | 已确认（不补 path） |
+| 开屏 | `872:51` | 无 path，客户端静态 | 已确认（无 path） |
+| 登录三入口 | `907:3` | 已有 wechat/email/apple；`GET /legal` | 已确认 |
+| 个人档案 | `833:78` | `GET/PUT /profile` 性别别名 + explore_preferences | 已确认 |
+| 奖励记录 | `978:222` / `982:203` | `GET /campaigns/rewards` 真实邀请到账；`GET /invites` | 已确认 |
+| 年运分享报告 | `930:200` | `GET /yearly-reports/{year}/share` | 已确认 |
+| 探索牌阵文字总结 | `954:200` | `GET /spreads` 主题/短句字段，运营填 | 已确认 |
+| 自定义塔罗牌 | `875:13` | `/custom-decks` + `GET /cards` | 已确认 |
+| 我的塔罗牌 78 张 | `794:129` | `GET /cards?deck=` | 已确认 |
 
 ---
 
@@ -57,3 +65,4 @@
 | 2026-11-06 | 牌组介绍写入 `decks.description` / `decks.tags`，经 `GET /deck-preference` 与 `PUT /copy/decks` 暴露。 |
 | 2026-11-06 | 选阵「推荐牌阵」写入 `spreads.recommended`，经 `GET /spreads` 与管理端牌阵接口暴露。 |
 | 2026-11-06 | 选阵示意图写入 `spreads.thumbnail`，未配返回默认牌背。 |
+| 2026-11-16 | 新 UI：登录协议、个人档案偏好、邀请奖励、78 张牌、自定义牌组、年运分享、牌阵主题短句。 |

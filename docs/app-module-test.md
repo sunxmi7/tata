@@ -61,55 +61,57 @@
 - [ ] 没有 refresh
 - [ ] 记下来：ANON = accessToken，ANON_ID = anonymous_id
 
-### 1.2 发码（注册）
+### 1.2 发码（登录）
 
 `POST /api/app/v1/auth/email/code`
 
 ```json
-{ "email": "你的邮箱", "scene": "register" }
+{ "email": "你的邮箱", "scene": "login" }
 ```
 
 - [ ] `code=0`，`data.expires_in=300`，响应里没有验证码
 - [ ] 邮箱收到 6 位码，记为 CODE
 - [ ] 立刻再发一次，应「发送过于频繁」
-- [ ] scene 乱填，应「验证码场景不正确」
+- [ ] scene 乱填（含旧的 register），应「验证码场景不正确」
 - [ ] 邮箱格式不对，应「邮箱不正确」
+- [ ] 已有账号的邮箱也可以发 login 码，不会「邮箱已注册」
 
-### 1.3 邮箱注册（带上匿名占卜）
+### 1.3 邮箱验证码登录（首次即创建账号）
 
-可先用 ANON 走第 4 节建一条占卜，再注册；也可以先注册再抽。
+可先用 ANON 走第 4 节建一条占卜，再登录；也可以先登录再抽。没有 `POST /auth/register`。
 
-`POST /api/app/v1/auth/register`
+`POST /api/app/v1/auth/login`
 
 ```json
 {
   "email": "你的邮箱",
-  "password": "demo1234",
   "code": "邮件里的6位码",
   "anonymous_id": "上一步的 ANON_ID"
 }
 ```
 
-- [ ] `code=0`，有 accessToken、id
+- [ ] `code=0`，有 accessToken、id、login=email
+- [ ] 首次会发注册奖励，有 `registration_reward_expires_at`
 - [ ] 记 USER = accessToken，UID = id
 - [ ] 带了 anonymous_id 时，之前匿名占卜会出现在登录后的历史里
 - [ ] 验证码填错，应「验证码不正确或已过期」
-- [ ] 同一邮箱再注册，发码阶段就会「邮箱已注册」
+- [ ] 漏填验证码，应「邮箱和验证码必填」
+- [ ] 多传 password，应「请求字段不正确」
 
-### 1.4 邮箱登录
+### 1.4 已有账号再登录
 
-不发码。`POST /api/app/v1/auth/login`
+等 60 秒冷却后再发一次 login 码，或换邮箱。`POST /api/app/v1/auth/login`
 
 ```json
 {
   "email": "你的邮箱",
-  "password": "demo1234"
+  "code": "新的6位码"
 }
 ```
 
-- [ ] 密码错，应「邮箱或密码错误」
-- [ ] 成功拿到新的 USER 令牌
-- [ ] scene=login 发码应「验证码场景不正确」（登录不走验证码）
+- [ ] 成功拿到新的 USER 令牌，login=email
+- [ ] 不会再发一份注册奖励
+- [ ] 验证码用过即作废，再用应「验证码不正确或已过期」
 
 ### 1.5 微信 / 苹果（可选）
 
@@ -316,11 +318,11 @@
 - [ ] 绑邮箱：先 `POST /auth/email/code` scene=bind（要带登录令牌），再 `POST /auth/bind-email`
 
 ```json
-{ "email": "另一个邮箱", "password": "demo1234", "code": "验证码" }
+{ "email": "另一个邮箱", "code": "验证码" }
 ```
 
 - [ ] 身份已被其它账号占用时返回冲突包络，不要直接并账；确认走 `POST /api/app/v1/auth/merge-confirm`
-- [ ] 注销 `POST /api/app/v1/auth/cancel`：之后登录应「邮箱或密码错误」。测完再做。
+- [ ] 注销 `POST /api/app/v1/auth/cancel`：之后再用该邮箱登录应「该邮箱已注销，不能重复领取注册奖励」。测完再做。
 
 ---
 

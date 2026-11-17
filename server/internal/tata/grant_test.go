@@ -19,7 +19,7 @@ func TestAdminGrantDiamondsAndFreeCount(t *testing.T) {
 	if err := store.QueryRow(t.Context(), `SELECT id FROM operators WHERE username='admin'`).Scan(&operatorID); err != nil {
 		t.Fatal(err)
 	}
-	beforeReward := rewardRemaining(t, store, uid)
+	_ = rewardRemaining(t, store, uid)
 
 	msg, _ := call(t, ts, ro.access, http.MethodPost, "/api/admin/v1/grants", map[string]any{
 		"user_id": uid, "diamonds": 5, "free_count": 1, "note": "只读不能写", "reason": "admin_grant",
@@ -28,7 +28,7 @@ func TestAdminGrantDiamondsAndFreeCount(t *testing.T) {
 		t.Fatalf("readonly grant: %s", msg)
 	}
 	view := listOne(t, ts, ro.access, fmt.Sprintf("/api/admin/v1/grants?user_id=%d", uid))
-	if view["can_write"] != false || view["diamond_bucket_default"] != "pack" || view["writes_iap_orders"] != false {
+	if view["can_write"] != false || view["diamond_bucket_default"] != "quota" || view["writes_iap_orders"] != false {
 		t.Fatalf("readonly grant list: %#v", view)
 	}
 	if msg, raw := call(t, ts, ro.access, http.MethodGet, "/api/admin/v1/ledger", nil); msg != "" {
@@ -57,11 +57,8 @@ func TestAdminGrantDiamondsAndFreeCount(t *testing.T) {
 	if granted["operator_id"].(float64) != float64(operatorID) || granted["resumes_paywall"] != false || granted["writes_iap_orders"] != false {
 		t.Fatalf("grant meta: %#v", granted)
 	}
-	if granted["pack_diamonds"].(float64) != 5 || granted["subscription_diamonds"].(float64) != 0 || granted["free_count_remaining"].(float64) != 2 {
+	if granted["quota_remaining"].(float64) != 5 || granted["free_count_remaining"].(float64) != 2 {
 		t.Fatalf("balances: %#v", granted)
-	}
-	if granted["registration_reward_remaining"].(float64) != float64(beforeReward) {
-		t.Fatalf("registration reward rewritten: %#v", granted)
 	}
 	items := granted["grants"].([]any)
 	if len(items) != 2 {
@@ -75,8 +72,8 @@ func TestAdminGrantDiamondsAndFreeCount(t *testing.T) {
 		}
 		switch item["kind"] {
 		case "diamonds":
-			if item["bucket"] != "pack" || item["ledger_bucket"] != "consumable" || item["amount"].(float64) != 5 {
-				t.Fatalf("diamond grant: %#v", item)
+			if item["bucket"] != "quota" || item["ledger_bucket"] != iapBucketQuota || item["amount"].(float64) != 5 {
+				t.Fatalf("quota grant: %#v", item)
 			}
 			diamondLedgerID = item["diamond_ledger_id"].(float64)
 		case "free_count":
@@ -96,8 +93,8 @@ func TestAdminGrantDiamondsAndFreeCount(t *testing.T) {
 		Scan(&bucket, &delta, &after, &reason, &orderID, &grantID); err != nil {
 		t.Fatal(err)
 	}
-	if bucket != "consumable" || delta != 5 || after != 5 || reason != "admin_grant" || orderID.Valid || grantID == 0 {
-		t.Fatalf("diamond ledger bucket=%s delta=%d after=%d reason=%s order=%v grant=%d", bucket, delta, after, reason, orderID, grantID)
+	if bucket != iapBucketQuota || delta != 5 || after != 5 || reason != "admin_grant" || orderID.Valid || grantID == 0 {
+		t.Fatalf("quota ledger bucket=%s delta=%d after=%d reason=%s order=%v grant=%d", bucket, delta, after, reason, orderID, grantID)
 	}
 	var ent, result string
 	var readingID sql.NullInt64
@@ -113,12 +110,12 @@ func TestAdminGrantDiamondsAndFreeCount(t *testing.T) {
 	subGrant := create(t, ts, admin.access, "/api/admin/v1/grants", map[string]any{
 		"user_id": uid, "diamonds": 3, "diamond_bucket": "subscription", "note": "补到订阅桶",
 	})
-	if subGrant["subscription_diamonds"].(float64) != 3 || subGrant["pack_diamonds"].(float64) != 5 {
-		t.Fatalf("subscription add: %#v", subGrant)
+	if subGrant["quota_remaining"].(float64) != 8 {
+		t.Fatalf("quota add: %#v", subGrant)
 	}
 	subItem := subGrant["grants"].([]any)[0].(map[string]any)
-	if subItem["kind"] != "diamonds" || subItem["bucket"] != "subscription" || subItem["ledger_bucket"] != "subscription" {
-		t.Fatalf("subscription item: %#v", subItem)
+	if subItem["kind"] != "diamonds" || subItem["bucket"] != "quota" || subItem["ledger_bucket"] != iapBucketQuota {
+		t.Fatalf("quota item: %#v", subItem)
 	}
 
 	listed := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/grants?user_id=%d", uid))
@@ -178,9 +175,8 @@ func TestAdminGrantLeavesIAPOrderAndPaywall(t *testing.T) {
 	orderID := int64(out["order_id"].(float64))
 	beforeOrder := orderFingerprint(t, store, orderID)
 	beforeLedger := orderLedgerFingerprint(t, store, orderID)
-	var beforeEnd sql.NullTime
-	var beforeSub int
-	if err := store.QueryRow(t.Context(), `SELECT subscription_diamonds, subscription_period_end FROM diamond_balances WHERE user_id=$1`, uid).Scan(&beforeSub, &beforeEnd); err != nil {
+	var beforeQuota int
+	if err := store.QueryRow(t.Context(), `SELECT quota_balance FROM diamond_balances WHERE user_id=$1`, uid).Scan(&beforeQuota); err != nil {
 		t.Fatal(err)
 	}
 	var subStatus string
@@ -192,14 +188,14 @@ func TestAdminGrantLeavesIAPOrderAndPaywall(t *testing.T) {
 	created := create(t, ts, admin.access, "/api/admin/v1/grants", map[string]any{
 		"user_id": uid, "diamonds": 7, "note": "次卡桶独立加账",
 	})
-	if created["pack_diamonds"].(float64) != 7 || created["subscription_diamonds"].(float64) != float64(beforeSub) {
-		t.Fatalf("pack add touched subscription balance: %#v", created)
+	if created["quota_remaining"].(float64) != float64(beforeQuota+7) {
+		t.Fatalf("quota add: %#v", created)
 	}
 	subAdded := create(t, ts, admin.access, "/api/admin/v1/grants", map[string]any{
-		"user_id": uid, "diamonds": 2, "diamond_bucket": "subscription", "note": "订阅桶加账不覆盖周期",
+		"user_id": uid, "diamonds": 2, "diamond_bucket": "subscription", "note": "统一额度加账",
 	})
-	if subAdded["subscription_diamonds"].(float64) != float64(beforeSub+2) || subAdded["pack_diamonds"].(float64) != 7 {
-		t.Fatalf("subscription grant replaced the bucket: %#v", subAdded)
+	if subAdded["quota_remaining"].(float64) != float64(beforeQuota+9) {
+		t.Fatalf("quota grant: %#v", subAdded)
 	}
 	if tasks, ok := subAdded["resumed_tasks"].([]any); !ok || len(tasks) != 0 {
 		t.Fatalf("grant resumed tasks: %#v", subAdded["resumed_tasks"])
@@ -209,13 +205,6 @@ func TestAdminGrantLeavesIAPOrderAndPaywall(t *testing.T) {
 	}
 	if orderLedgerFingerprint(t, store, orderID) != beforeLedger {
 		t.Fatalf("order diamond ledger rewritten\nbefore %s\nafter  %s", beforeLedger, orderLedgerFingerprint(t, store, orderID))
-	}
-	var afterEnd sql.NullTime
-	if err := store.QueryRow(t.Context(), `SELECT subscription_period_end FROM diamond_balances WHERE user_id=$1`, uid).Scan(&afterEnd); err != nil {
-		t.Fatal(err)
-	}
-	if beforeEnd.Valid != afterEnd.Valid || (beforeEnd.Valid && !beforeEnd.Time.Equal(afterEnd.Time)) {
-		t.Fatalf("period end changed: before %v after %v", beforeEnd, afterEnd)
 	}
 	var afterStatus string
 	var afterExp time.Time
@@ -249,7 +238,7 @@ func TestAdminGrantLeavesIAPOrderAndPaywall(t *testing.T) {
 	if tasks, ok := held["resumed_tasks"].([]any); !ok || len(tasks) != 0 {
 		t.Fatalf("grant resumed the paywall: %#v", held["resumed_tasks"])
 	}
-	if held["pack_diamonds"].(float64) != 9 || held["free_count_remaining"].(float64) != 1 {
+	if held["quota_remaining"].(float64) != 9 || held["free_count_remaining"].(float64) != 1 {
 		t.Fatalf("held grant balances: %#v", held)
 	}
 	var stillReading, stillPay string
@@ -283,18 +272,17 @@ func TestAdminGrantFreeCountSpendsBeforeDiamonds(t *testing.T) {
 	setDiamondCost(t, store, 3)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	token, uid := registerUser(t, ts, store, "grant-spend")
-	exhaustFree(t, ts, token)
-	setDiamonds(t, store, uid, 4, 6)
+	exhaustFreePlay(t, ts, store, token)
+	setQuota(t, store, uid, 10)
 	create(t, ts, admin.access, "/api/admin/v1/grants", map[string]any{
 		"user_id": uid, "free_count": 1, "note": "补一次免费",
 	})
-	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "先用补发次数", "type": "normal"})
-	if reading["entitlement"] != entAdminFree || reading["paywall"] == true {
-		t.Fatalf("spend grant: %#v", reading)
+	rid := chargeFreePlay(t, ts, store, token, "先用补发次数")
+	if playEntitlement(t, store, rid) != entAdminFree {
+		t.Fatalf("spend grant: %s", playEntitlement(t, store, rid))
 	}
-	sub, pack := diamondBalances(t, store, uid)
-	if sub != 4 || pack != 6 {
-		t.Fatalf("diamonds spent instead of the grant: sub=%d pack=%d", sub, pack)
+	if quotaOf(t, store, uid) != 10 {
+		t.Fatalf("quota spent instead of the grant: %d", quotaOf(t, store, uid))
 	}
 	var left int
 	if err := store.QueryRow(t.Context(), `SELECT admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&left); err != nil {
@@ -321,20 +309,23 @@ func TestMergeFoldsDiamondBalances(t *testing.T) {
 	if _, err := store.Exec(t.Context(), `UPDATE app_users SET wechat_openid=$1 WHERE id=$2`, openID, idB); err != nil {
 		t.Fatal(err)
 	}
-	later := time.Now().Add(40 * 24 * time.Hour).UTC().Truncate(time.Microsecond)
-	sooner := time.Now().Add(10 * 24 * time.Hour).UTC().Truncate(time.Microsecond)
-	if _, err := store.Exec(t.Context(), `INSERT INTO diamond_balances(user_id, subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key)
-		VALUES ($1,4,3,$2,'primary-period'),($3,2,5,$4,'secondary-period')`, idA, later, idB, sooner); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO diamond_balances(user_id, quota_balance)
+		VALUES ($1,7),($2,7)
+		ON CONFLICT (user_id) DO UPDATE SET quota_balance=EXCLUDED.quota_balance, updated_at=now()`, idA, idB); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Exec(t.Context(), `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, reason) VALUES
-		($1,'subscription',4,4,'iap_period_refresh'),($2,'consumable',5,5,'iap_pack_grant')`, idA, idB); err != nil {
+		($1,'quota',4,4,'iap_period_refresh'),($2,'quota',5,5,'iap_pack_grant')`, idA, idB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE rewards SET admin_grant_remaining=2 WHERE user_id=$1`, idA); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining)
+		VALUES ($1, now(), now(), 0, 2)
+		ON CONFLICT (user_id) DO UPDATE SET admin_grant_remaining=2`, idA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE rewards SET admin_grant_remaining=3 WHERE user_id=$1`, idB); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining)
+		VALUES ($1, now(), now(), 0, 3)
+		ON CONFLICT (user_id) DO UPDATE SET admin_grant_remaining=3`, idB); err != nil {
 		t.Fatal(err)
 	}
 	var orderID int64
@@ -350,18 +341,15 @@ func TestMergeFoldsDiamondBalances(t *testing.T) {
 	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
 	conflict := decodeConflict(t, msg, raw)
 	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	if merged["merged"] != true || merged["reward_remaining"].(float64) != 2 {
+	if merged["merged"] != true {
 		t.Fatalf("merge: %#v", merged)
 	}
-	var sub, pack int
-	var end time.Time
-	var key string
-	if err := store.QueryRow(t.Context(), `SELECT subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key FROM diamond_balances WHERE user_id=$1`, idA).
-		Scan(&sub, &pack, &end, &key); err != nil {
+	var quota int
+	if err := store.QueryRow(t.Context(), `SELECT quota_balance FROM diamond_balances WHERE user_id=$1`, idA).Scan(&quota); err != nil {
 		t.Fatal(err)
 	}
-	if sub != 6 || pack != 8 || !end.Equal(later) || key != "primary-period" {
-		t.Fatalf("folded diamonds sub=%d pack=%d end=%s key=%s", sub, pack, end, key)
+	if quota != 14 {
+		t.Fatalf("folded quota=%d", quota)
 	}
 	var secondaryBal int
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_balances WHERE user_id=$1`, idB).Scan(&secondaryBal); err != nil {
@@ -379,7 +367,7 @@ func TestMergeFoldsDiamondBalances(t *testing.T) {
 	}
 	var linkedOrder int64
 	var linkedReason string
-	if err := store.QueryRow(t.Context(), `SELECT order_id, reason FROM diamond_ledger WHERE user_id=$1 AND bucket='consumable'`, idA).Scan(&linkedOrder, &linkedReason); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT order_id, reason FROM diamond_ledger WHERE user_id=$1 AND order_id=$2`, idA, orderID).Scan(&linkedOrder, &linkedReason); err != nil {
 		t.Fatal(err)
 	}
 	if linkedOrder != orderID || linkedReason != "iap_pack_grant" {

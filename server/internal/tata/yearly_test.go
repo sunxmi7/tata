@@ -19,7 +19,7 @@ func TestYearlyFlowTwelvePlusSix(t *testing.T) {
 	msg, _ := call(t, ts, token, http.MethodPut, "/api/app/v1/yearly-reports/2026/profile", map[string]any{
 		"birth_date": "1991-05-20", "gender": "女性",
 	})
-	if !strings.Contains(msg, "请先解锁") {
+	if !strings.Contains(msg, "开通会员") && !strings.Contains(msg, "请先解锁") {
 		t.Fatalf("profile before unlock: %s", msg)
 	}
 
@@ -94,6 +94,9 @@ func TestYearlyFlowTwelvePlusSix(t *testing.T) {
 		t.Fatalf("overlap with rhythm: %#v %#v", dCards[0], rCards[0])
 	}
 
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 10)
 	if _, err := store.Exec(t.Context(), `DELETE FROM bindings WHERE task='interpret'`); err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,6 @@ import { onMounted, ref } from 'vue';
 
 import { Page, useVbenModal } from '@vben/common-ui';
 import { Plus } from '@vben/icons';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Image, Table, Tag, message } from 'ant-design-vue';
 
@@ -13,10 +12,10 @@ import { useVbenForm } from '#/adapter/form';
 import { fileListFromURL, fileListToURL, imageUploadProps } from '#/api/core/upload';
 import { listCards, updateCardSettings } from '#/api/tata';
 
+import { hasTataWrite } from '../access';
 import Form from './modules/form.vue';
 
-const access = useAccessStore();
-const canWrite = access.accessCodes.includes('write');
+const canWrite = hasTataWrite('content');
 const rows = ref<TataCard[]>([]);
 
 const [FormModal, formModalApi] = useVbenModal({

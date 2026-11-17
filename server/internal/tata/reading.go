@@ -2,6 +2,7 @@ package tata
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,9 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"database/sql"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func taskFor(kind string) string {
@@ -125,8 +123,25 @@ func (a *App) adminLedger(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appAnonymous(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID string `json:"device_id"`
+	}
+	_ = decode(r, &req)
 	anon, err := randomID()
 	if err != nil {
+		writeErr(w, r, http.StatusOK, "内部错误")
+		return
+	}
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if deviceID == "" {
+		deviceID = "anon:" + anon
+	}
+	if len([]rune(deviceID)) > 128 {
+		writeErr(w, r, http.StatusOK, "设备标识过长")
+		return
+	}
+	if _, err := a.Store.Exec(r.Context(), `INSERT INTO anon_devices(anonymous_id, device_id) VALUES ($1,$2)
+		ON CONFLICT (anonymous_id) DO UPDATE SET device_id=EXCLUDED.device_id`, anon, deviceID); err != nil {
 		writeErr(w, r, http.StatusOK, "内部错误")
 		return
 	}
@@ -135,100 +150,91 @@ func (a *App) appAnonymous(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "内部错误")
 		return
 	}
-	writeOK(w, map[string]any{"accessToken": access, "anonymous_id": anon})
-}
-
-func (a *App) appRegister(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email       string `json:"email"`
-		Password    string `json:"password"`
-		Code        string `json:"code"`
-		AnonymousID string `json:"anonymous_id"`
-	}
-	if err := decode(r, &req); err != nil {
-		writeErr(w, r, http.StatusOK, "请求字段不正确")
-		return
-	}
-	if req.Email == "" || req.Password == "" {
-		writeErr(w, r, http.StatusOK, "邮箱和密码必填")
-		return
-	}
-	if err := a.matchEmailCode(r.Context(), "register", req.Email, req.Code); err != nil {
-		writeErr(w, r, http.StatusOK, err.Error())
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		writeErr(w, r, http.StatusOK, "内部错误")
-		return
-	}
-	var id int64
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(email, password_hash) VALUES ($1,$2) RETURNING id`, req.Email, string(hash)).Scan(&id)
-	if err != nil {
-		writeErr(w, r, http.StatusOK, "邮箱已注册")
-		return
-	}
-	a.consumeEmailCode(r.Context(), "register", req.Email)
-	exp := nextBeijingEight(time.Now())
-	if !a.claimed(r, "email", strings.ToLower(req.Email)) {
-		_, _ = a.Store.Exec(r.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at) VALUES ($1, now(), $2)`, id, exp)
-	} else {
-		exp = time.Time{}
-	}
-	if req.AnonymousID != "" {
-		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, id, req.AnonymousID)
-	}
-	settled := a.settleQuestionStart(r, id)
-	access, _ := a.signAccess("app", id, "", "")
-	writeOK(w, map[string]any{"accessToken": access, "id": id, "registration_reward_expires_at": exp, "reward_consumed": settled, "reward_note": T(r.Context(), "一开始提问就消耗本次次数；中途退出可从历史继续，不再扣")})
+	writeOK(w, map[string]any{"accessToken": access, "anonymous_id": anon, "device_id": deviceID})
 }
 
 func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email       string `json:"email"`
-		Password    string `json:"password"`
 		Code        string `json:"code"`
 		AnonymousID string `json:"anonymous_id"`
+		InviteCode  string `json:"invite_code"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
 		return
 	}
-	if req.Email == "" || req.Password == "" {
-		writeErr(w, r, http.StatusOK, "邮箱和密码必填")
+	if req.Email == "" || req.Code == "" {
+		writeErr(w, r, http.StatusOK, "邮箱和验证码必填")
+		return
+	}
+	email := normalizeEmail(req.Email)
+	if !validLoginEmail(email) {
+		writeErr(w, r, http.StatusOK, "邮箱不正确")
+		return
+	}
+	if err := a.matchEmailCode(r.Context(), "login", email, req.Code); err != nil {
+		writeErr(w, r, http.StatusOK, err.Error())
 		return
 	}
 	var id int64
-	var hash string
 	var cancelled *time.Time
-	err := a.Store.QueryRow(r.Context(), `SELECT id, password_hash, cancelled_at FROM app_users WHERE email=$1`, req.Email).Scan(&id, &hash, &cancelled)
-	if err != nil || cancelled != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		writeErr(w, r, http.StatusOK, "邮箱或密码错误")
+	err := a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE lower(email)=lower($1) AND merged_into IS NULL`, email).Scan(&id, &cancelled)
+	if errors.Is(err, sql.ErrNoRows) {
+		if a.claimed(r, "email", email) {
+			writeErr(w, r, http.StatusOK, "该邮箱已注销，不能重复注册")
+			return
+		}
+		err = a.Store.QueryRow(r.Context(), `INSERT INTO app_users(email) VALUES ($1) RETURNING id`, email).Scan(&id)
+		if err != nil {
+			err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE lower(email)=lower($1) AND merged_into IS NULL`, email).Scan(&id, &cancelled)
+			if err != nil {
+				writeErr(w, r, http.StatusOK, "邮箱登录失败")
+				return
+			}
+		}
+	} else if err != nil {
+		writeErr(w, r, http.StatusOK, "邮箱登录失败")
 		return
 	}
+	if cancelled != nil {
+		writeErr(w, r, http.StatusOK, "账号已注销")
+		return
+	}
+	a.consumeEmailCode(r.Context(), "login", email)
 	if req.AnonymousID != "" {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, id, req.AnonymousID)
 	}
+	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
-	prompt := ""
-	if !settled {
-		cycle := a.userCycle(r, id)
-		limit, _ := loadDailyFreeCount(r.Context(), a.Store)
-		var used int
-		_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM quota_use WHERE user_id=$1 AND cycle=$2`, id, cycle).Scan(&used)
-		if used >= limit {
-			prompt = T(r.Context(), "今日免费体验额度已用完，本次记录已保存到历史记录")
-		}
-	}
-	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "needs_confirm": false, "quota_prompt": prompt})
+	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "email", "reward_consumed": settled, "needs_confirm": false})
 }
 
 func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
 	var readingID int64
-	err := a.Store.QueryRow(r.Context(), `SELECT id FROM readings WHERE user_id=$1 AND deleted_at IS NULL AND quota_settled=false AND reward_consumed=false AND quota_consumed=false ORDER BY id DESC LIMIT 1`, uid).Scan(&readingID)
+	var kind string
+	var onboard bool
+	var spreadID sql.NullInt64
+	var cards sql.NullString
+	err := a.Store.QueryRow(r.Context(), `SELECT id, type, onboard_experience, spread_id, cards FROM readings
+		WHERE user_id=$1 AND deleted_at IS NULL AND quota_settled=false AND reward_consumed=false AND quota_consumed=false
+		ORDER BY id DESC LIMIT 1`, uid).Scan(&readingID, &kind, &onboard, &spreadID, &cards)
 	if err != nil {
 		return false
+	}
+	hasCards := cards.Valid && strings.TrimSpace(cards.String) != ""
+	if onboard && !hasCards {
+		return false
+	}
+	if kind == "explore" || (kind == "normal" && !spreadID.Valid) {
+		member, merr := hasActiveMembership(r.Context(), a.Store, uid)
+		if merr != nil || !member {
+			return false
+		}
+		if kind == "normal" && !spreadID.Valid {
+			return false
+		}
 	}
 	tx, err := a.Store.Begin(r.Context())
 	if err != nil {
@@ -237,7 +243,7 @@ func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
 	defer tx.Rollback(r.Context())
 	decision, err := settleSharedQuota(r.Context(), tx, chargeOpts{
 		UserID: uid, ReadingID: readingID, ChargeKey: chargeKeyPlay, Cycle: a.userCycle(r, uid),
-		AllowTrial: true, ResumeAction: resumeHold,
+		AllowTrial: true, ResumeAction: resumeInterpret,
 	})
 	if err != nil || !decision.Continue {
 		if err == nil {
@@ -245,7 +251,13 @@ func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
 		}
 		return false
 	}
-	return tx.Commit(r.Context()) == nil
+	if err := tx.Commit(r.Context()); err != nil {
+		return false
+	}
+	if onboard && hasCards {
+		_, _ = a.generate(r.Context(), readingID, false)
+	}
+	return true
 }
 
 func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
@@ -256,9 +268,9 @@ func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("匿名用户没有档案")
 	}
-	var email, tz, name, bio, avatar, publicID string
+	var email, tz, name, bio, avatar, publicID, prefs string
 	var birth, gender, openid, apple *string
-	if err := a.Store.QueryRow(r.Context(), `SELECT email, birth_date, gender, wechat_openid, apple_sub, timezone, name, bio, avatar_url, COALESCE(public_id,'') FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &tz, &name, &bio, &avatar, &publicID); err != nil {
+	if err := a.Store.QueryRow(r.Context(), `SELECT COALESCE(email,''), birth_date, gender, wechat_openid, apple_sub, timezone, COALESCE(name,''), COALESCE(bio,''), COALESCE(avatar_url,''), COALESCE(public_id,''), COALESCE(explore_preferences,'[]') FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &tz, &name, &bio, &avatar, &publicID, &prefs); err != nil {
 		return err
 	}
 	publicID, err = a.ensurePublicID(r.Context(), uid, publicID)
@@ -266,11 +278,13 @@ func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, map[string]any{
-		"id": uid, "email": email, "birth_date": birth, "gender": gender,
+		"id": uid, "email": emptyAsNil(email), "birth_date": birth, "gender": gender,
 		"wechat_openid": openid, "apple_sub": apple, "timezone": tz,
 		"name": name, "bio": bio, "avatar_url": emptyAsNil(absoluteAssetURL(r, avatar)),
-		"public_id":       publicID,
-		"account_display": accountDisplay(email, openid, apple),
+		"public_id":                  publicID,
+		"account_display":            accountDisplay(email, openid, apple),
+		"explore_preferences":        parseExplorePreferences(prefs),
+		"explore_preference_options": explorePreferenceOptions,
 	})
 	return nil
 }
@@ -284,18 +298,20 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 		return biz("匿名用户没有档案")
 	}
 	var req struct {
-		BirthDate string `json:"birth_date"`
-		Gender    string `json:"gender"`
-		Timezone  string `json:"timezone"`
-		Name      string `json:"name"`
-		Bio       string `json:"bio"`
-		AvatarURL string `json:"avatar_url"`
+		BirthDate          string    `json:"birth_date"`
+		Gender             string    `json:"gender"`
+		Timezone           string    `json:"timezone"`
+		Name               string    `json:"name"`
+		Bio                string    `json:"bio"`
+		AvatarURL          string    `json:"avatar_url"`
+		ExplorePreferences *[]string `json:"explore_preferences"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if req.Gender != "" && req.Gender != "女性" && req.Gender != "男性" && req.Gender != "不愿透露" {
-		return biz("性别选项不正确")
+	gender, err := normalizeGender(req.Gender)
+	if err != nil {
+		return err
 	}
 	if req.Timezone != "" {
 		if _, err := time.LoadLocation(req.Timezone); err != nil {
@@ -318,16 +334,27 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 		name=COALESCE(NULLIF($4,''), name),
 		bio=COALESCE(NULLIF($5,''), bio),
 		avatar_url=COALESCE(NULLIF($6,''), avatar_url)
-		WHERE id=$7`, req.BirthDate, req.Gender, req.Timezone, strings.TrimSpace(req.Name), strings.TrimSpace(req.Bio), strings.TrimSpace(req.AvatarURL), uid)
+		WHERE id=$7`, req.BirthDate, gender, req.Timezone, strings.TrimSpace(req.Name), strings.TrimSpace(req.Bio), strings.TrimSpace(req.AvatarURL), uid)
 	if err != nil {
 		return err
+	}
+	if req.ExplorePreferences != nil {
+		prefs, nerr := normalizeExplorePreferences(*req.ExplorePreferences)
+		if nerr != nil {
+			return nerr
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET explore_preferences=$1 WHERE id=$2`, encodeExplorePreferences(prefs), uid); err != nil {
+			return err
+		}
 	}
 	writeOK(w, true)
 	return nil
 }
 
 func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended, thumbnail FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended, thumbnail,
+		theme_key, theme_title, theme_subtitle, short_sentence
+		FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
 	}
@@ -335,16 +362,18 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, desc, pos, thumb string
+		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short string
 		var count int
 		var charged, recommended bool
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended, &thumb); err != nil {
+		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
 			"id": id, "name": T(r.Context(), name), "description": T(r.Context(), desc), "card_count": count,
 			"positions": localizeJSONFields(r.Context(), json.RawMessage(pos), "name", "meaning"),
 			"charged":   charged, "recommended": recommended, "thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
+			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub,
+			"short_sentence": short,
 		})
 	}
 	writeOK(w, list)
@@ -394,62 +423,96 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 	used := false
 	dailyRemaining := 0
 	usedFlags := 0
-	rewardRemaining := 0
+	inviteRemaining := 0
+	adminGrantRemaining := 0
 	subPrompt := false
 	dailyFree, _ := loadDailyFreeCount(r.Context(), a.Store)
 	dailySlot, _ := loadDailySlotCount(r.Context(), a.Store)
+	member := false
+	var memberKind string
+	var memberExp time.Time
+	var memberAuto sql.NullBool
 	if uid > 0 {
-		_ = a.Store.QueryRow(r.Context(), `SELECT remaining FROM rewards WHERE user_id=$1 AND remaining>0 AND expires_at>now()`, uid).Scan(&rewardRemaining)
+		memberKind, memberExp, memberAuto, member, err = loadActiveMembership(r.Context(), a.Store, uid)
+		if err != nil {
+			return err
+		}
 		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_prompt_required FROM app_users WHERE id=$1`, uid).Scan(&subPrompt)
-		err = a.Store.QueryRow(r.Context(), `SELECT used_flags, remaining FROM daily_free_balance WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&usedFlags, &dailyRemaining)
-		if err == nil {
-			used = dailyRemaining <= 0
-		} else {
-			var n int
-			_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM quota_use WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&n)
-			usedFlags = n
-			dailyRemaining = dailyFree - n
-			if dailyRemaining < 0 {
-				dailyRemaining = 0
+		_ = a.Store.QueryRow(r.Context(), `SELECT invite_remaining, admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&inviteRemaining, &adminGrantRemaining)
+		if !member {
+			qerr := a.Store.QueryRow(r.Context(), `SELECT used_flags, remaining FROM daily_free_balance WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&usedFlags, &dailyRemaining)
+			if qerr == nil {
+				used = dailyRemaining <= 0
+			} else {
+				var n int
+				_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM quota_use WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&n)
+				usedFlags = n
+				dailyRemaining = dailyFree - n
+				if dailyRemaining < 0 {
+					dailyRemaining = 0
+				}
+				used = dailyRemaining == 0
 			}
-			used = dailyRemaining == 0
 		}
 	}
-	var subDiamonds, packDiamonds, adminGrantRemaining int
-	if uid > 0 {
-		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_diamonds, pack_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&subDiamonds, &packDiamonds)
-		_ = a.Store.QueryRow(r.Context(), `SELECT admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&adminGrantRemaining)
-	}
 	cost, configured, _ := loadDiamondCost(r.Context(), a.Store)
-	var diamondCost any
+	var quotaCost any
 	if configured {
-		diamondCost = cost
+		quotaCost = cost
 	}
 	followupLimit, followupReady, _ := loadFollowupLimit(r.Context(), a.Store)
 	var followup any
 	if followupReady {
 		followup = followupLimit
 	}
-	writeOK(w, map[string]any{
+	out := map[string]any{
 		"cycle": cycle, "reset_at": T(r.Context(), "北京时间 08:00"),
-		"daily_free_used": used, "daily_free_count": dailyFree,
-		"daily_slot_count":     dailySlot,
-		"daily_free_remaining": dailyRemaining, "daily_used_flags": usedFlags,
-		"reward_remaining":             rewardRemaining,
-		"admin_grant_free_remaining":   adminGrantRemaining,
+		"is_member":                    member,
+		"can_buy_pack":                 member,
 		"subscription_prompt_required": subPrompt,
 		"free_label":                   T(r.Context(), "次数"),
-		"paid_label":                   T(r.Context(), "钻石"),
-		"display_label":                T(r.Context(), displayLabelTataCoin),
-		"balance":                      subDiamonds + packDiamonds,
-		"priority":                     T(r.Context(), "注册奖励 → 今日免费次数 → 人工补发免费次数 → 钻石 → 付费"),
-		"diamond_spend_order":          "pack_then_subscription",
-		"diamond_cost":                 diamondCost,
-		"diamond_cost_configured":      configured,
+		"paid_label":                   T(r.Context(), displayLabelQuota),
+		"display_label":                T(r.Context(), displayLabelQuota),
 		"followup_limit":               followup,
-		"subscription_diamonds":        subDiamonds,
-		"pack_diamonds":                packDiamonds,
-	})
+		"quota_cost":                   quotaCost,
+		"quota_cost_configured":        configured,
+		"diamond_cost":                 quotaCost,
+		"diamond_cost_configured":      configured,
+	}
+	if member {
+		label := "月度会员"
+		if memberKind == "year" {
+			label = "年度会员"
+		}
+		quota, qerr := loadQuotaBalance(r.Context(), a.Store, uid)
+		if qerr != nil {
+			return qerr
+		}
+		out["membership"] = map[string]any{
+			"sku_kind": memberKind, "status": "active", "expires_at": memberExp,
+			"auto_renew": nullBool(memberAuto), "type_label": label,
+		}
+		out["quota_remaining"] = quota
+		out["balance"] = quota
+		out["priority"] = T(r.Context(), "会员统一额度")
+		out["daily_slot_count"] = dailySlot
+	} else {
+		var invited int
+		if uid > 0 {
+			_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM invite_rewards WHERE inviter_id=$1`, uid).Scan(&invited)
+		}
+		out["daily_free_used"] = used
+		out["daily_free_count"] = dailyFree
+		out["daily_slot_count"] = dailySlot
+		out["daily_free_remaining"] = dailyRemaining
+		out["daily_used_flags"] = usedFlags
+		out["invite_remaining"] = inviteRemaining
+		out["invite_count"] = invited
+		out["max_invites"] = inviteMaxPeople
+		out["admin_grant_free_remaining"] = adminGrantRemaining
+		out["priority"] = T(r.Context(), "今日免费次数 → 邀请奖励次数")
+	}
+	writeOK(w, out)
 	return nil
 }
 
@@ -464,6 +527,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		Source     string `json:"source"`
 		SkipDetect bool   `json:"skip_detect"`
 		TarotistID *int64 `json:"tarotist_id"`
+		DeviceID   string `json:"device_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
@@ -484,6 +548,9 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		return biz("问题超过 200 个码点，正式计数口径尚未确认")
 	}
 	if req.Type == "tarotist" {
+		if uid == 0 {
+			return biz("登录后才能体验塔罗师")
+		}
 		if req.TarotistID == nil {
 			return biz("请选择塔罗师")
 		}
@@ -503,7 +570,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		writeJSON(w, http.StatusOK, json.RawMessage(replay))
 		return nil
 	}
-	view, err := a.createNormal(r.Context(), uid, anon, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset")
+	view, err := a.createNormal(r.Context(), uid, anon, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", strings.TrimSpace(req.DeviceID))
 	if err != nil {
 		_, _ = a.Store.Exec(r.Context(), `DELETE FROM idempotency WHERE scope=$1 AND key=$2`, scope, r.Header.Get("Idempotency-Key"))
 		return err
@@ -540,7 +607,7 @@ func (a *App) beginIdem(r *http.Request, scope, key string) (string, bool, error
 	return "", false, biz("重复请求处理中")
 }
 
-func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind string, tarotistID *int64, skip bool) (map[string]any, error) {
+func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind string, tarotistID *int64, skip bool, deviceID string) (map[string]any, error) {
 	first := false
 	if uid == 0 {
 		var n int
@@ -554,11 +621,20 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6) RETURNING id`,
-		nullID(uid), nullStr(anon), kind, question, tarotistID, first).Scan(&id)
+	onboard, err := a.prepareOnboard(ctx, tx, uid, anon, kind, deviceID)
 	if err != nil {
 		return nil, err
+	}
+	var id int64
+	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,$7) RETURNING id`,
+		nullID(uid), nullStr(anon), kind, question, tarotistID, first, onboard).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	if onboard {
+		if _, err := tx.Exec(ctx, `UPDATE device_experiences SET reading_id=$1 WHERE device_id=$2 AND consumed=FALSE`, id, resolveDeviceID(ctx, tx, anon, deviceID)); err != nil {
+			return nil, err
+		}
 	}
 	cycle := cycleOf(time.Now())
 	if uid > 0 {
@@ -570,28 +646,42 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	if _, err := tx.Exec(ctx, `UPDATE readings SET business_date=$1, skip_detect=$2 WHERE id=$3`, cycle, skip, id); err != nil {
 		return nil, err
 	}
-	// Logged-in ordinary / AI readings charge at step 1. Explore waits until the ritual gate.
-	// Anonymous readings are not pre-charged.
 	consumed := false
 	exhausted := false
 	rewardUsed := false
 	var decision quotaDecision
+	member := false
+	if uid > 0 {
+		member, err = hasActiveMembership(ctx, tx, uid)
+		if err != nil {
+			return nil, err
+		}
+	}
 	switch {
-	case uid > 0 && kind != "explore":
+	case uid == 0:
+		decision.Status = quotaAnon
+	case kind == "tarotist":
 		decision, err = settleSharedQuota(ctx, tx, chargeOpts{
 			UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
 			AllowTrial: true, ResumeAction: resumeHold,
 		})
-		if err != nil {
-			return nil, err
-		}
-		rewardUsed = decision.Status == quotaCharged && decision.Entitlement == entReward
-		consumed = decision.Status == quotaCharged && decision.Entitlement == entDaily
-		exhausted = !decision.Continue
-	case uid == 0:
-		decision.Status = quotaAnon
+	case member && kind != "explore":
+		decision, err = settleSharedQuota(ctx, tx, chargeOpts{
+			UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
+			AllowTrial: true, ResumeAction: resumeHold,
+		})
 	default:
 		decision.Status = quotaDeferred
+	}
+	if err != nil {
+		return nil, err
+	}
+	if decision.Status == quotaCharged {
+		rewardUsed = decision.Entitlement == entReward || decision.Entitlement == entInvite
+		consumed = decision.Entitlement == entDaily
+		exhausted = false
+	} else {
+		exhausted = !decision.Continue && decision.Status != quotaDeferred && decision.Status != quotaAnon
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -614,6 +704,42 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 		item["quota_prompt"] = T(ctx, decision.Message)
 	}
 	return item, nil
+}
+
+func resolveDeviceID(ctx context.Context, ex execer, anon, requested string) string {
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		return requested
+	}
+	if anon == "" {
+		return ""
+	}
+	var stored string
+	_ = ex.QueryRow(ctx, `SELECT device_id FROM anon_devices WHERE anonymous_id=$1`, anon).Scan(&stored)
+	if strings.TrimSpace(stored) != "" {
+		return stored
+	}
+	return "anon:" + anon
+}
+
+func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, deviceID string) (bool, error) {
+	if kind != "normal" || uid != 0 {
+		return false, nil
+	}
+	deviceID = resolveDeviceID(ctx, tx, anon, deviceID)
+	if deviceID == "" {
+		return false, nil
+	}
+	var consumed bool
+	err := tx.QueryRow(ctx, `SELECT consumed FROM device_experiences WHERE device_id=$1 FOR UPDATE`, deviceID).Scan(&consumed)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.Exec(ctx, `INSERT INTO device_experiences(device_id, anonymous_id) VALUES ($1,$2)`, deviceID, anon)
+		return err == nil, err
+	}
+	if err != nil {
+		return false, err
+	}
+	return !consumed, nil
 }
 
 func userTimezone(ctx context.Context, ex execer, uid int64) string {
@@ -657,9 +783,21 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var enabled bool
-	err = a.Store.QueryRow(r.Context(), `SELECT enabled FROM spreads WHERE id=$1`, req.SpreadID).Scan(&enabled)
+	var cardCount int
+	err = a.Store.QueryRow(r.Context(), `SELECT enabled, card_count FROM spreads WHERE id=$1`, req.SpreadID).Scan(&enabled, &cardCount)
 	if err != nil || !enabled {
 		return biz("牌阵不可用")
+	}
+	if uid > 0 {
+		member, merr := hasActiveMembership(r.Context(), a.Store, uid)
+		if merr != nil {
+			return merr
+		}
+		if !member && cardCount > 3 {
+			return biz("开通会员后可使用超过三张牌的牌阵")
+		}
+	} else if cardCount > 3 {
+		return biz("开通会员后可使用超过三张牌的牌阵")
 	}
 	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), status='SPREAD_SELECTED', updated_at=now() WHERE id=$2 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, id)
 	if err != nil {
@@ -767,6 +905,9 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	}
 	if kind == "explore" && strings.TrimSpace(question) == "" {
 		return biz("请先填写问题")
+	}
+	if uid == 0 {
+		return biz(paywallNeedLogin)
 	}
 	stop, err := a.gatePlay(w, r, resumeInterpret)
 	if err != nil || stop {

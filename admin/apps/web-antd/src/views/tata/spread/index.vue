@@ -5,15 +5,14 @@ import { onMounted, ref } from 'vue';
 
 import { Page, useVbenModal } from '@vben/common-ui';
 import { Plus } from '@vben/icons';
-import { useAccessStore } from '@vben/stores';
 
 import { Button, Image, Table, Tag } from 'ant-design-vue';
 
 import { listSpreads } from '#/api/tata';
 
+import { hasTataWrite } from '../access';
 import Form from './modules/form.vue';
 
-const access = useAccessStore();
 const rows = ref<Spread[]>([]);
 
 const [FormModal, formModalApi] = useVbenModal({
@@ -32,7 +31,7 @@ const columns = [
 ];
 
 function canWrite() {
-  return access.accessCodes.includes('write');
+  return hasTataWrite('content');
 }
 
 async function load() {

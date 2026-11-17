@@ -249,6 +249,8 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 		}
 		writeOK(w, map[string]any{"kind": kind, "items": list})
 		return nil
+	case "legal":
+		return a.copyLegal(w, r)
 	default:
 		return biz("文案类型不正确")
 	}
@@ -523,6 +525,11 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		a.Store.audit(r.Context(), act.id, "update", "copy", kind, code)
+	case "legal":
+		if err := a.putCopyLegal(r); err != nil {
+			return err
+		}
+		a.Store.audit(r.Context(), act.id, "update", "copy", kind, "legal")
 	default:
 		return biz("文案类型不正确")
 	}

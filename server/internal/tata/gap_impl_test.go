@@ -81,6 +81,7 @@ func TestYearlyReportUnlockRequiresYearCard(t *testing.T) {
 func TestNumerologyDrawMapsDeck(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, _ := registerUser(t, ts, store, "numer")
+	_ = ensureTimeFlow(t, store)
 	spreadID := timeFlowSpreadID(t, ts, token)
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "灵数三张", "type": "normal"})
 	rid := asID(reading["id"])
@@ -123,8 +124,8 @@ func TestHistoryListPreviewFields(t *testing.T) {
 	if item["status_label"] != "已解读" || item["card_name"] != "愚者" || !strings.Contains(fmt.Sprint(item["short_text"]), "先把选择") {
 		t.Fatalf("preview: %#v", item)
 	}
-	if item["card_thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
-		t.Fatalf("default thumbnail: %#v", item["card_thumbnail"])
+	if fmt.Sprint(item["card_thumbnail"]) == "" || item["card_thumbnail"] == nil {
+		t.Fatalf("thumbnail missing: %#v", item["card_thumbnail"])
 	}
 }
 
@@ -199,7 +200,7 @@ func TestCalendarDayPreviewFields(t *testing.T) {
 	if daily["card_name"] != "女皇" || daily["orientation"] != "upright" || daily["orientation_label"] != "正位" || daily["type_label"] != "今日一牌" {
 		t.Fatalf("daily: %#v", daily)
 	}
-	if daily["card_thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
+	if fmt.Sprint(daily["card_thumbnail"]) == "" || daily["card_thumbnail"] == nil {
 		t.Fatalf("daily thumb: %#v", daily["card_thumbnail"])
 	}
 	if !strings.Contains(fmt.Sprint(daily["short_text"]), "把温柔") {
@@ -249,10 +250,18 @@ func TestDeckPreferenceAndIAPPacks(t *testing.T) {
 			grants[int(g)] = true
 		}
 	}
-	for _, want := range []int{60, 180, 300, 680, 1280, 3280} {
-		if !grants[want] {
-			t.Fatalf("missing pack %d: %#v", want, grants)
+	codes := map[string]bool{}
+	for _, sku := range skus {
+		code, _ := sku["code"].(string)
+		codes[code] = true
+	}
+	for _, want := range []string{"sub_month", "sub_year"} {
+		if !codes[want] {
+			t.Fatalf("missing sku %s: %#v", want, codes)
 		}
+	}
+	if codes["pack_quota_20"] {
+		t.Fatalf("free user saw quota pack: %#v", codes)
 	}
 	if yearSKU == nil {
 		t.Fatal("year sku missing")
@@ -295,6 +304,7 @@ func TestSpreadRecommended(t *testing.T) {
 	store, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	token, _ := registerUser(t, ts, store, "spredrec")
+	_ = ensureTimeFlow(t, store)
 	t.Cleanup(func() {
 		_, _ = store.Exec(context.Background(), `DELETE FROM spreads WHERE name<>'时间流'`)
 		_, _ = store.Exec(context.Background(), `UPDATE spreads SET recommended=true, enabled=true, thumbnail='' WHERE name='时间流'`)
@@ -371,7 +381,7 @@ func TestSpreadRecommended(t *testing.T) {
 
 func seedIAPCode(code string) bool {
 	switch code {
-	case "sub_month", "sub_year", "sub_times", "pack_60", "pack_180", "pack_300", "pack_680", "pack_1280", "pack_3280", "unlock_yearly":
+	case "sub_month", "sub_year", "sub_times", "pack_quota_20", "pack_quota_60", "pack_quota_100", "unlock_yearly":
 		return true
 	}
 	return false

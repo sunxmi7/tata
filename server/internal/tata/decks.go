@@ -149,10 +149,10 @@ func (a *App) enabledDeck(ctx context.Context, code string) (deckRow, bool, erro
 	return deckRow{}, false, nil
 }
 
-func (a *App) resolveUserDeck(ctx context.Context, uid int64, r *http.Request) (string, []map[string]any, error) {
+func (a *App) resolveUserDeck(ctx context.Context, uid int64, r *http.Request) (string, []map[string]any, map[string]any, error) {
 	available, err := a.Store.listDecks(ctx, true)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if len(available) == 0 {
 		available = []deckRow{{Code: "rider-waite", Name: "莱德韦特", Enabled: true}}
@@ -170,5 +170,15 @@ func (a *App) resolveUserDeck(ctx context.Context, uid int64, r *http.Request) (
 	if !ok {
 		code = available[0].Code
 	}
-	return code, publicDeckList(r, available), nil
+	var custom map[string]any
+	if customID, err := a.userCustomDeckID(ctx, uid); err != nil {
+		return "", nil, nil, err
+	} else if customID > 0 {
+		d, err := a.loadCustomDeck(ctx, uid, customID)
+		if err == nil && d.Status == "saved" {
+			code = customDeckCode(customID)
+			custom = map[string]any{"id": d.ID, "name": d.Name, "code": code, "status": d.Status}
+		}
+	}
+	return code, publicDeckList(r, available), custom, nil
 }

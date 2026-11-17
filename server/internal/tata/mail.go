@@ -71,8 +71,8 @@ func (m *SMTPMailer) port() int {
 func emailCodeCopy(scene, code string) (subject, body string) {
 	purpose := "完成身份验证"
 	switch scene {
-	case "register":
-		purpose = "注册账号"
+	case "login":
+		purpose = "登录"
 	case "bind":
 		purpose = "绑定邮箱"
 	}

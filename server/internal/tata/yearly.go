@@ -65,9 +65,9 @@ func (a *App) appYearlyProfile(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	gender := strings.TrimSpace(req.Gender)
-	if gender != "" && gender != "女性" && gender != "男性" && gender != "不愿透露" {
-		return biz("性别选项不正确")
+	gender, err := normalizeGender(req.Gender)
+	if err != nil {
+		return err
 	}
 	if err := a.requireYearlyUnlocked(r.Context(), uid, year); err != nil {
 		return err
@@ -226,6 +226,9 @@ func (a *App) appYearlyGenerate(w http.ResponseWriter, r *http.Request) error {
 		writeOK(w, view)
 		return nil
 	}
+	if err := a.chargeYearlyGenerate(r.Context(), uid, year); err != nil {
+		return err
+	}
 	run, err := a.ensureYearlyJob(r.Context(), uid, year, row)
 	if err != nil {
 		return err
@@ -257,18 +260,60 @@ func (a *App) yearlyActor(r *http.Request) (int64, int, error) {
 }
 
 func (a *App) requireYearlyUnlocked(ctx context.Context, uid int64, year int) error {
-	yearSub, err := a.hasYearSubscription(ctx, uid)
+	member, err := hasActiveMembership(ctx, a.Store, uid)
 	if err != nil {
 		return err
+	}
+	if member {
+		return nil
 	}
 	row, err := a.loadYearlyRow(ctx, uid, year)
 	if err != nil {
 		return err
 	}
-	if yearSub || row.unlocked {
-		return nil
+	if row.unlocked {
+		return biz(paywallNeedMember)
 	}
-	return biz("请先解锁年度运势")
+	return biz(paywallNeedMember)
+}
+
+func (a *App) chargeYearlyGenerate(ctx context.Context, uid int64, year int) error {
+	member, err := hasActiveMembership(ctx, a.Store, uid)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return biz(paywallNeedMember)
+	}
+	key := fmt.Sprintf("yearly:%d:%d", uid, year)
+	tx, err := a.Store.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var existing string
+	err = tx.QueryRow(ctx, `SELECT entitlement FROM quota_charges WHERE user_id=$1 AND charge_key=$2`, uid, key).Scan(&existing)
+	if err == nil {
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	decision, err := chargeMemberQuota(ctx, tx, chargeOpts{
+		UserID: uid, ReadingID: 0, ChargeKey: key, Cycle: cycleOf(time.Now()),
+		ResumeAction: resumeHold,
+	})
+	if err != nil {
+		return err
+	}
+	if !decision.Continue {
+		_ = tx.Commit(ctx)
+		if decision.Message != "" {
+			return biz(decision.Message)
+		}
+		return biz(paywallNeedQuota)
+	}
+	return tx.Commit(ctx)
 }
 
 func (a *App) ensureYearlyRow(ctx context.Context, uid int64, year int, source string) error {
