@@ -18,7 +18,9 @@ func normalizeGender(raw string) (string, error) {
 		return "女性", nil
 	case "男", "男性":
 		return "男性", nil
-	case "其他", "不愿透露":
+	case "其他":
+		return "其他", nil
+	case "不愿透露":
 		return "不愿透露", nil
 	default:
 		return "", biz("性别选项不正确")

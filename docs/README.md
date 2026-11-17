@@ -49,7 +49,7 @@ App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 
 2026-11-16 对照新 UI 补接口：
-- **个人档案**：`PUT /profile` 接受性别「女/男/其他」，新增 `explore_preferences`（八项多选）。
+- **个人档案**：`PUT /profile` 性别入库为女性 / 男性 / 其他 / 不愿透露；另接受「女」「男」。新增 `explore_preferences`（八项多选）。
 - **用户协议**：公开 `GET /legal`；管理端 `PUT /copy/legal`。未填 pending，不编造条款。
 - **好友邀请**：`GET /invites` 返回 public_id；登录可带 `invite_code`，或 `POST /invites/accept`。成功给邀请人 +3 次。`GET /campaigns/rewards` 返回真实到账，fields_confirmed=true。参与记录仍占位。
 - **78 张牌**：`GET /cards?deck=` 对应「查看全部 78 张」。

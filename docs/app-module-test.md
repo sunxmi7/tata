@@ -311,7 +311,7 @@
 { "avatar_url": "/uploads/misc/上一步返回的文件名.png" }
 ```
 
-- [ ] name 超过 32 字应失败；gender 只允许 女性 / 男性 / 不愿透露
+- [ ] name 超过 32 字应失败；gender 允许 女性 / 男性 / 其他 / 不愿透露（以及别名 女 / 男）
 - [ ] 绑定微信 `POST /api/app/v1/auth/bind-wechat` `{"code":"微信SDK返回的code"}`（未配置应「微信登录未配置」）
 - [ ] 绑定苹果 `POST /api/app/v1/auth/bind-apple` `{"identity_token":"苹果identity_token"}`（仅 iOS；未配置应「苹果登录未配置」）
 - [ ] 没有绑定手机接口；`GET /profile` 不含 `phone`

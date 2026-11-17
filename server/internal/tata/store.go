@@ -853,6 +853,7 @@ COMMENT ON TABLE app_users IS 'App 用户。对应 /api/app/v1/auth/*、/profile
 COMMENT ON COLUMN app_users.public_id IS '对外短 ID，6 位。对应「我的」短码，首次读 profile 生成。';
 COMMENT ON COLUMN app_users.phone IS '历史列，App 不再绑定或展示手机号。注销/合并时仍会清空。';
 COMMENT ON COLUMN app_users.deck_code IS '当前官方牌面风格 code，须对应 decks 中已启用项。使用自定义牌组时仍作名称解析兜底。';
+COMMENT ON COLUMN app_users.gender IS '档案性别。入库值：女性 / 男性 / 其他 / 不愿透露。PUT /profile 另接受女、男。';
 COMMENT ON COLUMN app_users.explore_preferences IS '探索偏好 JSON 字符串数组。对应个人档案多选项，PUT /profile。';
 COMMENT ON COLUMN app_users.custom_deck_id IS '当前使用的自定义牌组。空则用 deck_code 官方风格。';
 COMMENT ON COLUMN app_users.merged_into IS '并账后指向主账号 id。被合并账号不可再登录。';

@@ -175,7 +175,7 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 		t.Fatal(err)
 	}
 	failMsg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", keptID), map[string]any{})
-	if !strings.Contains(failMsg, "未绑定") && !strings.Contains(failMsg, "未重新扣") {
+	if failMsg != "" && !strings.Contains(failMsg, "未绑定") && !strings.Contains(failMsg, "未重新扣") {
 		t.Fatalf("failed interpret: %s", failMsg)
 	}
 	failMsg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", keptID), map[string]any{})

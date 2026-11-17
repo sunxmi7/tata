@@ -40,6 +40,11 @@ func TestUINewScreensAPIs(t *testing.T) {
 	if profile["gender"] != "女性" || profile["birth_date"] != "2000-05-20" {
 		t.Fatalf("profile gender alias: %#v", profile)
 	}
+	must(t, ts, inviter, http.MethodPut, "/api/app/v1/profile", map[string]any{"gender": "其他"})
+	profile = listOne(t, ts, inviter, "/api/app/v1/profile")
+	if profile["gender"] != "其他" {
+		t.Fatalf("profile gender other: %#v", profile)
+	}
 	prefs, _ := profile["explore_preferences"].([]any)
 	if len(prefs) != 3 || prefs[0] != "感情与关系" {
 		t.Fatalf("explore prefs: %#v", profile["explore_preferences"])
