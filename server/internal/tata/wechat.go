@@ -396,5 +396,8 @@ func (a *App) storeWeChatAvatar(r *http.Request, rawURL string) string {
 		log.Printf("wechat avatar save: %v", err)
 		return ""
 	}
-	return publicURL
+	if a.Upload.Driver() == "oss" {
+		return publicURL
+	}
+	return "/uploads/" + stored
 }

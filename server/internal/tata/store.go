@@ -819,8 +819,16 @@ CREATE TABLE IF NOT EXISTS anon_devices (
 UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE kind='consumable_pack';
 UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE code='sub_times';
 DO $$
+DECLARE def text;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'admin_grants_bucket_chk') THEN
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'admin_grants_bucket_chk';
+  IF def IS NULL THEN
+    ALTER TABLE admin_grants ADD CONSTRAINT admin_grants_bucket_chk CHECK (
+      (kind = 'diamonds' AND bucket IN ('pack','subscription','quota'))
+      OR (kind = 'free_count' AND bucket = '')
+    );
+  ELSIF position('quota' in def) = 0 THEN
+    ALTER TABLE admin_grants DROP CONSTRAINT admin_grants_bucket_chk;
     ALTER TABLE admin_grants ADD CONSTRAINT admin_grants_bucket_chk CHECK (
       (kind = 'diamonds' AND bucket IN ('pack','subscription','quota'))
       OR (kind = 'free_count' AND bucket = '')
