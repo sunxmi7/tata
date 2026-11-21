@@ -3,9 +3,9 @@ import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Form, Input, InputNumber, Table, Tabs, message } from 'ant-design-vue';
+import { Button, Form, Input, InputNumber, Popconfirm, Table, Tabs, message } from 'ant-design-vue';
 
-import { getCopy, updateCopy } from '#/api/tata';
+import { createCopy, deleteCopy, getCopy, updateCopy } from '#/api/tata';
 
 import { hasTataWrite } from '../access';
 
@@ -13,7 +13,7 @@ const canWrite = hasTataWrite('content');
 const year = ref(new Date().getFullYear());
 const yearly = ref<Record<string, unknown>>({});
 const cards = ref<Record<string, unknown>[]>([]);
-const help = ref<Record<string, unknown>[]>([]);
+const helpCategories = ref<Record<string, any>[]>([]);
 const campaigns = ref<Record<string, unknown>[]>([]);
 const saving = ref(false);
 
@@ -28,7 +28,11 @@ async function loadCards() {
 
 async function loadHelp() {
   const data = await getCopy('help');
-  help.value = (data.items as Record<string, unknown>[]) || [];
+  helpCategories.value = (data.categories as Record<string, any>[]) || [];
+}
+
+function setHelp(data: Record<string, unknown>) {
+  helpCategories.value = (data.categories as Record<string, any>[]) || [];
 }
 
 async function loadCampaigns() {
@@ -59,9 +63,42 @@ async function saveCard(row: Record<string, unknown>) {
   message.success('已保存');
 }
 
-async function saveHelp(row: Record<string, unknown>) {
-  await updateCopy('help', { article_id: row.article_id, title: row.title, body: row.body });
+async function saveHelpCategory(cat: Record<string, any>) {
+  const data = await updateCopy('help', {
+    category_id: cat.category_id,
+    category_title: cat.title,
+    sort_order: cat.sort_order,
+  });
+  setHelp(data);
+  message.success('已保存分类');
+}
+
+async function saveHelp(cat: Record<string, any>, row: Record<string, any>) {
+  const data = await updateCopy('help', {
+    article_id: row.article_id,
+    category_id: cat.category_id,
+    title: row.title,
+    body: row.body,
+    sort_order: row.sort_order,
+  });
+  setHelp(data);
   message.success('已保存');
+}
+
+async function addHelp(cat: Record<string, any>) {
+  const data = await createCopy('help', {
+    category_id: cat.category_id,
+    title: '新问题',
+    body: '',
+  });
+  setHelp(data);
+  message.success('已新建');
+}
+
+async function removeHelp(row: Record<string, any>) {
+  const data = await deleteCopy('help', String(row.article_id));
+  setHelp(data);
+  message.success('已删除');
 }
 
 async function saveCampaign(row: Record<string, unknown>) {
@@ -127,33 +164,30 @@ onMounted(async () => {
         </Table>
       </Tabs.TabPane>
       <Tabs.TabPane key="help" tab="帮助">
-        <Table
-          :columns="[
-            { title: '分类', dataIndex: 'category_id', width: 140 },
-            { title: '标题', dataIndex: 'title' },
-            { title: '状态', dataIndex: 'body_status', width: 90 },
-            { title: '正文', dataIndex: 'body' },
-            { title: '操作', dataIndex: 'action', width: 80 },
-          ]"
-          :data-source="help"
-          row-key="article_id"
-          :pagination="false"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.dataIndex === 'title'">
-              <Input v-model:value="record.title" />
-            </template>
-            <template v-else-if="column.dataIndex === 'body_status'">
-              {{ record.body_status === 'ready' ? '已定稿' : '待确认' }}
-            </template>
-            <template v-else-if="column.dataIndex === 'body'">
-              <Input.TextArea v-model:value="record.body" :rows="2" />
-            </template>
-            <template v-else-if="column.dataIndex === 'action'">
-              <Button v-if="canWrite" type="link" @click="saveHelp(record)">保存</Button>
-            </template>
-          </template>
-        </Table>
+        <div v-for="cat in helpCategories" :key="cat.category_id" class="mb-6">
+          <div class="mb-3 flex flex-wrap items-center gap-2">
+            <Input v-model:value="cat.title" class="max-w-xs" />
+            <InputNumber v-model:value="cat.sort_order" :min="0" />
+            <Button v-if="canWrite" @click="saveHelpCategory(cat)">保存分类</Button>
+            <Button v-if="canWrite" type="primary" @click="addHelp(cat)">新建问题</Button>
+          </div>
+          <div
+            v-for="row in cat.articles"
+            :key="row.article_id"
+            class="mb-3 rounded border border-gray-200 p-3"
+          >
+            <div class="mb-2 flex flex-wrap items-center gap-2">
+              <Input v-model:value="row.title" class="min-w-64 flex-1" />
+              <InputNumber v-model:value="row.sort_order" :min="0" />
+              <span class="text-xs text-gray-500">{{ row.body_status === 'ready' ? '已定稿' : '待确认' }}</span>
+              <Button v-if="canWrite" type="link" @click="saveHelp(cat, row)">保存</Button>
+              <Popconfirm v-if="canWrite" title="删除这道问题？" @confirm="removeHelp(row)">
+                <Button danger type="link">删除</Button>
+              </Popconfirm>
+            </div>
+            <Input.TextArea v-model:value="row.body" :rows="4" />
+          </div>
+        </div>
       </Tabs.TabPane>
       <Tabs.TabPane key="campaigns" tab="活动">
         <Table

@@ -25,6 +25,15 @@ func deckPreviewURL(thumb string) string {
 	return strings.TrimSpace(thumb)
 }
 
+// spreadDiagramURL is the admin preview. An empty spread diagram is not a card back.
+func spreadDiagramURL(thumb string) any {
+	thumb = strings.TrimSpace(thumb)
+	if thumb == "" {
+		return nil
+	}
+	return thumb
+}
+
 func parseDeckTags(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {

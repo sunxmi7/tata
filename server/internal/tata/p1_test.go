@@ -166,19 +166,15 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 
 	cats := listOne(t, ts, anonToken, "/api/app/v1/help/categories")
 	categories, _ := cats["categories"].([]any)
-	if len(categories) != 3 {
+	if len(categories) != 2 {
 		t.Fatalf("categories: %#v", cats)
 	}
-	wantTitles := []string{"使用与占卜", "会员与支付", "账号与设置"}
+	wantTitles := []string{"使用与占卜", "账号与设置"}
 	for i, title := range wantTitles {
 		row := categories[i].(map[string]any)
-		if row["title"] != title {
+		if row["title"] != title || row["articles_status"] != "ready" {
 			t.Fatalf("category %d: %#v", i, row)
 		}
-	}
-	pay := categories[1].(map[string]any)
-	if pay["id"] != "membership_pay" || pay["articles_status"] != "pending" || pay["empty_note"] != "这一类的问题还在整理，条目待确认。" {
-		t.Fatalf("pay category: %#v", pay)
 	}
 
 	reading := listOne(t, ts, token, "/api/app/v1/help/articles?category=reading")
@@ -194,10 +190,8 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	if len(accountItems) != 1 || accountItems[0].(map[string]any)["title"] != "如何切换语言和主题？" {
 		t.Fatalf("account articles: %#v", account)
 	}
-	pending := listOne(t, ts, token, "/api/app/v1/help/articles?category=membership_pay")
-	pendingItems, _ := pending["items"].([]any)
-	if len(pendingItems) != 0 || pending["category_note"] != "这一类的问题还在整理，条目待确认。" || pending["empty_title"] != "" {
-		t.Fatalf("pending category: %#v", pending)
+	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/help/articles?category=membership_pay", nil); msg != "问题分类不正确" {
+		t.Fatalf("removed category: %s", msg)
 	}
 
 	searchPath := "/api/app/v1/help/articles?" + url.Values{"q": {"占卜"}, "category": {"reading"}}.Encode()

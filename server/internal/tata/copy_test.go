@@ -2,6 +2,7 @@ package tata
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -141,6 +142,52 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	article := listOne(t, ts, token, "/api/app/v1/help/articles/how_to_start")
 	if article["body_status"] != "ready" || article["body"] != "从首页开始一次占卜。" {
 		t.Fatalf("help copy: %#v", article)
+	}
+	created := create(t, ts, admin.access, "/api/admin/v1/copy/help", map[string]any{
+		"category_id": "account", "title": "帮助管理测试", "body": "这是一条测试问题。",
+	})
+	var createdID string
+	for _, raw := range created["categories"].([]any) {
+		cat := raw.(map[string]any)
+		if cat["category_id"] != "account" {
+			continue
+		}
+		for _, item := range cat["articles"].([]any) {
+			row := item.(map[string]any)
+			if row["title"] == "帮助管理测试" {
+				createdID, _ = row["article_id"].(string)
+			}
+		}
+	}
+	if createdID == "" {
+		t.Fatalf("help create: %#v", created["categories"])
+	}
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `DELETE FROM help_articles WHERE article_id=$1`, createdID)
+		_, _ = store.Exec(context.Background(), `UPDATE help_categories SET title='使用与占卜' WHERE category_id='reading'`)
+		_, _ = store.Exec(context.Background(), `UPDATE help_articles SET title='如何开始一次塔罗占卜？', body=$1, body_status='ready' WHERE article_id='how_to_start'`,
+			"进入「首页」，点击「开始抽牌」，输入你想咨询的问题并选择牌阵。按照页面指引完成洗牌、切牌和抽牌后，塔塔会为你生成对应的塔罗解读。\n\n你也可以进入「探索」，选择感兴趣的牌阵开始占卜。")
+	})
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/help", map[string]any{
+		"category_id": "reading", "category_title": "使用与占卜", "sort_order": 1,
+	})
+	msg, raw := call(t, ts, admin.access, http.MethodDelete, "/api/admin/v1/copy/help/"+createdID, nil)
+	if msg != "" {
+		t.Fatalf("help delete: %s", msg)
+	}
+	var goneEnv struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &goneEnv); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range goneEnv.Data["categories"].([]any) {
+		cat := item.(map[string]any)
+		for _, article := range cat["articles"].([]any) {
+			if article.(map[string]any)["article_id"] == createdID {
+				t.Fatalf("help still listed: %#v", article)
+			}
+		}
 	}
 
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/campaigns", map[string]any{

@@ -27,8 +27,13 @@ const [Form, formApi] = useVbenForm({
     },
     {
       component: 'Input',
+      fieldName: 'name_en',
+      label: '英文名称',
+    },
+    {
+      component: 'Input',
       fieldName: 'description',
-      label: '描述',
+      label: '含义说明',
     },
     {
       component: 'InputNumber',
@@ -134,6 +139,7 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
     try {
       const body = {
         name: data.name,
+        name_en: data.name_en ?? '',
         description: data.description,
         card_count: data.card_count,
         positions,
@@ -166,6 +172,7 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
       formData.value = data;
       formApi.setValues({
         name: data.name,
+        name_en: data.name_en ?? '',
         description: data.description,
         card_count: data.card_count,
         positionsText: JSON.stringify(data.positions, null, 2),

@@ -481,16 +481,6 @@ ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT 
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS blurb TEXT NOT NULL DEFAULT '';
-CREATE TABLE IF NOT EXISTS explore_topics (
-  topic_id TEXT PRIMARY KEY,
-  group_key TEXT NOT NULL,
-  group_title TEXT NOT NULL,
-  title TEXT NOT NULL,
-  subtitle TEXT NOT NULL DEFAULT '',
-  illustration TEXT,
-  spread_id BIGINT,
-  sort_order INT NOT NULL DEFAULT 0
-);
 CREATE TABLE IF NOT EXISTS redeem_codes (
   id BIGSERIAL PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
@@ -768,6 +758,7 @@ CREATE TABLE IF NOT EXISTS operator_module_perms (
 );
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS explore_preferences TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS custom_deck_id BIGINT;
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS name_en TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_title TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_subtitle TEXT NOT NULL DEFAULT '';
@@ -879,6 +870,9 @@ END $$;
 	if err := s.unifyPaymentCatalog(ctx); err != nil {
 		return err
 	}
+	if _, err := s.Exec(ctx, `DROP TABLE IF EXISTS explore_topics`); err != nil {
+		return err
+	}
 	return s.commentSchema(ctx)
 }
 
@@ -901,17 +895,18 @@ COMMENT ON COLUMN app_users.merged_into IS '并账后指向主账号 id。被合
 COMMENT ON TABLE refresh_tokens IS '刷新令牌。App 登录不签发；管理端会话用。';
 COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wechat/apple），删号后仍占坑防抢注。';
 
-COMMENT ON TABLE spreads IS '牌阵。对应 GET /spreads；抽牌 spread_id。种子含时间流等。recommended 为选阵屏「推荐牌阵」角标。';
+COMMENT ON TABLE spreads IS '牌阵。普通占卜与探索共用。theme_key 为空是普通占卜和推荐角标；非空是探索主题下的牌阵。对应 GET /spreads 与 GET /explore/topics。';
 COMMENT ON COLUMN spreads.positions IS 'JSON 牌位：index/name/meaning。';
 COMMENT ON COLUMN spreads.recommended IS '推荐牌阵。全表最多一张。App 列表推荐的排前面。';
-COMMENT ON COLUMN spreads.thumbnail IS '选阵屏牌阵示意图。空则 App 返回内置默认牌背，不编造构图。';
-COMMENT ON COLUMN spreads.theme_key IS '探索牌阵主题键，如 yes_or_no。空则未分组。';
+COMMENT ON COLUMN spreads.name_en IS '牌阵英文名。更多牌阵文字稿里的英文名称。空则未填。';
+COMMENT ON COLUMN spreads.thumbnail IS '选阵屏牌阵示意图。空则 App 选阵仍用内置牌背占位；管理端列表不把牌背当成示意图。';
+COMMENT ON COLUMN spreads.theme_key IS '探索主题键，如 yes_or_no。空则不是探索牌阵。同一主题下可有多套。';
 COMMENT ON COLUMN spreads.theme_title IS '探索牌阵主题标题。';
 COMMENT ON COLUMN spreads.theme_subtitle IS '探索牌阵主题副标题。';
 COMMENT ON COLUMN spreads.short_sentence IS '牌阵短句，对应文字总结版。';
 COMMENT ON COLUMN spreads.depth_group IS '普通占卜分组：quick 快速指引、advanced 进阶分析、panorama 深度全景。空则不是更多牌阵这 19 套。不是免费白名单。';
 COMMENT ON COLUMN spreads.quota_cost IS '普通占卜扣次，单位是额度次数。NULL 表示这套未标价。不是人民币，不是塔塔币。结算尚未读取。';
-COMMENT ON COLUMN spreads.sort_order IS '更多牌阵里的顺序。默认 1000，排在已编号的 19 套后面。';
+COMMENT ON COLUMN spreads.sort_order IS '列表顺序。普通占卜 1–19。探索从 101 起，按主题再按主题内顺序。默认 1000。';
 COMMENT ON TABLE invite_rewards IS '好友邀请到账。邀请人 public_id 为邀请码；被邀请人只能绑定一次；每人数 +3 写入 rewards.invite_remaining，最多 5 人。';
 COMMENT ON TABLE custom_decks IS '用户自定义牌组。face_source/back_source 为 upload 或官方 decks.code。';
 COMMENT ON TABLE custom_deck_faces IS '自定义牌组已上传的牌面。card_id 对应韦特 0–77。';
@@ -921,8 +916,6 @@ COMMENT ON TABLE bindings IS '任务到供应商+模型的绑定。task=detect/r
 
 COMMENT ON TABLE banners IS '运营 Banner。对应 GET /banners 与管理端 /admin/v1/banners。可触发个推。';
 COMMENT ON TABLE campaigns IS '探索「参与活动」。对应 GET /campaigns；detail_status=pending 时正文未定稿。';
-COMMENT ON TABLE explore_topics IS '探索主题占卜条目。对应 GET /explore/topics。';
-
 COMMENT ON TABLE readings IS '一次解读。对应 /readings*。type=normal/tarotist/explore/daily。';
 COMMENT ON COLUMN readings.type IS 'normal 普通、tarotist 占卜师、explore 主题、daily 今日一牌。';
 COMMENT ON COLUMN readings.status IS '流程状态：QUESTION_CREATED → … → INTERPRETING → COMPLETED。INTERPRETING 时 interpretation 可能是未完成片段。';
@@ -999,7 +992,7 @@ COMMENT ON TABLE app_messages IS '站内信（优惠/活动）。audience=all �
 COMMENT ON TABLE app_message_reads IS '站内信已读。对应 POST /messages/{id}/read。';
 
 COMMENT ON TABLE help_categories IS '帮助中心分类。对应 GET /help/categories。';
-COMMENT ON TABLE help_articles IS '帮助文章。使用与占卜、账号与设置已写入 Pixso 681:7 正文。会员与支付仍 pending。管理端 PUT /copy/help 可改。';
+COMMENT ON TABLE help_articles IS '帮助文章。使用与占卜、账号与设置按 Pixso 1034:621 写入。管理端运营文案可改分类名、增删问题和排序。';
 COMMENT ON COLUMN iap_skus.copy IS '价位附带运营文案。年卡用于专属活动权益；空则 benefits.campaign_perk.copy_status=pending。';
 COMMENT ON TABLE app_config IS '无独立表的运营配置。key 如 yearly.2026.theme、card.thumbnail_template（{id}/{name}）、card.thumbnail_default。单牌名/宜/图在 cards 表。缩略图都未配时 App 返回内置 /uploads/card-default.png。对应 GET/PUT /copy/{kind}。';
 COMMENT ON TABLE cards IS '单牌目录。种子 78 张 Rider-Waite（id 0-77，愚者=0）。管理端 GET/POST /cards、PUT /cards/{id}；App 读缩略图/宜/多语言名。抽牌仍按 deck() 0-77。';
@@ -1089,7 +1082,7 @@ func (s *Store) seed(ctx context.Context) error {
 	if err := s.seedIAP(ctx); err != nil {
 		return err
 	}
-	if err := s.seedExplore(ctx); err != nil {
+	if err := s.seedExploreSpreads(ctx); err != nil {
 		return err
 	}
 	if err := s.seedCampaigns(ctx); err != nil {
@@ -1105,36 +1098,6 @@ func (s *Store) seed(ctx context.Context) error {
 		return err
 	}
 	return s.seedTarotistPublic(ctx)
-}
-
-func (s *Store) seedExplore(ctx context.Context) error {
-	var spreadID sql.NullInt64
-	_ = s.QueryRow(ctx, `SELECT id FROM spreads WHERE name='时间流' LIMIT 1`).Scan(&spreadID)
-	topics := []struct {
-		id, groupKey, groupTitle, title, subtitle string
-		order                                     int
-	}{
-		{"yes_no", "now_choice", "此刻抉择", "是否", "一件事该不该做", 1},
-		{"either_or", "now_choice", "此刻抉择", "二选一", "两个选项怎么选", 2},
-		{"love", "theme", "主题占卜", "感情", "关系里正在发生的事", 10},
-		{"career", "theme", "主题占卜", "事业", "工作与方向", 11},
-		{"study", "theme", "主题占卜", "学业", "学习与考试", 12},
-		{"wealth", "theme", "主题占卜", "财富", "钱与资源流向", 13},
-		{"relation", "theme", "主题占卜", "人际", "沟通与边界", 14},
-		{"self", "theme", "主题占卜", "自我", "当下的自己", 15},
-		{"family", "theme", "主题占卜", "家庭", "家人与归属", 16},
-		{"health", "theme", "主题占卜", "身心", "节奏与恢复", 17},
-		{"general", "theme", "主题占卜", "综合", "最近一段时期", 18},
-	}
-	for _, t := range topics {
-		if _, err := s.Exec(ctx, `INSERT INTO explore_topics(topic_id, group_key, group_title, title, subtitle, illustration, spread_id, sort_order)
-			VALUES ($1,$2,$3,$4,$5,NULL,$6,$7)
-			ON CONFLICT (topic_id) DO NOTHING`,
-			t.id, t.groupKey, t.groupTitle, t.title, t.subtitle, spreadID, t.order); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *Store) seedCampaigns(ctx context.Context) error {
@@ -1178,8 +1141,7 @@ func (s *Store) seedHelp(ctx context.Context) error {
 		order                   int
 	}{
 		{"reading", "使用与占卜", "ready", "", 1},
-		{"membership_pay", "会员与支付", "pending", "这一类的问题还在整理，条目待确认。", 2},
-		{"account", "账号与设置", "ready", "", 3},
+		{"account", "账号与设置", "ready", "", 2},
 	}
 	for _, c := range categories {
 		if _, err := s.Exec(ctx, `INSERT INTO help_categories(category_id, title, articles_status, empty_note, sort_order)
@@ -1200,6 +1162,18 @@ func (s *Store) seedHelp(ctx context.Context) error {
 			WHERE article_id=$2 AND body_status='pending'`, a.Body, a.ID); err != nil {
 			return err
 		}
+	}
+	if _, err := s.Exec(ctx, `DELETE FROM help_articles WHERE category_id='membership_pay'`); err != nil {
+		return err
+	}
+	if _, err := s.Exec(ctx, `DELETE FROM help_categories WHERE category_id='membership_pay'`); err != nil {
+		return err
+	}
+	// 旧种子把账号与设置排在第 3 位，中间那一类已经删掉。没有其它分类时收成 2。
+	if _, err := s.Exec(ctx, `UPDATE help_categories SET sort_order=2
+		WHERE category_id='account' AND sort_order=3
+		  AND NOT EXISTS (SELECT 1 FROM help_categories WHERE category_id NOT IN ('reading','account'))`); err != nil {
+		return err
 	}
 	return nil
 }

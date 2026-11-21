@@ -1,6 +1,6 @@
 package tata
 
-// 帮助中心正式问答。来源 Pixso「帮助中心Q&A」681:7。会员与支付仍未定稿，不写入。
+// 帮助中心正式问答。来源 Pixso「帮助中心Q&A」1034:621。两类：使用与占卜、账号与设置。
 var helpArticleCopy = []struct {
 	ID, Category, Title, Body string
 	Order                     int

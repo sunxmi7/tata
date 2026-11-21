@@ -29,6 +29,13 @@ func TestPriceLedgersStaySeparate(t *testing.T) {
 	if tree["card_count"] != float64(10) || tree["quota_cost"] != nil || tree["price_ledger"] != nil || tree["depth_group"] != "panorama" {
 		t.Fatalf("tree of life: %#v", tree)
 	}
+	celtic := found["凯尔特十字牌阵"]
+	if celtic["name_en"] != "Celtic Cross" || celtic["description"] == "" || tree["name_en"] != "Tree of Life Spread" || tree["description"] == "" {
+		t.Fatalf("panorama copy: %#v %#v", celtic, tree)
+	}
+	if found["单张牌占卜"]["name_en"] != "One Card Reading" {
+		t.Fatalf("english name: %#v", found["单张牌占卜"])
+	}
 	if found["凯尔特十字牌阵"]["quota_cost"] != float64(10) || found["六张十字牌阵"]["quota_cost"] != float64(8) {
 		t.Fatalf("celtic/six: %#v %#v", found["凯尔特十字牌阵"], found["六张十字牌阵"])
 	}
@@ -40,6 +47,9 @@ func TestPriceLedgersStaySeparate(t *testing.T) {
 	}
 	if groups["quick"] != 5 || groups["advanced"] != 12 || groups["panorama"] != 2 {
 		t.Fatalf("groups: %#v", groups)
+	}
+	if _, ok := found["单张是非牌阵"]; ok {
+		t.Fatalf("explore spread leaked into ordinary list")
 	}
 
 	deckSKU := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{

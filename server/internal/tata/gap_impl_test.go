@@ -29,7 +29,7 @@ func TestMonthlyReportEmptySaveAndStats(t *testing.T) {
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
 	month := now.Format("2006-01")
 	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, interpretation, created_at, updated_at)
-		VALUES ($1,'normal','感情怎么样','COMPLETED','这段关系需要把话说清楚再往前走。',$2,$2),
+		VALUES ($1,'normal','关系走向怎么样','COMPLETED','这段关系需要把话说清楚再往前走。',$2,$2),
 		       ($1,'normal','事业方向','QUESTION_CREATED',NULL,$2,$2)`, uid, now); err != nil {
 		t.Fatal(err)
 	}

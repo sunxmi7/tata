@@ -154,7 +154,7 @@
 
 目录公开。开局 `POST /readings` 要令牌。
 
-- [ ] `GET /api/app/v1/explore/topics`：两组，此刻抉择（是否、二选一）、主题占卜（感情/事业等）；不带 token 也能过
+- [ ] `GET /api/app/v1/explore/topics`：11 个主题、22 套牌阵（Yes or No 1 套，关系走向 3 套，其余各 2 套）；不带 token 也能过
 - [ ] 条目里 spread.spread_id 应对时间流
 
 点进主题后开局走抽牌，不要另找探索专用创建接口。
@@ -467,7 +467,7 @@ JSON 示例（1×1 png）：
 
 公开，不带 token 可读。
 
-- [ ] `GET /api/app/v1/help/categories`：三类；「会员与支付」articles_status=pending
+- [ ] `GET /api/app/v1/help/categories`：两类，使用与占卜、账号与设置，都是 ready
 - [ ] `GET /api/app/v1/help/articles?category=reading`
 - [ ] `GET /api/app/v1/help/articles?q=抽牌`
 - [ ] `GET /api/app/v1/help/articles/how_to_start`：正文已写入，body_status=ready

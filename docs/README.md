@@ -6,9 +6,9 @@
 
 路径、方法、请求体和响应形状来自 `server/internal/tata/routes.go` 及对应 handler，只收录已注册的接口。
 
-2026-10-28 起 App P0 壳层路径包括：`GET/PUT /api/app/v1/profile`（name/bio/avatar_url、account_display）、`GET /api/app/v1/explore/topics`、`POST /api/app/v1/redeem`、`GET /api/app/v1/wallet/ledger`、`POST /api/app/v1/uploads`、`POST /api/app/v1/wishlist`、`POST /api/app/v1/feedback`、`GET/PUT /api/app/v1/notification-preferences`。额度账本的 UI 展示名为「额度」（`display_label`）。塔塔币已下线。
+2026-10-28 起 App P0 壳层路径包括：`GET/PUT /api/app/v1/profile`（name/bio/avatar_url、account_display）、`GET /api/app/v1/explore/topics`（11 个探索主题、22 套牌阵）、`POST /api/app/v1/redeem`、`GET /api/app/v1/wallet/ledger`、`POST /api/app/v1/uploads`、`POST /api/app/v1/wishlist`、`POST /api/app/v1/feedback`、`GET/PUT /api/app/v1/notification-preferences`。额度账本的 UI 展示名为「额度」（`display_label`）。塔塔币已下线。
 
-同日 App P1：`GET /api/app/v1/redeem/records`、`GET /api/app/v1/campaigns`、`GET /api/app/v1/campaigns/{id}`、`GET /api/app/v1/campaigns/participations`、`GET /api/app/v1/campaigns/rewards`、`GET /api/app/v1/help/categories`、`GET /api/app/v1/help/articles`（`category`、`q`）、`GET /api/app/v1/help/articles/{id}`。兑换记录、活动详情、参与记录、奖励记录仍是占位：列表可为空，不编造记录。帮助中心「使用与占卜」「账号与设置」已写入正式正文；「会员与支付」仍 pending。
+同日 App P1：`GET /api/app/v1/redeem/records`、`GET /api/app/v1/campaigns`、`GET /api/app/v1/campaigns/{id}`、`GET /api/app/v1/campaigns/participations`、`GET /api/app/v1/campaigns/rewards`、`GET /api/app/v1/help/categories`、`GET /api/app/v1/help/articles`（`category`、`q`）、`GET /api/app/v1/help/articles/{id}`。兑换记录、活动详情、参与记录、奖励记录仍是占位：列表可为空，不编造记录。帮助中心按文字稿只保留「使用与占卜」「账号与设置」两类，正文已写入。
 
 2026-11-06 重启推送（Q-B1 作废）：新增 `POST /api/app/v1/push/register`（上报个推 CID）、`GET /api/app/v1/messages`（消息中心/站内信）、`POST /api/app/v1/messages/{id}/read`，以及管理端 `POST /api/admin/v1/push/broadcast`（群发）。今日/明日抽牌仍走 App 本地通知；优惠/活动走个推（GeTui）服务端下发，只推给 `messages_enabled=true` 的设备。个推凭证在 `server/manifest/config/config.yaml` 的 `getui`（`enabled=false` 时只落站内信、不真连）。
 
@@ -50,7 +50,7 @@ App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 2026-11-17：
 - **账号中心**：昵称与头像。`GET/PUT /profile` 的 `nickname` 与 `name` 同一列。微信登录优先微信昵称和转存头像；邮箱/苹果生成 4–6 字随机昵称，头像用内置 `/uploads/avatar-default.png`。两种都可以更换。
-- **帮助中心**：使用与占卜、账号与设置写入 Pixso `681:7` 正式正文；会员与支付仍 pending。
+- **帮助中心**：使用与占卜、账号与设置写入 Pixso `1034:621`。后台运营文案可改分类名、增删问题和排序。
 - **注销**：`POST /auth/cancel` 禁止再登录（JWT 立刻失效），同一身份不能重新注册，不物理删除占卜记录。
 - **管理端用户**：`GET /users` 返回昵称、头像、性别、生日、探索偏好。`GET /users/stats` 给性别、年龄（9 档 + 未填写）、探索偏好圆形图。已注销/已合并用户不计入占比。
 

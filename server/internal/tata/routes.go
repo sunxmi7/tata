@@ -61,7 +61,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/v1/quota-params", a.h(a.rejectQuotaWrite))
 
 	mux.HandleFunc("GET /api/admin/v1/copy/{kind}", a.h(a.adminGetCopy))
+	mux.HandleFunc("POST /api/admin/v1/copy/{kind}", a.h(a.adminPostCopy))
 	mux.HandleFunc("PUT /api/admin/v1/copy/{kind}", a.h(a.adminPutCopy))
+	mux.HandleFunc("DELETE /api/admin/v1/copy/{kind}/{id}", a.h(a.adminDeleteCopy))
 	mux.HandleFunc("POST /api/admin/v1/uploads", a.h(a.adminUploads))
 
 	mux.HandleFunc("GET /api/admin/v1/banners", a.h(a.adminListBanners))

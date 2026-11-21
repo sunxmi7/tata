@@ -2,7 +2,9 @@ package tata
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -191,27 +193,11 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 		})
 		return nil
 	case "help":
-		rows, err := a.Store.Query(r.Context(), `SELECT article_id, category_id, title, body, body_status, sort_order
-			FROM help_articles ORDER BY category_id, sort_order, article_id`)
+		categories, err := a.helpCopyCategories(r.Context())
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		list := []map[string]any{}
-		for rows.Next() {
-			var id, cat, title, body, status string
-			var order int
-			if err := rows.Scan(&id, &cat, &title, &body, &status, &order); err != nil {
-				return err
-			}
-			list = append(list, map[string]any{
-				"article_id": id, "category_id": cat, "title": title, "body": body, "body_status": status, "sort_order": order,
-			})
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		writeOK(w, map[string]any{"kind": kind, "items": list})
+		writeOK(w, map[string]any{"kind": kind, "categories": categories})
 		return nil
 	case "campaigns":
 		rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, detail_title, detail_body, detail_status, status, enabled, sort_order
@@ -343,39 +329,9 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		}
 		a.Store.audit(r.Context(), act.id, "update", "copy", kind, name)
 	case "help":
-		var req struct {
-			ArticleID string `json:"article_id"`
-			Title     string `json:"title"`
-			Body      string `json:"body"`
-		}
-		if err := decode(r, &req); err != nil {
+		if err := a.putCopyHelp(r, act.id); err != nil {
 			return err
 		}
-		if !validContentID(req.ArticleID) {
-			return biz("问题不存在")
-		}
-		body := strings.TrimSpace(req.Body)
-		status := copyStatus(body)
-		if status != "ready" {
-			body = helpBodyPending
-			status = "pending"
-		}
-		title := strings.TrimSpace(req.Title)
-		var tag tagResult
-		if title == "" {
-			tag, err = a.Store.Exec(r.Context(), `UPDATE help_articles SET body=$1, body_status=$2 WHERE article_id=$3`,
-				body, status, req.ArticleID)
-		} else {
-			tag, err = a.Store.Exec(r.Context(), `UPDATE help_articles SET title=$1, body=$2, body_status=$3 WHERE article_id=$4`,
-				title, body, status, req.ArticleID)
-		}
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return biz("问题不存在")
-		}
-		a.Store.audit(r.Context(), act.id, "update", "copy", kind, req.ArticleID)
 	case "campaigns":
 		var req struct {
 			CampaignID  string `json:"campaign_id"`
@@ -547,4 +503,211 @@ func copyYear(r *http.Request) (int, error) {
 		return 0, biz("年份不正确")
 	}
 	return year, nil
+}
+
+func (a *App) helpCopyCategories(ctx context.Context) ([]map[string]any, error) {
+	rows, err := a.Store.Query(ctx, `SELECT c.category_id, c.title, c.sort_order, a.article_id, a.title, a.body, a.body_status, a.sort_order
+		FROM help_categories c
+		LEFT JOIN help_articles a ON a.category_id = c.category_id
+		ORDER BY c.sort_order, c.category_id, a.sort_order, a.article_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	order := []string{}
+	byID := map[string]map[string]any{}
+	for rows.Next() {
+		var categoryID, categoryTitle string
+		var categorySort int
+		var articleID, title, body, status sql.NullString
+		var articleSort sql.NullInt64
+		if err := rows.Scan(&categoryID, &categoryTitle, &categorySort, &articleID, &title, &body, &status, &articleSort); err != nil {
+			return nil, err
+		}
+		cat, ok := byID[categoryID]
+		if !ok {
+			cat = map[string]any{
+				"category_id": categoryID, "title": categoryTitle, "sort_order": categorySort,
+				"articles": []map[string]any{},
+			}
+			byID[categoryID] = cat
+			order = append(order, categoryID)
+		}
+		if articleID.Valid {
+			articles := cat["articles"].([]map[string]any)
+			cat["articles"] = append(articles, map[string]any{
+				"article_id": articleID.String, "title": title.String, "body": body.String,
+				"body_status": status.String, "sort_order": articleSort.Int64,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, id := range order {
+		out = append(out, byID[id])
+	}
+	return out, nil
+}
+
+func (a *App) putCopyHelp(r *http.Request, operatorID int64) error {
+	var req struct {
+		ArticleID     string `json:"article_id"`
+		CategoryID    string `json:"category_id"`
+		CategoryTitle string `json:"category_title"`
+		Title         string `json:"title"`
+		Body          string `json:"body"`
+		SortOrder     *int   `json:"sort_order"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.ArticleID) == "" {
+		if !validContentID(req.CategoryID) {
+			return biz("问题分类不正确")
+		}
+		title := strings.TrimSpace(req.CategoryTitle)
+		if title == "" {
+			return biz("请填写分类名称")
+		}
+		var tag tagResult
+		var err error
+		if req.SortOrder == nil {
+			tag, err = a.Store.Exec(r.Context(), `UPDATE help_categories SET title=$1 WHERE category_id=$2`, title, req.CategoryID)
+		} else {
+			tag, err = a.Store.Exec(r.Context(), `UPDATE help_categories SET title=$1, sort_order=$2 WHERE category_id=$3`, title, *req.SortOrder, req.CategoryID)
+		}
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return biz("问题分类不正确")
+		}
+		a.Store.audit(r.Context(), operatorID, "update", "copy", "help", req.CategoryID)
+		return nil
+	}
+	if !validContentID(req.ArticleID) {
+		return biz("问题不存在")
+	}
+	if req.CategoryID != "" {
+		if !validContentID(req.CategoryID) {
+			return biz("问题分类不正确")
+		}
+		var n int
+		if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM help_categories WHERE category_id=$1`, req.CategoryID).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return biz("问题分类不正确")
+		}
+	}
+	body := strings.TrimSpace(req.Body)
+	status := copyStatus(body)
+	if status != "ready" {
+		body = helpBodyPending
+		status = "pending"
+	}
+	title := strings.TrimSpace(req.Title)
+	tag, err := a.Store.Exec(r.Context(), `UPDATE help_articles SET
+		title=CASE WHEN $1='' THEN title ELSE $1 END,
+		body=$2, body_status=$3,
+		category_id=CASE WHEN $4='' THEN category_id ELSE $4 END,
+		sort_order=COALESCE($5, sort_order)
+		WHERE article_id=$6`,
+		title, body, status, req.CategoryID, req.SortOrder, req.ArticleID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return biz("问题不存在")
+	}
+	a.Store.audit(r.Context(), operatorID, "update", "copy", "help", req.ArticleID)
+	return nil
+}
+
+func (a *App) adminPostCopy(w http.ResponseWriter, r *http.Request) error {
+	act, err := a.adminActor(r, true)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.PathValue("kind")) != "help" {
+		return biz("文案类型不正确")
+	}
+	var req struct {
+		CategoryID string `json:"category_id"`
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		SortOrder  *int   `json:"sort_order"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if !validContentID(req.CategoryID) {
+		return biz("问题分类不正确")
+	}
+	var n int
+	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM help_categories WHERE category_id=$1`, req.CategoryID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return biz("问题分类不正确")
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return biz("请填写问题标题")
+	}
+	body := strings.TrimSpace(req.Body)
+	status := copyStatus(body)
+	if status != "ready" {
+		body = helpBodyPending
+		status = "pending"
+	}
+	sort := 0
+	if req.SortOrder != nil {
+		sort = *req.SortOrder
+	} else if err := a.Store.QueryRow(r.Context(), `SELECT COALESCE(MAX(sort_order),0)+1 FROM help_articles WHERE category_id=$1`, req.CategoryID).Scan(&sort); err != nil {
+		return err
+	}
+	id, err := newHelpArticleID()
+	if err != nil {
+		return err
+	}
+	if _, err := a.Store.Exec(r.Context(), `INSERT INTO help_articles(article_id, category_id, title, body, body_status, sort_order)
+		VALUES ($1,$2,$3,$4,$5,$6)`, id, req.CategoryID, title, body, status, sort); err != nil {
+		return err
+	}
+	a.Store.audit(r.Context(), act.id, "create", "copy", "help", id)
+	return a.adminGetCopy(w, r)
+}
+
+func (a *App) adminDeleteCopy(w http.ResponseWriter, r *http.Request) error {
+	act, err := a.adminActor(r, true)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.PathValue("kind")) != "help" {
+		return biz("文案类型不正确")
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if !validContentID(id) {
+		return biz("问题不存在")
+	}
+	tag, err := a.Store.Exec(r.Context(), `DELETE FROM help_articles WHERE article_id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return biz("问题不存在")
+	}
+	a.Store.audit(r.Context(), act.id, "delete", "copy", "help", id)
+	return a.adminGetCopy(w, r)
+}
+
+func newHelpArticleID() (string, error) {
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "q_" + hex.EncodeToString(buf), nil
 }

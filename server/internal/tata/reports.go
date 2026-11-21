@@ -262,7 +262,7 @@ func (a *App) buildMonthlyReport(ctx context.Context, uid int64, loc *time.Locat
 }
 
 func (a *App) topicHitsFromQuestions(ctx context.Context, questions []string) ([]map[string]any, error) {
-	rows, err := a.Store.Query(ctx, `SELECT title FROM explore_topics ORDER BY sort_order, topic_id`)
+	rows, err := a.Store.Query(ctx, `SELECT theme_title FROM spreads WHERE enabled=true AND theme_key<>'' GROUP BY theme_key, theme_title ORDER BY min(sort_order), theme_key`)
 	if err != nil {
 		return nil, err
 	}

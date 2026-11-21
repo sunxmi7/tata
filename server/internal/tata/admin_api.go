@@ -194,6 +194,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 
 type spreadBody struct {
 	Name          string     `json:"name"`
+	NameEN        *string    `json:"name_en"`
 	Description   string     `json:"description"`
 	CardCount     int        `json:"card_count"`
 	Positions     []position `json:"positions"`
@@ -233,7 +234,7 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, enabled, charged, recommended, thumbnail,
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, name_en, description, card_count, positions, enabled, charged, recommended, thumbnail,
 		theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost, sort_order
 		FROM spreads ORDER BY recommended DESC, sort_order, id`)
 	if err != nil {
@@ -243,17 +244,17 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
+		var name, nameEN, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
 		var count, sort int
 		var enabled, charged, recommended bool
 		var quota sql.NullInt64
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota, &sort); err != nil {
+		if err := rows.Scan(&id, &name, &nameEN, &desc, &count, &pos, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota, &sort); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
-			"id": id, "name": name, "description": desc, "card_count": count,
+			"id": id, "name": name, "name_en": nameEN, "description": desc, "card_count": count,
 			"positions": json.RawMessage(pos), "enabled": enabled, "charged": charged, "recommended": recommended,
-			"thumbnail": nullableConfig(thumb), "preview": deckPreviewURL(thumb),
+			"thumbnail": nullableConfig(thumb), "preview": spreadDiagramURL(thumb),
 			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub, "short_sentence": short,
 			"depth_group": depth, "depth_label": depthLabel(depth), "sort_order": sort,
 			"quota_cost": quotaCostValue(quota), "quota_priced": quota.Valid, "price_ledger": quotaLedger(quota),
@@ -292,9 +293,9 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
 	}
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, name_en, description, card_count, positions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+		req.Name, spreadText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
 		spreadText(req.ThemeKey), spreadText(req.ThemeTitle), spreadText(req.ThemeSubtitle), spreadText(req.ShortSentence),
 		group, quota).Scan(&id)
 	if err != nil {
@@ -367,11 +368,11 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7, thumbnail=$8,
-		theme_key=COALESCE($9, theme_key), theme_title=COALESCE($10, theme_title), theme_subtitle=COALESCE($11, theme_subtitle), short_sentence=COALESCE($12, short_sentence),
-		depth_group=$13, quota_cost=$14
-		WHERE id=$15`,
-		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
+	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, name_en=COALESCE($2, name_en), description=$3, card_count=$4, positions=$5, enabled=$6, charged=$7, recommended=$8, thumbnail=$9,
+		theme_key=COALESCE($10, theme_key), theme_title=COALESCE($11, theme_title), theme_subtitle=COALESCE($12, theme_subtitle), short_sentence=COALESCE($13, short_sentence),
+		depth_group=$14, quota_cost=$15
+		WHERE id=$16`,
+		req.Name, spreadNullText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
 		spreadNullText(req.ThemeKey), spreadNullText(req.ThemeTitle), spreadNullText(req.ThemeSubtitle), spreadNullText(req.ShortSentence),
 		depth, quota, id)
 	if err != nil {

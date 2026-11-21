@@ -44,7 +44,7 @@ info:
     - 人工补发 `quota` 写入统一额度，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
     - 注册奖励已下线。免费用户扣费顺序：今日免费（全局 1 次）→ 邀请奖励 → 人工补发 → 开通会员。会员只扣统一额度。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
-    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心「使用与占卜」「账号与设置」已写入正式正文；「会员与支付」仍 pending。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
+    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心按文字稿只保留「使用与占卜」「账号与设置」两类，正文已写入。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
     - 活动列表与帮助中心的「加载失败，请重试」是客户端在请求失败后的状态，重试同一 GET。服务端沿用现有 `code=1` 包络，不另开错误体。
 servers:
   - url: http://127.0.0.1:8080
@@ -69,7 +69,7 @@ tags:
   - name: 活动
     description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
   - name: 帮助
-    description: 帮助中心分类、搜索与问题详情。使用与占卜、账号与设置已写入正式正文；会员与支付仍 pending。
+    description: 帮助中心分类、搜索与问题详情。当前是使用与占卜、账号与设置两类，正文已写入。
   - name: 反馈心愿
     description: 图片上传（头像/心愿/反馈共用 POST /uploads）、功能心愿单与意见反馈。
   - name: 通知设置
@@ -508,9 +508,12 @@ components:
         name:
           type: string
           description: 牌阵名，例如「时间流」。
+        name_en:
+          type: string
+          description: 英文名称。更多牌阵文字稿里的英文名。未填为空字符串。
         description:
           type: string
-          description: 牌阵介绍。未填为空字符串。
+          description: 含义说明。未填为空字符串。
         card_count:
           type: integer
           description: 需要抽取的牌数。
@@ -550,6 +553,10 @@ components:
       properties:
         name:
           type: string
+        name_en:
+          type: string
+          nullable: true
+          description: 英文名称。新建省略为空。更新省略保持原值。
         description:
           type: string
         card_count:
@@ -3170,55 +3177,50 @@ components:
     ExploreTopics:
       type: object
       properties:
-        groups:
+        themes:
           type: array
-          description: 探索分组。无条目时为空数组。
+          description: 探索主题。无条目时为空数组。
           items:
-            $ref: "#/components/schemas/ExploreGroup"
-    ExploreGroup:
+            $ref: "#/components/schemas/ExploreTheme"
+    ExploreTheme:
       type: object
       properties:
-        group_key:
+        theme_key:
           type: string
-          example: now_choice
-          description: 分组键。
+          example: yes_or_no
+          description: 主题键。
         title:
           type: string
-          example: 此刻抉择
-          description: 分组标题。
-        topics:
-          type: array
-          description: 该分组下的主题。
-          items:
-            $ref: "#/components/schemas/ExploreTopic"
-    ExploreTopic:
-      type: object
-      properties:
-        topic_id:
-          type: string
-          description: 主题 id，开局时可带入占卜。
-        title:
-          type: string
+          example: Yes or No
           description: 主题标题。
         subtitle:
           type: string
-          description: 主题副标题。未填为空。
-        illustration:
+          example: 听听此刻的倾向
+          description: 主题副标题。
+        spreads:
+          type: array
+          description: 该主题下的牌阵。
+          items:
+            $ref: "#/components/schemas/ExploreThemeSpread"
+    ExploreThemeSpread:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 牌阵 id。创建探索占卜后用它选阵。
+        name:
           type: string
-          nullable: true
-          description: 配图 URL。未配置为 null。
-        spread:
-          type: object
-          description: 推荐牌阵。无映射时 stub=true。
-          properties:
-            spread_id:
-              type: integer
-              format: int64
-              nullable: true
-              description: 映射的牌阵 id。无映射为 null。
-            stub:
-              type: boolean
-              description: 无牌阵映射时为 true。
+          description: 牌阵名称。
+        card_count:
+          type: integer
+          description: 抽牌张数。
+        short_sentence:
+          type: string
+          description: 牌阵短句。
+        description:
+          type: string
+          description: 含义说明。额度未标价，不在此返回。
     RedeemBody:
       type: object
       additionalProperties: false
@@ -3990,7 +3992,7 @@ components:
           description: 该分类是否已有条目。
         empty_note:
           type: string
-          description: 会员与支付为「这一类的问题还在整理，条目待确认。」其余为空字符串。
+          description: 分类下还没有条目、且 articles_status=pending 时展示这段说明。当前两类都是 ready，此项为空。
     HelpArticleList:
       type: object
       properties:
@@ -5834,10 +5836,10 @@ paths:
       tags: [探索]
       operationId: appExploreTopics
       summary: 探索目录
-      description: 返回分组（此刻抉择 / 主题占卜）及条目。illustration 可空。spread.spread_id 可空，stub=true 表示映射未定。公开，不需要登录或匿名令牌。
+      description: 返回 11 个探索主题，每个主题下是该主题的牌阵。公开，不需要登录或匿名令牌。普通占卜的 19 套不在这里，走 GET /spreads。
       responses:
         "200":
-          description: data.groups 非空。
+          description: data.themes 为探索主题列表。
           content:
             application/json:
               schema:
@@ -6338,8 +6340,7 @@ paths:
       operationId: appHelpCategories
       summary: 帮助中心分类
       description: |
-        公开，不需要登录或匿名令牌。固定三类：使用与占卜、会员与支付、账号与设置。
-        会员与支付 articles_status=pending，empty_note 为「这一类的问题还在整理，条目待确认。」
+        公开，不需要登录或匿名令牌。当前两类：使用与占卜、账号与设置，articles_status=ready。
       responses:
         "200":
           description: data 为 HelpCategoryList。
@@ -6360,7 +6361,7 @@ paths:
       description: |
         公开，不需要登录或匿名令牌。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
         搜索无结果时 empty_title=暂时没有找到相关问题，empty_hint=换个关键词，或向我们反馈。
-        未搜索且分类没有条目时，category_note 使用该分类 empty_note（会员与支付为条目待确认）。
+        未搜索且分类 articles_status=pending 时，category_note 使用该分类 empty_note。
         列表不含正文。未知分类 message=问题分类不正确。
       parameters:
         - name: category
@@ -6368,7 +6369,7 @@ paths:
           required: false
           schema:
             type: string
-          description: reading、membership_pay、account。
+          description: reading 或 account。
         - name: q
           in: query
           required: false
@@ -6395,7 +6396,7 @@ paths:
       operationId: appHelpArticle
       summary: 帮助文章详情
       description: |
-        公开，不需要登录或匿名令牌。返回标题与正文。使用与占卜、账号与设置 body_status=ready；会员与支付分类仍 pending。
+        公开，不需要登录或匿名令牌。返回标题与正文。当前两类正文 body_status=ready。
         不编写额度、退款或会员规则。反馈入口走已有 POST /api/app/v1/feedback，不在本文返回规则。
         未知 id 的 message=问题不存在。
       parameters:
@@ -7574,7 +7575,7 @@ paths:
       tags: [管理端内容]
       operationId: adminPutCopy
       summary: 保存运营文案
-      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格表（name/thumbnail/description/tags，至少保留一套启用）；help/campaigns 更新已有表；legal 写 app_config 协议正文。
+      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格表（name/thumbnail/description/tags，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表；legal 写 app_config 协议正文。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind

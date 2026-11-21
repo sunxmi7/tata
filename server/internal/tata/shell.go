@@ -33,54 +33,48 @@ var feedbackCategories = map[string]bool{
 }
 
 func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT topic_id, group_key, group_title, title, subtitle, illustration, spread_id, sort_order
-		FROM explore_topics ORDER BY sort_order, topic_id`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, short_sentence, theme_key, theme_title, theme_subtitle
+		FROM spreads WHERE enabled=true AND theme_key<>'' ORDER BY sort_order, id`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	type group struct {
-		Key    string
-		Title  string
-		Topics []map[string]any
+	type theme struct {
+		Key, Title, Subtitle string
+		Spreads              []map[string]any
 	}
 	order := []string{}
-	groups := map[string]*group{}
+	themes := map[string]*theme{}
 	for rows.Next() {
-		var topicID, groupKey, groupTitle, title, subtitle string
-		var illustration sql.NullString
-		var spreadID sql.NullInt64
-		var sort int
-		if err := rows.Scan(&topicID, &groupKey, &groupTitle, &title, &subtitle, &illustration, &spreadID, &sort); err != nil {
+		var id int64
+		var name, desc, short, key, title, subtitle string
+		var count int
+		if err := rows.Scan(&id, &name, &desc, &count, &short, &key, &title, &subtitle); err != nil {
 			return err
 		}
-		g, ok := groups[groupKey]
+		item, ok := themes[key]
 		if !ok {
-			g = &group{Key: groupKey, Title: groupTitle, Topics: []map[string]any{}}
-			groups[groupKey] = g
-			order = append(order, groupKey)
+			item = &theme{Key: key, Title: title, Subtitle: subtitle, Spreads: []map[string]any{}}
+			themes[key] = item
+			order = append(order, key)
 		}
-		item := map[string]any{
-			"topic_id": topicID, "title": title, "subtitle": subtitle,
-			"illustration": nullString(illustration),
-			"spread": map[string]any{
-				"spread_id": nullInt(spreadID),
-				"stub":      !spreadID.Valid,
-			},
-		}
-		g.Topics = append(g.Topics, item)
+		item.Spreads = append(item.Spreads, map[string]any{
+			"id": id, "name": T(r.Context(), name), "card_count": count,
+			"short_sentence": T(r.Context(), short), "description": T(r.Context(), desc),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	out := make([]map[string]any, 0, len(order))
 	for _, key := range order {
-		g := groups[key]
+		item := themes[key]
 		out = append(out, map[string]any{
-			"group_key": g.Key, "title": g.Title, "topics": g.Topics,
+			"theme_key": item.Key, "title": T(r.Context(), item.Title), "subtitle": T(r.Context(), item.Subtitle),
+			"spreads": item.Spreads,
 		})
 	}
-	writeOK(w, map[string]any{"groups": out})
+	writeOK(w, map[string]any{"themes": out})
 	return nil
 }
 

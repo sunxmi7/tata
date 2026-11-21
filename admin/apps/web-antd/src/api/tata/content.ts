@@ -3,6 +3,7 @@ import { requestClient } from '#/api/request';
 export interface Spread {
   id: number;
   name: string;
+  name_en?: string;
   description: string;
   card_count: number;
   positions: Array<{ index: number; name: string; meaning: string }>;
@@ -11,6 +12,10 @@ export interface Spread {
   recommended?: boolean;
   thumbnail?: string | null;
   preview?: string;
+  theme_key?: string;
+  theme_title?: string;
+  theme_subtitle?: string;
+  short_sentence?: string;
   depth_group?: string;
   depth_label?: string;
   quota_cost?: number | null;
@@ -138,4 +143,10 @@ export function getCopy(kind: string, year?: number) {
 }
 export function updateCopy(kind: string, data: Record<string, unknown>) {
   return requestClient.put<Record<string, unknown>>(`/copy/${kind}`, data);
+}
+export function createCopy(kind: string, data: Record<string, unknown>) {
+  return requestClient.post<Record<string, unknown>>(`/copy/${kind}`, data);
+}
+export function deleteCopy(kind: string, id: string) {
+  return requestClient.delete<Record<string, unknown>>(`/copy/${kind}/${id}`);
 }

@@ -364,9 +364,9 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended, thumbnail,
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, name_en, description, card_count, positions, charged, recommended, thumbnail,
 		theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost
-		FROM spreads WHERE enabled=true ORDER BY recommended DESC, sort_order, id`)
+		FROM spreads WHERE enabled=true AND theme_key='' ORDER BY recommended DESC, sort_order, id`)
 	if err != nil {
 		return err
 	}
@@ -374,15 +374,15 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
+		var name, nameEN, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
 		var count int
 		var charged, recommended bool
 		var quota sql.NullInt64
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota); err != nil {
+		if err := rows.Scan(&id, &name, &nameEN, &desc, &count, &pos, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
-			"id": id, "name": T(r.Context(), name), "description": T(r.Context(), desc), "card_count": count,
+			"id": id, "name": T(r.Context(), name), "name_en": nameEN, "description": T(r.Context(), desc), "card_count": count,
 			"positions": localizeJSONFields(r.Context(), json.RawMessage(pos), "name", "meaning"),
 			"charged":   charged, "recommended": recommended, "thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
 			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub,

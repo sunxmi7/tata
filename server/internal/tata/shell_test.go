@@ -49,28 +49,28 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	}
 
 	topics := listOne(t, ts, token, "/api/app/v1/explore/topics")
-	groups, _ := topics["groups"].([]any)
-	if len(groups) < 2 {
-		t.Fatalf("topics groups: %#v", topics)
+	themes, _ := topics["themes"].([]any)
+	if len(themes) != 11 {
+		t.Fatalf("explore themes: %#v", topics)
 	}
+	spreadCount := 0
 	titles := map[string]int{}
-	topicCount := 0
-	for _, raw := range groups {
-		g := raw.(map[string]any)
-		title, _ := g["title"].(string)
-		items, _ := g["topics"].([]any)
+	for _, raw := range themes {
+		theme := raw.(map[string]any)
+		title, _ := theme["title"].(string)
+		items, _ := theme["spreads"].([]any)
 		titles[title] = len(items)
-		topicCount += len(items)
-		if len(items) == 0 {
-			t.Fatalf("empty group %s: %#v", title, g)
+		spreadCount += len(items)
+		if theme["theme_key"] == "" || theme["subtitle"] == "" || len(items) == 0 {
+			t.Fatalf("theme fields: %#v", theme)
 		}
 		first := items[0].(map[string]any)
-		if first["topic_id"] == "" || first["title"] == "" {
-			t.Fatalf("topic fields: %#v", first)
+		if first["id"] == nil || first["name"] == "" || first["short_sentence"] == "" || first["card_count"] == nil {
+			t.Fatalf("spread fields: %#v", first)
 		}
 	}
-	if titles["此刻抉择"] == 0 || titles["主题占卜"] == 0 || topicCount < 3 {
-		t.Fatalf("expected explore catalog, got %#v", titles)
+	if titles["Yes or No"] != 1 || titles["关系走向"] != 3 || titles["内心需求"] != 2 || spreadCount != 22 {
+		t.Fatalf("explore catalog: %#v count=%d", titles, spreadCount)
 	}
 
 	ledger := listOne(t, ts, token, "/api/app/v1/wallet/ledger")
