@@ -23,6 +23,8 @@ const [FormModal, formModalApi] = useVbenModal({
 const columns = [
   { title: '名称', dataIndex: 'name' },
   { title: '牌数', dataIndex: 'card_count' },
+  { title: '分组', dataIndex: 'depth_label' },
+  { title: '额度扣次', dataIndex: 'quota_cost' },
   { title: '示意图', dataIndex: 'preview', width: 88 },
   { title: '启用', dataIndex: 'enabled' },
   { title: '推荐', dataIndex: 'recommended' },
@@ -50,7 +52,10 @@ onMounted(load);
 </script>
 
 <template>
-  <Page description="牌阵配置。没有价格字段。" title="牌阵">
+  <Page
+    description="普通占卜扣次是额度次数，不是会员售价、补充包、年运或牌组价格。未标价留空。旧收费开关不表示这个扣次。"
+    title="牌阵"
+  >
     <template #extra>
       <Button v-if="canWrite()" type="primary" @click="onCreate">
         <Plus class="size-5" />
@@ -70,6 +75,12 @@ onMounted(load);
         </template>
         <template v-else-if="column.dataIndex === 'recommended'">
           {{ record.recommended ? '是' : '否' }}
+        </template>
+        <template v-else-if="column.dataIndex === 'depth_label'">
+          {{ record.depth_label || '—' }}
+        </template>
+        <template v-else-if="column.dataIndex === 'quota_cost'">
+          {{ record.quota_priced ? record.quota_cost : '未标价' }}
         </template>
         <template v-else-if="column.dataIndex === 'charged'">
           {{ record.charged ? '是' : '否' }}

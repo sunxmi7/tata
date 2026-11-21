@@ -32,7 +32,7 @@ import (
 //  - onboard_trial: one per device, consumed when interpretation is shown after login
 //  - ai_trial: one per account, play only, no follow-up
 //
-// quota_settings.diamond_cost is the member quota cost per charge. NULL means
+// quota_settings.quota_cost is the member quota cost per charge. NULL means
 // do not invent an amount.
 
 const (
@@ -41,8 +41,8 @@ const (
 	entReward    = "registration_reward" // kept for old rows; no longer granted
 	entDaily     = "daily_free"
 	entInvite    = "invite_reward"
-	entPack      = "diamond_pack"         // historical
-	entSub       = "diamond_subscription" // historical
+	entPack      = "quota_pack"         // historical
+	entSub       = "quota_subscription" // historical
 	entQuota     = "member_quota"
 	entTrial     = "ai_trial"
 	entOnboard   = "onboard_trial"
@@ -51,7 +51,7 @@ const (
 	quotaCharged   = "charged"
 	quotaAlready   = "already"
 	quotaPaywall   = "paywall"
-	quotaUnconfig  = "diamond_cost_unconfigured"
+	quotaUnconfig  = "quota_cost_unconfigured"
 	quotaAnon      = "anonymous"
 	quotaDeferred  = "deferred"
 	quotaCancelled = "cancelled"
@@ -71,10 +71,10 @@ const (
 	quotaClosedNote = "已按优先级处理：今日免费次数，邀请奖励次数，人工补发免费次数；会员扣统一额度"
 	wechatQuotaNote = "提问时按当前身份扣每日免费、邀请次数或会员额度"
 
-	paywallNeedMember = "请开通会员后继续"
-	paywallNeedQuota  = "额度不足，请购买额度补充包后自动继续；取消则保留记录且不继续生成"
-	paywallNeedLogin  = "登录后才能查看解读"
-	paywallFreeDone   = "今日免费次数已用完，请开通会员后继续"
+	paywallNeedMember  = "请开通会员后继续"
+	paywallNeedQuota   = "额度不足，请购买额度补充包后自动继续；取消则保留记录且不继续生成"
+	paywallNeedLogin   = "登录后才能查看解读"
+	paywallFreeDone    = "今日免费次数已用完，请开通会员后继续"
 	paywallUnconfigMsg = "会员额度单价未配置，本次未扣额度，记录已保留"
 )
 
@@ -226,7 +226,7 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 }
 
 func chargeMemberQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecision, error) {
-	cost, configured, err := loadDiamondCost(ctx, tx)
+	cost, configured, err := loadQuotaCost(ctx, tx)
 	if err != nil {
 		return quotaDecision{}, err
 	}
@@ -438,21 +438,21 @@ func spendQuota(ctx context.Context, tx Tx, uid int64, cost int) (after int, ok 
 	if cost <= 0 {
 		return 0, false, nil
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO quota_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
 		return 0, false, err
 	}
 	var bal int
-	if err = tx.QueryRow(ctx, `SELECT quota_balance FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&bal); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT quota_balance FROM quota_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&bal); err != nil {
 		return 0, false, err
 	}
 	if bal < cost {
 		return 0, false, nil
 	}
 	after = bal - cost
-	if _, err = tx.Exec(ctx, `UPDATE diamond_balances SET quota_balance=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE quota_balances SET quota_balance=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
 		return 0, false, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, store_transaction_id, reason)
+	if _, err = tx.Exec(ctx, `INSERT INTO quota_ledger(user_id, bucket, delta, balance_after, store_transaction_id, reason)
 		VALUES ($1,$2,$3,$4,'','quota_spend')`, uid, iapBucketQuota, -cost, after); err != nil {
 		return 0, false, err
 	}
@@ -463,38 +463,38 @@ func creditQuota(ctx context.Context, tx Tx, uid int64, amount int, orderID *int
 	if amount <= 0 {
 		return 0, nil
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO quota_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
 		return 0, err
 	}
 	var bal int
-	if err := tx.QueryRow(ctx, `SELECT quota_balance FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&bal); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT quota_balance FROM quota_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&bal); err != nil {
 		return 0, err
 	}
 	after := bal + amount
-	if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET quota_balance=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE quota_balances SET quota_balance=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
 		return 0, err
 	}
 	var oid any
 	if orderID != nil {
 		oid = *orderID
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, order_id, store_transaction_id, reason)
+	_, err := tx.Exec(ctx, `INSERT INTO quota_ledger(user_id, bucket, delta, balance_after, order_id, store_transaction_id, reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`, uid, iapBucketQuota, amount, after, oid, txn, reason)
 	return after, err
 }
 
 func loadQuotaBalance(ctx context.Context, q rowQuery, uid int64) (int, error) {
 	var n int
-	err := q.QueryRow(ctx, `SELECT quota_balance FROM diamond_balances WHERE user_id=$1`, uid).Scan(&n)
+	err := q.QueryRow(ctx, `SELECT quota_balance FROM quota_balances WHERE user_id=$1`, uid).Scan(&n)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return n, err
 }
 
-func loadDiamondCost(ctx context.Context, ex execer) (int, bool, error) {
+func loadQuotaCost(ctx context.Context, ex execer) (int, bool, error) {
 	var cost sql.NullInt64
-	err := ex.QueryRow(ctx, `SELECT diamond_cost FROM quota_settings WHERE id=1`).Scan(&cost)
+	err := ex.QueryRow(ctx, `SELECT quota_cost FROM quota_settings WHERE id=1`).Scan(&cost)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -628,13 +628,13 @@ func writeQuotaBlock(w http.ResponseWriter, r *http.Request, d quotaDecision, re
 		"code":    1,
 		"message": T(ctx, d.Message),
 		"data": map[string]any{
-			"reading_id":                readingID,
-			"quota_outcome":             d.Status,
-			"entitlement":               d.Entitlement,
-			"paywall":                   d.paywall(),
-			"diamond_cost_unconfigured": d.unconfigured(),
-			"kept":                      true,
-			"generated":                 false,
+			"reading_id":              readingID,
+			"quota_outcome":           d.Status,
+			"entitlement":             d.Entitlement,
+			"paywall":                 d.paywall(),
+			"quota_cost_unconfigured": d.unconfigured(),
+			"kept":                    true,
+			"generated":               false,
 		},
 	})
 }

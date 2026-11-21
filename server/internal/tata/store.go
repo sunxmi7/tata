@@ -54,6 +54,9 @@ func Open(ctx context.Context, dsn string, kek []byte) (*Store, error) {
 }
 
 func (s *Store) migrate(ctx context.Context) error {
+	if err := s.renameDiamondSchema(ctx); err != nil {
+		return err
+	}
 	_, err := s.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS operators (
   id BIGSERIAL PRIMARY KEY,
@@ -293,8 +296,8 @@ CREATE TABLE IF NOT EXISTS retained_identities (
 	if err != nil {
 		return err
 	}
-	// IAP diamond ledger. Price and diamond_grant stay NULL until configured.
-	// Subscription diamonds and consumable-pack diamonds are separate buckets.
+	// Paid catalog. Membership, quota packs, yearly unlock, and decks share iap_skus.
+	// Fulfillment stays split across subscriptions, quota_balances, yearly_reports, user_deck_unlocks.
 	_, err = s.Exec(ctx, `
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS sku_id BIGINT;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT '';
@@ -306,25 +309,26 @@ CREATE TABLE IF NOT EXISTS iap_skus (
   id BIGSERIAL PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   kind TEXT NOT NULL,
-  ledger_bucket TEXT NOT NULL,
   display_name TEXT NOT NULL,
   app_store_product_id TEXT,
   play_product_id TEXT,
   price_amount_minor BIGINT,
   price_currency TEXT,
-  diamond_grant INT,
-  reading_grant INT,
+  quota_grant INT,
   period_unit TEXT NOT NULL DEFAULT '',
   period_count INT,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  deck_codes TEXT NOT NULL DEFAULT '[]',
+  covers_future BOOLEAN NOT NULL DEFAULT FALSE,
+  deduct_owned BOOLEAN NOT NULL DEFAULT FALSE,
+  note TEXT NOT NULL DEFAULT '',
+  sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT iap_skus_kind_chk CHECK (kind IN ('month_subscription','year_subscription','reading_pack','consumable_pack','yearly_unlock')),
-  CONSTRAINT iap_skus_bucket_chk CHECK (ledger_bucket IN ('subscription','consumable')),
-  CONSTRAINT iap_skus_bucket_kind_chk CHECK (
-    (kind IN ('month_subscription','year_subscription') AND ledger_bucket = 'subscription')
-    OR (kind IN ('consumable_pack','yearly_unlock','reading_pack') AND ledger_bucket = 'consumable')
-  )
+  CONSTRAINT iap_skus_kind_chk CHECK (kind IN (
+    'month_subscription','year_subscription','quota_pack','yearly_unlock',
+    'deck_year','deck_bundle','deck_single','deck_addon'
+  ))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS iap_skus_app_store_product_id
   ON iap_skus(app_store_product_id) WHERE app_store_product_id IS NOT NULL AND app_store_product_id <> '';
@@ -343,15 +347,13 @@ CREATE TABLE IF NOT EXISTS iap_orders (
   sku_id BIGINT,
   sku_code TEXT NOT NULL DEFAULT '',
   sku_kind TEXT NOT NULL DEFAULT '',
-  ledger_bucket TEXT NOT NULL DEFAULT '',
   platform TEXT NOT NULL,
   product_id TEXT NOT NULL DEFAULT '',
   store_transaction_id TEXT NOT NULL,
   original_transaction_id TEXT NOT NULL DEFAULT '',
   verify_status TEXT NOT NULL,
   credit_status TEXT NOT NULL,
-  credited_diamonds INT,
-  credited_readings INT,
+  credited_quota INT,
   period_start TIMESTAMPTZ,
   period_end TIMESTAMPTZ,
   subscription_id BIGINT,
@@ -368,12 +370,12 @@ CREATE TABLE IF NOT EXISTS iap_orders (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS iap_orders_platform_txn ON iap_orders(platform, store_transaction_id);
 CREATE INDEX IF NOT EXISTS iap_orders_user_idx ON iap_orders(user_id, id DESC);
-CREATE TABLE IF NOT EXISTS diamond_balances (
+CREATE TABLE IF NOT EXISTS quota_balances (
   user_id BIGINT PRIMARY KEY,
   quota_balance INT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS diamond_ledger (
+CREATE TABLE IF NOT EXISTS quota_ledger (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL,
   bucket TEXT NOT NULL,
@@ -383,28 +385,28 @@ CREATE TABLE IF NOT EXISTS diamond_ledger (
   store_transaction_id TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT diamond_ledger_bucket_chk CHECK (bucket = 'quota')
+  CONSTRAINT quota_ledger_bucket_chk CHECK (bucket = 'quota')
 );
-CREATE UNIQUE INDEX IF NOT EXISTS diamond_ledger_order_bucket
-  ON diamond_ledger(order_id, bucket) WHERE order_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS diamond_ledger_user_idx ON diamond_ledger(user_id, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS quota_ledger_order_bucket
+  ON quota_ledger(order_id, bucket) WHERE order_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS quota_ledger_user_idx ON quota_ledger(user_id, id DESC);
 `)
 	if err != nil {
 		return err
 	}
-	// Shared quota. diamond_cost stays NULL until configured — never seed a price or a per-play amount.
+	// Shared quota. quota_cost stays NULL until configured — never seed a price or a per-play amount.
 	// Spend order is not stored here; quota.go always debits pack, then subscription.
 	_, err = s.Exec(ctx, `
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS quota_settled BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS quota_settings (
   id INT PRIMARY KEY,
-  diamond_cost INT,
+  quota_cost INT,
   followup_limit INT DEFAULT 5,
   daily_free_count INT NOT NULL DEFAULT 1,
   daily_slot_count INT NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT quota_settings_singleton CHECK (id = 1),
-  CONSTRAINT quota_settings_cost_chk CHECK (diamond_cost IS NULL OR diamond_cost > 0),
+  CONSTRAINT quota_settings_cost_chk CHECK (quota_cost IS NULL OR quota_cost > 0),
   CONSTRAINT quota_settings_followup_chk CHECK (followup_limit IS NULL OR followup_limit > 0),
   CONSTRAINT quota_settings_daily_free_chk CHECK (daily_free_count > 0),
   CONSTRAINT quota_settings_daily_slot_chk CHECK (daily_slot_count > 0)
@@ -439,12 +441,12 @@ CREATE TABLE IF NOT EXISTS quota_paywall (
 		return err
 	}
 	// Controlled admin grant. This is a new credit, not an edit of ledger rows or IAP orders.
-	// Free counts land on rewards.admin_grant_remaining. Diamonds credit quota_balance.
+	// Free counts land on rewards.admin_grant_remaining. Quota credit quota_balance.
 	_, err = s.Exec(ctx, `
 ALTER TABLE rewards ADD COLUMN IF NOT EXISTS admin_grant_remaining INT NOT NULL DEFAULT 0;
 ALTER TABLE ledger ALTER COLUMN reading_id DROP NOT NULL;
 ALTER TABLE ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
-ALTER TABLE diamond_ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
+ALTER TABLE quota_ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
 CREATE TABLE IF NOT EXISTS admin_grants (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -455,12 +457,12 @@ CREATE TABLE IF NOT EXISTS admin_grants (
   ledger_bucket TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL,
   note TEXT NOT NULL,
-  diamond_ledger_id BIGINT,
+  quota_ledger_id BIGINT,
   count_ledger_id BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT admin_grants_kind_chk CHECK (kind IN ('diamonds','free_count')),
+  CONSTRAINT admin_grants_kind_chk CHECK (kind IN ('quota','free_count')),
   CONSTRAINT admin_grants_bucket_chk CHECK (
-    (kind = 'diamonds' AND bucket IN ('pack','subscription'))
+    (kind = 'quota' AND bucket IN ('pack','subscription'))
     OR (kind = 'free_count' AND bucket = '')
   ),
   CONSTRAINT admin_grants_reason_chk CHECK (reason = 'admin_grant'),
@@ -499,14 +501,14 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT redeem_codes_kind_chk CHECK (kind IN ('diamonds','free_count')),
+  CONSTRAINT redeem_codes_kind_chk CHECK (kind IN ('quota','free_count')),
   CONSTRAINT redeem_codes_amount_chk CHECK (amount > 0)
 );
 CREATE TABLE IF NOT EXISTS redeem_redemptions (
   id BIGSERIAL PRIMARY KEY,
   code_id BIGINT NOT NULL REFERENCES redeem_codes(id),
   user_id BIGINT NOT NULL,
-  diamond_ledger_id BIGINT,
+  quota_ledger_id BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (code_id, user_id)
 );
@@ -644,8 +646,6 @@ ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
 ALTER TABLE yearly_reports DROP CONSTRAINT IF EXISTS yearly_reports_report_status_chk;
 ALTER TABLE yearly_reports ADD CONSTRAINT yearly_reports_report_status_chk
   CHECK (report_status IN ('pending','generating','ready','failed'));
-ALTER TABLE iap_skus ADD COLUMN IF NOT EXISTS reading_grant INT;
-ALTER TABLE iap_orders ADD COLUMN IF NOT EXISTS credited_readings INT;
 ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS followup_limit INT DEFAULT 5;
 ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_followup_chk;
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_followup_chk
@@ -660,13 +660,8 @@ ALTER TABLE quota_use DROP CONSTRAINT IF EXISTS quota_use_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS quota_use_reading_uidx ON quota_use(reading_id);
 CREATE INDEX IF NOT EXISTS quota_use_user_cycle_idx ON quota_use(user_id, cycle);
 ALTER TABLE iap_skus DROP CONSTRAINT IF EXISTS iap_skus_kind_chk;
+ALTER TABLE iap_skus DROP CONSTRAINT IF EXISTS iap_skus_bucket_chk;
 ALTER TABLE iap_skus DROP CONSTRAINT IF EXISTS iap_skus_bucket_kind_chk;
-ALTER TABLE iap_skus ADD CONSTRAINT iap_skus_kind_chk
-  CHECK (kind IN ('month_subscription','year_subscription','reading_pack','consumable_pack','yearly_unlock'));
-ALTER TABLE iap_skus ADD CONSTRAINT iap_skus_bucket_kind_chk CHECK (
-  (kind IN ('month_subscription','year_subscription') AND ledger_bucket = 'subscription')
-  OR (kind IN ('consumable_pack','yearly_unlock','reading_pack') AND ledger_bucket = 'consumable')
-);
 DROP TABLE IF EXISTS daily_slot;
 DROP TABLE IF EXISTS paid_pools;
 ALTER TABLE iap_skus ADD COLUMN IF NOT EXISTS copy TEXT NOT NULL DEFAULT '';
@@ -688,6 +683,31 @@ CREATE TABLE IF NOT EXISTS decks (
 );
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
+ALTER TABLE decks ADD COLUMN IF NOT EXISTS unlock_required BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS deck_products (
+  code TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  price_amount_minor INT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  deck_codes TEXT NOT NULL DEFAULT '[]',
+  covers_future BOOLEAN NOT NULL DEFAULT FALSE,
+  deduct_owned BOOLEAN NOT NULL DEFAULT FALSE,
+  note TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT deck_products_kind_chk CHECK (kind IN ('deck_year','deck_bundle','deck_single','deck_addon'))
+);
+CREATE TABLE IF NOT EXISTS user_deck_unlocks (
+  user_id BIGINT NOT NULL,
+  deck_code TEXT NOT NULL,
+  source TEXT NOT NULL,
+  product_code TEXT NOT NULL DEFAULT '',
+  ends_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, deck_code)
+);
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS recommended BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS thumbnail TEXT NOT NULL DEFAULT '';
 INSERT INTO decks(code, name, enabled, sort_order) VALUES ('rider-waite', '莱德韦特', true, 0)
@@ -708,6 +728,10 @@ CREATE TABLE IF NOT EXISTS cards (
   sort_order INT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS upright_message TEXT NOT NULL DEFAULT '';
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS upright_yi TEXT NOT NULL DEFAULT '';
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS reversed_message TEXT NOT NULL DEFAULT '';
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS reversed_yi TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS ai_jobs (
   id BIGSERIAL PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -748,6 +772,9 @@ ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_title TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS theme_subtitle TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS short_sentence TEXT NOT NULL DEFAULT '';
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS depth_group TEXT NOT NULL DEFAULT '';
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 1000;
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS quota_cost INT;
 CREATE TABLE IF NOT EXISTS invite_rewards (
   id BIGSERIAL PRIMARY KEY,
   inviter_id BIGINT NOT NULL,
@@ -779,14 +806,14 @@ CREATE TABLE IF NOT EXISTS custom_deck_faces (
   PRIMARY KEY (deck_id, card_id),
   CONSTRAINT custom_deck_faces_card_chk CHECK (card_id >= 0 AND card_id < 78)
 );
-ALTER TABLE diamond_balances ADD COLUMN IF NOT EXISTS quota_balance INT NOT NULL DEFAULT 0;
+ALTER TABLE quota_balances ADD COLUMN IF NOT EXISTS quota_balance INT NOT NULL DEFAULT 0;
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'diamond_balances' AND column_name = 'pack_diamonds'
+    WHERE table_schema = 'public' AND table_name = 'quota_balances' AND column_name = 'pack_diamonds'
   ) THEN
-    UPDATE diamond_balances
+    UPDATE quota_balances
        SET quota_balance = pack_diamonds + subscription_diamonds
      WHERE quota_balance = 0 AND (pack_diamonds > 0 OR subscription_diamonds > 0);
   END IF;
@@ -794,13 +821,13 @@ END $$;
 DO $$
 DECLARE def text;
 BEGIN
-  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'diamond_ledger_bucket_chk';
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'quota_ledger_bucket_chk';
   IF def IS NULL THEN
-    ALTER TABLE diamond_ledger ADD CONSTRAINT diamond_ledger_bucket_chk
+    ALTER TABLE quota_ledger ADD CONSTRAINT quota_ledger_bucket_chk
       CHECK (bucket IN ('subscription','consumable','quota'));
   ELSIF position('quota' in def) = 0 THEN
-    ALTER TABLE diamond_ledger DROP CONSTRAINT diamond_ledger_bucket_chk;
-    ALTER TABLE diamond_ledger ADD CONSTRAINT diamond_ledger_bucket_chk
+    ALTER TABLE quota_ledger DROP CONSTRAINT quota_ledger_bucket_chk;
+    ALTER TABLE quota_ledger ADD CONSTRAINT quota_ledger_bucket_chk
       CHECK (bucket IN ('subscription','consumable','quota'));
   END IF;
 END $$;
@@ -816,12 +843,17 @@ CREATE TABLE IF NOT EXISTS device_experiences (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS device_experiences_anon_idx ON device_experiences(anonymous_id);
+ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS guide_completed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
+ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
+ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS explore_preferences TEXT NOT NULL DEFAULT '[]';
+UPDATE device_experiences SET guide_completed=TRUE WHERE consumed=TRUE AND guide_completed=FALSE;
 CREATE TABLE IF NOT EXISTS anon_devices (
   anonymous_id TEXT PRIMARY KEY,
   device_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE kind='consumable_pack';
+DELETE FROM iap_skus WHERE kind='consumable_pack';
 UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE code='sub_times';
 DO $$
 DECLARE def text;
@@ -829,19 +861,22 @@ BEGIN
   SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'admin_grants_bucket_chk';
   IF def IS NULL THEN
     ALTER TABLE admin_grants ADD CONSTRAINT admin_grants_bucket_chk CHECK (
-      (kind = 'diamonds' AND bucket IN ('pack','subscription','quota'))
+      (kind = 'quota' AND bucket IN ('pack','subscription','quota'))
       OR (kind = 'free_count' AND bucket = '')
     );
   ELSIF position('quota' in def) = 0 THEN
     ALTER TABLE admin_grants DROP CONSTRAINT admin_grants_bucket_chk;
     ALTER TABLE admin_grants ADD CONSTRAINT admin_grants_bucket_chk CHECK (
-      (kind = 'diamonds' AND bucket IN ('pack','subscription','quota'))
+      (kind = 'quota' AND bucket IN ('pack','subscription','quota'))
       OR (kind = 'free_count' AND bucket = '')
     );
   END IF;
 END $$;
 `)
 	if err != nil {
+		return err
+	}
+	if err := s.unifyPaymentCatalog(ctx); err != nil {
 		return err
 	}
 	return s.commentSchema(ctx)
@@ -874,6 +909,9 @@ COMMENT ON COLUMN spreads.theme_key IS '探索牌阵主题键，如 yes_or_no。
 COMMENT ON COLUMN spreads.theme_title IS '探索牌阵主题标题。';
 COMMENT ON COLUMN spreads.theme_subtitle IS '探索牌阵主题副标题。';
 COMMENT ON COLUMN spreads.short_sentence IS '牌阵短句，对应文字总结版。';
+COMMENT ON COLUMN spreads.depth_group IS '普通占卜分组：quick 快速指引、advanced 进阶分析、panorama 深度全景。空则不是更多牌阵这 19 套。不是免费白名单。';
+COMMENT ON COLUMN spreads.quota_cost IS '普通占卜扣次，单位是额度次数。NULL 表示这套未标价。不是人民币，不是塔塔币。结算尚未读取。';
+COMMENT ON COLUMN spreads.sort_order IS '更多牌阵里的顺序。默认 1000，排在已编号的 19 套后面。';
 COMMENT ON TABLE invite_rewards IS '好友邀请到账。邀请人 public_id 为邀请码；被邀请人只能绑定一次；每人数 +3 写入 rewards.invite_remaining，最多 5 人。';
 COMMENT ON TABLE custom_decks IS '用户自定义牌组。face_source/back_source 为 upload 或官方 decks.code。';
 COMMENT ON TABLE custom_deck_faces IS '自定义牌组已上传的牌面。card_id 对应韦特 0–77。';
@@ -910,12 +948,11 @@ COMMENT ON COLUMN yearly_reports.domain_cards IS '四季 4 张 JSON（春夏秋�
 COMMENT ON COLUMN yearly_reports.report IS '模型生成的年度报告正文。未生成前为空，不编造。';
 COMMENT ON COLUMN yearly_reports.report_status IS 'pending / generating / ready / failed。';
 
-COMMENT ON TABLE iap_skus IS '内购价位：会员月/年卡、额度补充包、年运解锁。塔塔币 consumable_pack 已停用。管理员改过的价与商品号 COALESCE 保留。';
-COMMENT ON COLUMN iap_skus.kind IS 'month_subscription 月卡；year_subscription 年卡；reading_pack 额度补充包；consumable_pack 已下线塔塔币；yearly_unlock 年运解锁。';
-COMMENT ON COLUMN iap_skus.ledger_bucket IS 'subscription=订阅身份；consumable=额度补充包/年运。会员额度记在 diamond_balances.quota_balance。';
-COMMENT ON COLUMN iap_skus.price_amount_minor IS '价格，单位分。补充包种子 20/60/100 元；入账额度 reading_grant 未配置为 null，不编造次数。';
-COMMENT ON COLUMN iap_skus.diamond_grant IS '历史列。塔塔币已下线；订阅发放额度未配置为 null。';
-COMMENT ON COLUMN iap_skus.reading_grant IS '额度补充包入账到 quota_balance。未配置验单 credit_status=amount_unconfigured。';
+COMMENT ON TABLE iap_skus IS '付费商品目录。会员、额度补充包、年运单买、牌组共用这一张表，用 kind 区分。到账不在这张表。';
+COMMENT ON COLUMN iap_skus.kind IS 'month_subscription 月卡；year_subscription 年卡；quota_pack 额度补充包；yearly_unlock 年运单买；deck_year/deck_bundle/deck_single/deck_addon 牌组。';
+COMMENT ON COLUMN iap_skus.price_amount_minor IS '价格，单位分。测试数据取设计图：月卡 3900、年卡 19800、补充包 2000/6000/10000、年运 2880、牌组 9800/1200/660/300。';
+COMMENT ON COLUMN iap_skus.quota_grant IS '入账额度，进 quota_balance。补充包测试数据 50/160/300。会员开通赠送图上没有总数，为 null。年运和牌组必须为 null。';
+COMMENT ON COLUMN iap_skus.deck_codes IS '牌组商品包含的牌组编码 JSON。年度畅享验单写成 *。';
 COMMENT ON COLUMN iap_skus.period_unit IS '月卡 month、年卡 year；其余空。';
 COMMENT ON COLUMN iap_skus.code IS '稳定编码。种子：sub_month/sub_year，pack_quota_20/60/100，unlock_yearly。';
 COMMENT ON COLUMN iap_skus.app_store_product_id IS 'App Store 商品 ID。验单按票据 product_id 映射本列。种子为占位编码，上架前换成 App Store Connect 正式 ID。';
@@ -923,23 +960,22 @@ COMMENT ON COLUMN iap_skus.app_store_product_id IS 'App Store 商品 ID。验单
 COMMENT ON TABLE iap_settings IS 'IAP 开关单行表 id=1。restore_hook_enabled 控制恢复购买。';
 COMMENT ON TABLE iap_orders IS '本地验单订单。不请求苹果/谷歌，只按 product_id 映射 iap_skus。对应 POST /iap/verify、/iap/restore。';
 COMMENT ON COLUMN iap_orders.sku_kind IS '下单时拷贝的 iap_skus.kind。';
-COMMENT ON COLUMN iap_orders.credited_diamonds IS '本次入账额度。未配置或非额度商品为 null。';
-COMMENT ON COLUMN iap_orders.credited_readings IS '额度补充包本次入账。未配置或非补充包为 null。';
+COMMENT ON COLUMN iap_orders.credited_quota IS '本次入账额度。年运、牌组、未配置额度为 null。';
 COMMENT ON COLUMN iap_orders.credit_status IS 'none/credited/amount_unconfigured/skipped_expired。';
 
 COMMENT ON TABLE subscriptions IS '商店订阅有效期。sku_kind 这里是 month/year（与 iap_skus.kind 不同）。年卡有效则年运免费解锁。';
 COMMENT ON COLUMN subscriptions.sku_kind IS 'month 或 year，由 month_subscription/year_subscription 推导。';
 
-COMMENT ON TABLE diamond_balances IS '会员统一额度。只保留 quota_balance。塔塔币分账列由 docs/sql/drop_tata_coin_2026-11-17.sql 删除。';
-COMMENT ON TABLE diamond_ledger IS '统一额度流水。新写入 bucket=quota。历史 subscription/consumable 由 drop SQL 回写。';
-COMMENT ON COLUMN diamond_balances.quota_balance IS '会员统一额度。补充包与后台补发入账；仅有效会员可扣。到期后余额保留但不可用。';
+COMMENT ON TABLE quota_balances IS '会员统一额度。只保留 quota_balance。塔塔币分账列由 docs/sql/drop_tata_coin_2026-11-17.sql 删除。';
+COMMENT ON TABLE quota_ledger IS '统一额度流水。新写入 bucket=quota。历史 subscription/consumable 由 drop SQL 回写。';
+COMMENT ON COLUMN quota_balances.quota_balance IS '会员统一额度。补充包与后台补发入账；仅有效会员可扣。到期后余额保留但不可用。';
 
 COMMENT ON TABLE rewards IS '免费次数账本。invite_remaining=邀请奖励；admin_grant_remaining=后台补发/兑换码。remaining 注册奖励已下线。';
 COMMENT ON COLUMN rewards.remaining IS '历史注册奖励，扣费不再读取。';
 COMMENT ON COLUMN rewards.admin_grant_remaining IS '管理端补发、兑换码 free_count。免费用户在邀请次数之后可扣。';
 COMMENT ON COLUMN rewards.invite_remaining IS '邀请奖励次数。不过日清，最多 15。与每日免费分开记账。';
 
-COMMENT ON TABLE quota_settings IS '计费参数。id=1。diamond_cost 现为会员单次额度消耗，未配置为 null 不猜测。daily_free_count 默认 1。';
+COMMENT ON TABLE quota_settings IS '计费参数。id=1。quota_cost 现为会员单次额度消耗，未配置为 null 不猜测。daily_free_count 默认 1。';
 COMMENT ON COLUMN quota_settings.followup_limit IS '每条解读追问上限。管理端 PUT /quota-params 可改；null 不限制。种子默认 5（设计稿）。';
 COMMENT ON COLUMN quota_settings.daily_free_count IS '每个业务日的共用免费次数。管理端可改，默认 1。';
 COMMENT ON COLUMN quota_settings.daily_slot_count IS '每个业务日可抽今日一牌（含明日运势）的次数。管理端可改，默认 1。';
@@ -951,10 +987,10 @@ COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume�
 COMMENT ON TABLE quota_use IS '每日免费占用（同一 reading 唯一）。条数受 quota_settings.daily_free_count 限制。并账后写入 daily_free_*。';
 COMMENT ON TABLE daily_free_balance IS '并账后的每日免费余额快照。';
 COMMENT ON TABLE daily_free_uses IS '并账后每日免费消耗明细。';
-COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 额度记在 diamond_ledger。';
+COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 额度记在 quota_ledger。';
 
-COMMENT ON TABLE admin_grants IS '管理端人工补发。kind=diamonds 入 quota_balance；free_count 入 rewards.admin_grant_remaining。';
-COMMENT ON TABLE redeem_codes IS '兑换码。kind=diamonds 入额度，free_count 入免费次数。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
+COMMENT ON TABLE admin_grants IS '管理端人工补发。kind=quota 入 quota_balance；free_count 入 rewards.admin_grant_remaining。';
+COMMENT ON TABLE redeem_codes IS '兑换码。kind=quota 入额度，free_count 入免费次数。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
 COMMENT ON TABLE redeem_redemptions IS '兑换码核销记录。对应 GET /redeem/records。';
 
 COMMENT ON TABLE notification_preferences IS '通知三开关。今日/明日抽牌走本地通知；messages_enabled 控制优惠/活动推送。对应 /notification-preferences。';
@@ -968,9 +1004,15 @@ COMMENT ON COLUMN iap_skus.copy IS '价位附带运营文案。年卡用于专�
 COMMENT ON TABLE app_config IS '无独立表的运营配置。key 如 yearly.2026.theme、card.thumbnail_template（{id}/{name}）、card.thumbnail_default。单牌名/宜/图在 cards 表。缩略图都未配时 App 返回内置 /uploads/card-default.png。对应 GET/PUT /copy/{kind}。';
 COMMENT ON TABLE cards IS '单牌目录。种子 78 张 Rider-Waite（id 0-77，愚者=0）。管理端 GET/POST /cards、PUT /cards/{id}；App 读缩略图/宜/多语言名。抽牌仍按 deck() 0-77。';
 COMMENT ON COLUMN cards.name IS '简体中文牌名，抽牌 JSON 与 i18n msgid 的稳定键。创建后不可改。';
-COMMENT ON COLUMN cards.yi IS '今日一牌「宜」。空则 App 返回 null。';
+COMMENT ON COLUMN cards.yi IS '今日一牌正位「宜」的运营覆盖。空则用 upright_yi。';
+COMMENT ON COLUMN cards.upright_message IS '今日一牌正位寄语。来源 Pixso 1034:624。';
+COMMENT ON COLUMN cards.upright_yi IS '今日一牌正位今日宜，四条用 / 连接。';
+COMMENT ON COLUMN cards.reversed_message IS '今日一牌逆位寄语。来源 Pixso 1034:624。';
+COMMENT ON COLUMN cards.reversed_yi IS '今日一牌逆位今日宜，四条用 / 连接。';
 COMMENT ON COLUMN cards.thumbnail IS '单牌图 URL。空则走模板/默认图/内置牌背。';
-COMMENT ON TABLE decks IS '牌组风格。种子仅 rider-waite / 莱德韦特。预览图空则用内置默认牌背。介绍/标签空则 App 返回空串与空数组，不编造。管理端 PUT /copy/decks，App GET/PUT /deck-preference。';
+COMMENT ON TABLE decks IS '牌组风格。莱德韦特默认可切换。星辰之境等四套 unlock_required。售价在 iap_skus 的 deck_* 行。';
+COMMENT ON TABLE user_deck_unlocks IS '牌组解锁。deck_code=* 表示年度畅享，覆盖当前和以后需解锁的牌组。不写额度流水。';
+COMMENT ON COLUMN decks.unlock_required IS '为 true 时，未解锁用户不能把它设为当前牌组。';
 COMMENT ON COLUMN decks.description IS '套装一句介绍。对应定稿 693:39。空为未填。';
 COMMENT ON COLUMN decks.tags IS '套装标签 JSON 数组。空为未填。';
 COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist。';
@@ -1018,6 +1060,12 @@ func (s *Store) seed(ctx context.Context) error {
 		if _, err := s.Exec(ctx, `UPDATE spreads SET recommended=true WHERE name='时间流'`); err != nil {
 			return err
 		}
+	}
+	if err := s.seedOrdinarySpreads(ctx); err != nil {
+		return err
+	}
+	if err := s.seedDeckShop(ctx); err != nil {
+		return err
 	}
 	personas := []struct{ name, persona, copy, voice, banned, ask string }{
 		{"知晚", "先接住情绪，再讲牌。可以指出问题，但不羞辱。", "温和、慢一点", "语速偏慢，保留可能和倾向", "不说你活该", "先问感受，再问事实"},
@@ -1205,35 +1253,35 @@ func (s *Store) seedTarotistPublic(ctx context.Context) error {
 // and App Store IDs are kept (COALESCE). Apple IDs are placeholders until Connect.
 func (s *Store) seedIAP(ctx context.Context) error {
 	type sku struct {
-		code, kind, bucket, name, period, apple string
-		price                                   int64
-		grant, readings, periodCount            any
+		code, kind, name, period, apple string
+		price                           int64
+		grant, periodCount              any
 	}
 	slots := []sku{
-		{"sub_month", "month_subscription", "subscription", "月卡", "month", "tata.membership.month", 3900, nil, nil, 1},
-		{"sub_year", "year_subscription", "subscription", "年卡", "year", "tata.membership.year", 19800, nil, nil, 1},
-		{"pack_quota_20", "reading_pack", "consumable", "额度补充包 20元", "", "tata.quota.20", 2000, nil, nil, nil},
-		{"pack_quota_60", "reading_pack", "consumable", "额度补充包 60元", "", "tata.quota.60", 6000, nil, nil, nil},
-		{"pack_quota_100", "reading_pack", "consumable", "额度补充包 100元", "", "tata.quota.100", 10000, nil, nil, nil},
-		{"unlock_yearly", "yearly_unlock", "consumable", "年运解锁", "", "tata.unlock.yearly", 2880, nil, nil, nil},
+		{"sub_month", "month_subscription", "月卡", "month", "tata.membership.month", 3900, nil, 1},
+		{"sub_year", "year_subscription", "年卡", "year", "tata.membership.year", 19800, nil, 1},
+		{"pack_quota_20", "quota_pack", "额度补充包 20元", "", "tata.quota.20", 2000, 50, nil},
+		{"pack_quota_60", "quota_pack", "额度补充包 60元", "", "tata.quota.60", 6000, 160, nil},
+		{"pack_quota_100", "quota_pack", "额度补充包 100元", "", "tata.quota.100", 10000, 300, nil},
+		{"unlock_yearly", "yearly_unlock", "年运解锁", "", "tata.unlock.yearly", 2880, nil, nil},
 	}
 	const upsert = `INSERT INTO iap_skus(
-		code, kind, ledger_bucket, display_name, period_unit, period_count,
-		price_amount_minor, price_currency, diamond_grant, reading_grant, app_store_product_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'CNY',$8,$9,$10)
+		code, kind, display_name, period_unit, period_count,
+		price_amount_minor, price_currency, quota_grant, app_store_product_id)
+		VALUES ($1,$2,$3,$4,$5,$6,'CNY',$7,$8)
 		ON CONFLICT (code) DO UPDATE SET
+			kind=EXCLUDED.kind,
 			display_name=EXCLUDED.display_name,
 			period_unit=EXCLUDED.period_unit,
 			period_count=COALESCE(iap_skus.period_count, EXCLUDED.period_count),
 			price_amount_minor=COALESCE(iap_skus.price_amount_minor, EXCLUDED.price_amount_minor),
 			price_currency=COALESCE(iap_skus.price_currency, EXCLUDED.price_currency),
-			diamond_grant=COALESCE(iap_skus.diamond_grant, EXCLUDED.diamond_grant),
-			reading_grant=COALESCE(iap_skus.reading_grant, EXCLUDED.reading_grant),
+			quota_grant=COALESCE(iap_skus.quota_grant, EXCLUDED.quota_grant),
 			app_store_product_id=COALESCE(NULLIF(iap_skus.app_store_product_id,''), EXCLUDED.app_store_product_id),
 			updated_at=now()`
 	for _, slot := range slots {
-		if _, err := s.Exec(ctx, upsert, slot.code, slot.kind, slot.bucket, slot.name, slot.period,
-			slot.periodCount, slot.price, slot.grant, slot.readings, slot.apple); err != nil {
+		if _, err := s.Exec(ctx, upsert, slot.code, slot.kind, slot.name, slot.period,
+			slot.periodCount, slot.price, slot.grant, slot.apple); err != nil {
 			return err
 		}
 	}

@@ -41,6 +41,34 @@ const [Form, formApi] = useVbenForm({
       rules: 'required',
     },
     {
+      component: 'Select',
+      componentProps: {
+        options: [
+          { label: '不分组', value: '' },
+          { label: '快速指引', value: 'quick' },
+          { label: '进阶分析', value: 'advanced' },
+          { label: '深度全景', value: 'panorama' },
+        ],
+      },
+      defaultValue: '',
+      fieldName: 'depth_group',
+      label: '普通占卜分组',
+    },
+    {
+      component: 'Switch',
+      defaultValue: false,
+      fieldName: 'quota_priced',
+      label: '已标额度扣次',
+    },
+    {
+      component: 'InputNumber',
+      componentProps: {
+        min: 0,
+      },
+      fieldName: 'quota_cost',
+      label: '额度扣次',
+    },
+    {
       component: 'Upload',
       componentProps: imageUploadProps('spreads'),
       fieldName: 'thumbnail',
@@ -78,7 +106,7 @@ const [Form, formApi] = useVbenForm({
       component: 'Switch',
       defaultValue: false,
       fieldName: 'charged',
-      label: '是否收费',
+      label: '旧收费开关',
     },
   ],
   showDefaultActions: false,
@@ -91,6 +119,10 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
       return;
     }
     const data = await formApi.getValues();
+    if (data.quota_priced && (data.quota_cost === null || data.quota_cost === undefined || data.quota_cost === '')) {
+      message.error('请填写额度扣次');
+      return;
+    }
     let positions: Spread['positions'];
     try {
       positions = JSON.parse(String(data.positionsText ?? '')) as Spread['positions'];
@@ -109,6 +141,9 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         charged: data.charged,
         recommended: data.recommended,
         thumbnail: fileListToURL(data.thumbnail),
+        depth_group: data.depth_group ?? '',
+        quota_priced: Boolean(data.quota_priced),
+        quota_cost: data.quota_priced ? data.quota_cost : null,
       };
       if (formData.value?.id) {
         await updateSpread(formData.value.id, body);
@@ -138,6 +173,9 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         charged: data.charged,
         recommended: data.recommended ?? false,
         thumbnail: fileListFromURL(data.thumbnail),
+        depth_group: data.depth_group ?? '',
+        quota_priced: Boolean(data.quota_priced),
+        quota_cost: data.quota_cost,
       });
     } else {
       formData.value = null;

@@ -38,7 +38,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 
 	code := fmt.Sprintf("P1%d", time.Now().UnixNano())
 	if _, err := store.Exec(t.Context(), `INSERT INTO redeem_codes(code, kind, amount, benefit_name, max_redemptions, enabled)
-		VALUES ($1,'diamonds',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
+		VALUES ($1,'quota',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
 		t.Fatal(err)
 	}
 	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": code})
@@ -62,12 +62,12 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 			t.Fatalf("invented price on redeem row: %#v", row)
 		}
 	}
-	diamonds := byKind["diamonds"]
-	if diamonds["benefit_name"] != "新春钻石礼" || diamonds["amount"].(float64) != 60 || diamonds["unit"] != "quota" || diamonds["display_label"] != displayLabelQuota {
-		t.Fatalf("diamond record: %#v", diamonds)
+	quota := byKind["quota"]
+	if quota["benefit_name"] != "新春钻石礼" || quota["amount"].(float64) != 60 || quota["unit"] != "quota" || quota["display_label"] != displayLabelQuota {
+		t.Fatalf("diamond record: %#v", quota)
 	}
-	if diamonds["created_at"] == "" || diamonds["code"] == "" {
-		t.Fatalf("diamond record identity: %#v", diamonds)
+	if quota["created_at"] == "" || quota["code"] == "" {
+		t.Fatalf("diamond record identity: %#v", quota)
 	}
 	free := byKind["free_count"]
 	if free["unit"] != "count" || free["display_label"] != nil || free["amount"].(float64) != 1 {

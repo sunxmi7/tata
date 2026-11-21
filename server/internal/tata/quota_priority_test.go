@@ -78,7 +78,7 @@ func TestDiamondCostUnconfigured(t *testing.T) {
 	setMember(t, store, uid, "month")
 	setQuota(t, store, uid, 9)
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "未配置不能猜额度", "type": "normal"})
-	if reading["quota_outcome"] != quotaUnconfig || reading["diamond_cost_unconfigured"] != true || reading["generated"] != false {
+	if reading["quota_outcome"] != quotaUnconfig || reading["quota_cost_unconfigured"] != true || reading["generated"] != false {
 		t.Fatalf("unconfigured: %#v", reading)
 	}
 	prompt, _ := reading["quota_prompt"].(string)
@@ -186,7 +186,7 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 		t.Fatalf("retry recharged: %d", n)
 	}
 	var spends int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1 AND reason='quota_spend'`, uid).Scan(&spends); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1 AND reason='quota_spend'`, uid).Scan(&spends); err != nil {
 		t.Fatal(err)
 	}
 	if spends != 1 {
@@ -520,16 +520,16 @@ func resetDailyCounts(t *testing.T, store *Store) {
 func resetDiamondCost(t *testing.T, store *Store) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET diamond_cost=NULL WHERE id=1`)
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET quota_cost=NULL WHERE id=1`)
 	})
-	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET diamond_cost=NULL WHERE id=1`); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET quota_cost=NULL WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func setDiamondCost(t *testing.T, store *Store, cost int) {
 	t.Helper()
-	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET diamond_cost=$1 WHERE id=1`, cost); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET quota_cost=$1 WHERE id=1`, cost); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -541,7 +541,7 @@ func setDiamonds(t *testing.T, store *Store, uid int64, sub, pack int) {
 
 func setQuota(t *testing.T, store *Store, uid int64, n int) {
 	t.Helper()
-	if _, err := store.Exec(t.Context(), `INSERT INTO diamond_balances(user_id, quota_balance)
+	if _, err := store.Exec(t.Context(), `INSERT INTO quota_balances(user_id, quota_balance)
 		VALUES ($1,$2)
 		ON CONFLICT (user_id) DO UPDATE SET quota_balance=$2, updated_at=now()`, uid, n); err != nil {
 		t.Fatal(err)
@@ -562,7 +562,7 @@ func setMember(t *testing.T, store *Store, uid int64, kind string) {
 func quotaOf(t *testing.T, store *Store, uid int64) int {
 	t.Helper()
 	var n int
-	err := store.QueryRow(t.Context(), `SELECT quota_balance FROM diamond_balances WHERE user_id=$1`, uid).Scan(&n)
+	err := store.QueryRow(t.Context(), `SELECT quota_balance FROM quota_balances WHERE user_id=$1`, uid).Scan(&n)
 	if err != nil {
 		return 0
 	}

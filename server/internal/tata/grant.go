@@ -17,32 +17,32 @@ import (
 // Permission: pay 模块可写才能补发；role=admin 隐含全部模块。
 // 无写权限可查补发记录。流水与审计分属 records / accounts 模块。
 //
-// diamonds 一律写入 quota_balance，diamond_ledger.bucket = quota。
-// diamond_bucket 兼容历史 pack/subscription，忽略后仍入统一额度。订阅有效期不改。
+// quota 一律写入 quota_balance，quota_ledger.bucket = quota。
+// quota_bucket 兼容历史 pack/subscription，忽略后仍入统一额度。订阅有效期不改。
 //
 // Free counts add rewards.admin_grant_remaining. They do not change
 // rewards.remaining or its expiry. Free users spend daily → invite → admin grant.
 // Members skip free counts and spend quota. Reason on every grant row is admin_grant.
 
 const (
-	grantKindDiamonds = "diamonds"
-	grantKindFree     = "free_count"
-	grantReason       = "admin_grant"
-	grantBucketPack   = "pack"
-	grantBucketSub    = "subscription"
-	grantFreeResult   = "granted"
-	grantFreeEnt      = "free_count"
-	grantMaxAmount    = 100000
-	grantNoteMax      = 500
+	grantKindQuota  = "quota"
+	grantKindFree   = "free_count"
+	grantReason     = "admin_grant"
+	grantBucketPack = "pack"
+	grantBucketSub  = "subscription"
+	grantFreeResult = "granted"
+	grantFreeEnt    = "free_count"
+	grantMaxAmount  = 100000
+	grantNoteMax    = 500
 )
 
 type grantRequest struct {
-	UserID        int64  `json:"user_id"`
-	Diamonds      int    `json:"diamonds"`
-	DiamondBucket string `json:"diamond_bucket"`
-	FreeCount     int    `json:"free_count"`
-	Reason        string `json:"reason"`
-	Note          string `json:"note"`
+	UserID      int64  `json:"user_id"`
+	Quota       int    `json:"quota"`
+	QuotaBucket string `json:"quota_bucket"`
+	FreeCount   int    `json:"free_count"`
+	Reason      string `json:"reason"`
+	Note        string `json:"note"`
 }
 
 func (a *App) adminListGrants(w http.ResponseWriter, r *http.Request) error {
@@ -55,7 +55,7 @@ func (a *App) adminListGrants(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT id, user_id, operator_id, kind, amount, bucket, ledger_bucket, reason, note,
-		diamond_ledger_id, count_ledger_id, created_at
+		quota_ledger_id, count_ledger_id, created_at
 		FROM admin_grants
 		WHERE ($1 = 0 OR user_id = $1)
 		ORDER BY id DESC LIMIT 200`, userID)
@@ -109,16 +109,16 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 	if req.UserID <= 0 {
 		return biz("请指定用户")
 	}
-	if req.Diamonds < 0 || req.FreeCount < 0 {
+	if req.Quota < 0 || req.FreeCount < 0 {
 		return biz("补发数量不正确")
 	}
-	if req.Diamonds == 0 && req.FreeCount == 0 {
+	if req.Quota == 0 && req.FreeCount == 0 {
 		return biz("请填写额度或免费次数")
 	}
-	if req.Diamonds > grantMaxAmount || req.FreeCount > grantMaxAmount {
+	if req.Quota > grantMaxAmount || req.FreeCount > grantMaxAmount {
 		return biz("补发数量超出单次上限")
 	}
-	bucket := strings.TrimSpace(req.DiamondBucket)
+	bucket := strings.TrimSpace(req.QuotaBucket)
 	if bucket == "" {
 		bucket = grantBucketPack
 	}
@@ -137,8 +137,8 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now().UTC()
 	grants := []map[string]any{}
-	if req.Diamonds > 0 {
-		item, err := applyDiamondGrant(r.Context(), tx, act.id, req.UserID, req.Diamonds, bucket, note, now)
+	if req.Quota > 0 {
+		item, err := applyQuotaGrant(r.Context(), tx, act.id, req.UserID, req.Quota, bucket, note, now)
 		if err != nil {
 			return err
 		}
@@ -172,15 +172,15 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 
 func grantMeta(canWrite bool) map[string]any {
 	return map[string]any{
-		"reason":                         grantReason,
-		"diamond_bucket_default":         "quota",
-		"diamond_bucket_column":          "quota_balance",
-		"diamond_ledger_bucket_for_pack": iapBucketQuota,
-		"writes_iap_orders":              false,
-		"resumes_paywall":                false,
-		"can_write":                      canWrite,
-		"write_role":                     "admin",
-		"permission_note":                "付费模块可写才能补发额度或免费次数。diamonds 字段写入统一额度。",
+		"reason":                       grantReason,
+		"quota_bucket_default":         "quota",
+		"quota_bucket_column":          "quota_balance",
+		"quota_ledger_bucket_for_pack": iapBucketQuota,
+		"writes_iap_orders":            false,
+		"resumes_paywall":              false,
+		"can_write":                    canWrite,
+		"write_role":                   "admin",
+		"permission_note":              "付费模块可写才能补发额度或免费次数。quota 字段写入统一额度。",
 	}
 }
 
@@ -215,7 +215,7 @@ func lockGrantUser(ctx context.Context, tx Tx, uid int64) error {
 	return nil
 }
 
-func applyDiamondGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount int, bucket, note string, now time.Time) (map[string]any, error) {
+func applyQuotaGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount int, bucket, note string, now time.Time) (map[string]any, error) {
 	ledgerBucket := iapBucketQuota
 	after, err := creditQuota(ctx, tx, uid, amount, nil, "", grantReason)
 	if err != nil {
@@ -224,35 +224,35 @@ func applyDiamondGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount
 	var grantID int64
 	if err := tx.QueryRow(ctx, `INSERT INTO admin_grants(user_id, operator_id, kind, amount, bucket, ledger_bucket, reason, note, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		uid, operatorID, grantKindDiamonds, amount, "quota", ledgerBucket, grantReason, note, now).Scan(&grantID); err != nil {
+		uid, operatorID, grantKindQuota, amount, "quota", ledgerBucket, grantReason, note, now).Scan(&grantID); err != nil {
 		return nil, err
 	}
 	var ledgerID int64
-	err = tx.QueryRow(ctx, `SELECT id FROM diamond_ledger WHERE user_id=$1 AND grant_id IS NULL AND reason=$2 ORDER BY id DESC LIMIT 1`, uid, grantReason).Scan(&ledgerID)
+	err = tx.QueryRow(ctx, `SELECT id FROM quota_ledger WHERE user_id=$1 AND grant_id IS NULL AND reason=$2 ORDER BY id DESC LIMIT 1`, uid, grantReason).Scan(&ledgerID)
 	if err != nil {
 		// creditQuota does not set grant_id; update the newest quota row
-		_ = tx.QueryRow(ctx, `SELECT id FROM diamond_ledger WHERE user_id=$1 AND bucket=$2 ORDER BY id DESC LIMIT 1`, uid, iapBucketQuota).Scan(&ledgerID)
+		_ = tx.QueryRow(ctx, `SELECT id FROM quota_ledger WHERE user_id=$1 AND bucket=$2 ORDER BY id DESC LIMIT 1`, uid, iapBucketQuota).Scan(&ledgerID)
 	}
 	if ledgerID > 0 {
-		if _, err := tx.Exec(ctx, `UPDATE diamond_ledger SET grant_id=$1 WHERE id=$2`, grantID, ledgerID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE quota_ledger SET grant_id=$1 WHERE id=$2`, grantID, ledgerID); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE admin_grants SET diamond_ledger_id=$1 WHERE id=$2`, ledgerID, grantID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE admin_grants SET quota_ledger_id=$1 WHERE id=$2`, ledgerID, grantID); err != nil {
 		return nil, err
 	}
 	if err := writeGrantAudit(ctx, tx, operatorID, grantID, map[string]any{
 		"grant_id": grantID, "user_id": uid, "operator_id": operatorID,
-		"kind": grantKindDiamonds, "amount": amount, "bucket": bucket, "ledger_bucket": ledgerBucket,
-		"reason": grantReason, "note": note, "diamond_ledger_id": ledgerID, "balance_after": after,
+		"kind": grantKindQuota, "amount": amount, "bucket": bucket, "ledger_bucket": ledgerBucket,
+		"reason": grantReason, "note": note, "quota_ledger_id": ledgerID, "balance_after": after,
 		"created_at": now, "iap_order_rewritten": false,
 	}); err != nil {
 		return nil, err
 	}
 	return map[string]any{
 		"id": grantID, "user_id": uid, "operator_id": operatorID,
-		"kind": grantKindDiamonds, "amount": amount, "bucket": bucket, "ledger_bucket": ledgerBucket,
-		"reason": grantReason, "note": note, "diamond_ledger_id": ledgerID, "balance_after": after,
+		"kind": grantKindQuota, "amount": amount, "bucket": bucket, "ledger_bucket": ledgerBucket,
+		"reason": grantReason, "note": note, "quota_ledger_id": ledgerID, "balance_after": after,
 		"created_at": now,
 	}, nil
 }
@@ -347,7 +347,7 @@ func scanGrants(rows *sql.Rows) ([]map[string]any, error) {
 			"id": id, "user_id": userID, "operator_id": operatorID,
 			"kind": kind, "amount": amount, "bucket": bucket, "ledger_bucket": ledgerBucket,
 			"reason": reason, "note": note,
-			"diamond_ledger_id": nullInt(diamondID), "count_ledger_id": nullInt(countID),
+			"quota_ledger_id": nullInt(diamondID), "count_ledger_id": nullInt(countID),
 			"created_at": created,
 		})
 	}

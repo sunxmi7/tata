@@ -365,8 +365,8 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, charged, recommended, thumbnail,
-		theme_key, theme_title, theme_subtitle, short_sentence
-		FROM spreads WHERE enabled=true ORDER BY recommended DESC, id`)
+		theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost
+		FROM spreads WHERE enabled=true ORDER BY recommended DESC, sort_order, id`)
 	if err != nil {
 		return err
 	}
@@ -374,10 +374,11 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short string
+		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
 		var count int
 		var charged, recommended bool
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short); err != nil {
+		var quota sql.NullInt64
+		if err := rows.Scan(&id, &name, &desc, &count, &pos, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
@@ -386,6 +387,8 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 			"charged":   charged, "recommended": recommended, "thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
 			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub,
 			"short_sentence": short,
+			"depth_group":    depth, "depth_label": depthLabel(depth),
+			"quota_cost": quotaCostValue(quota), "price_ledger": quotaLedger(quota),
 		})
 	}
 	writeOK(w, list)
@@ -467,7 +470,7 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
-	cost, configured, _ := loadDiamondCost(r.Context(), a.Store)
+	cost, configured, _ := loadQuotaCost(r.Context(), a.Store)
 	var quotaCost any
 	if configured {
 		quotaCost = cost
@@ -488,8 +491,6 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		"followup_limit":               followup,
 		"quota_cost":                   quotaCost,
 		"quota_cost_configured":        configured,
-		"diamond_cost":                 quotaCost,
-		"diamond_cost_configured":      configured,
 	}
 	if member {
 		label := "月度会员"
@@ -709,7 +710,7 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	item["quota_outcome"] = decision.Status
 	item["entitlement"] = decision.Entitlement
 	item["paywall"] = decision.paywall()
-	item["diamond_cost_unconfigured"] = decision.unconfigured()
+	item["quota_cost_unconfigured"] = decision.unconfigured()
 	item["kept"] = true
 	item["generated"] = false
 	if exhausted && decision.Message != "" {

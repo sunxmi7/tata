@@ -149,8 +149,8 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	now := time.Now().UTC()
 	var ledgerID any
 	switch kind {
-	case "diamonds":
-		id, err := creditRedeemDiamonds(r.Context(), tx, uid, amount, codeID)
+	case "quota":
+		id, err := creditRedeemQuota(r.Context(), tx, uid, amount, codeID)
 		if err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	default:
 		return biz("兑换码无效")
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO redeem_redemptions(code_id, user_id, diamond_ledger_id, created_at)
+	if _, err := tx.Exec(r.Context(), `INSERT INTO redeem_redemptions(code_id, user_id, quota_ledger_id, created_at)
 		VALUES ($1,$2,$3,$4)`, codeID, uid, ledgerID, now); err != nil {
 		return err
 	}
@@ -182,13 +182,13 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func creditRedeemDiamonds(ctx context.Context, tx Tx, uid int64, amount int, codeID int64) (int64, error) {
+func creditRedeemQuota(ctx context.Context, tx Tx, uid int64, amount int, codeID int64) (int64, error) {
 	txn := "redeem:" + fmtID(codeID) + ":" + fmtID(uid)
 	if _, err := creditQuota(ctx, tx, uid, amount, nil, txn, redeemReason); err != nil {
 		return 0, err
 	}
 	var ledgerID int64
-	if err := tx.QueryRow(ctx, `SELECT id FROM diamond_ledger WHERE user_id=$1 AND store_transaction_id=$2 ORDER BY id DESC LIMIT 1`, uid, txn).Scan(&ledgerID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM quota_ledger WHERE user_id=$1 AND store_transaction_id=$2 ORDER BY id DESC LIMIT 1`, uid, txn).Scan(&ledgerID); err != nil {
 		return 0, err
 	}
 	return ledgerID, nil
@@ -217,7 +217,7 @@ func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT created_at, reason, delta, balance_after, bucket
-		FROM diamond_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 100`, uid)
+		FROM quota_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 100`, uid)
 	if err != nil {
 		return err
 	}
@@ -896,7 +896,7 @@ func publicBlurb(blurb, copy string) string {
 	return copy
 }
 
-func attachDailyHome(item map[string]any, target, business string, yi, thumbnail any) {
+func attachDailyHome(item map[string]any, target, business string, yi, message, thumbnail any) {
 	if target == "" {
 		target = "today"
 	}
@@ -906,6 +906,7 @@ func attachDailyHome(item map[string]any, target, business string, yi, thumbnail
 	item["card_name"] = name
 	item["short_text"] = clipText(interpText(item["interpretation"]), 48)
 	item["yi"] = yi
+	item["card_message"] = message
 	item["card_thumbnail"] = thumbnail
 	item["has_result"] = name != ""
 }
@@ -954,6 +955,14 @@ func firstCardName(v any) string {
 		return ""
 	}
 	return cards[0].Name
+}
+
+func firstCardOrientation(v any) string {
+	cards := parsePreviewCards(v)
+	if len(cards) == 0 {
+		return ""
+	}
+	return cards[0].Orientation
 }
 
 func readingTypeLabel(typ string) string {

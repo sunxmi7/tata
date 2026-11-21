@@ -12,7 +12,7 @@ import { createGrant, listGrants } from '#/api/tata';
 import { useTataLookups } from '../use-tata-lookups';
 
 const userId = ref('');
-const diamonds = ref<number | null>(null);
+const quota = ref<number | null>(null);
 const freeCount = ref<number | null>(null);
 const note = ref('');
 const view = ref<GrantList>({ grants: [] });
@@ -32,14 +32,14 @@ async function load() {
 async function submit() {
   await createGrant({
     user_id: Number(userId.value.trim()),
-    diamonds: diamonds.value || 0,
+    quota: quota.value || 0,
     free_count: freeCount.value || 0,
-    diamond_bucket: 'quota',
+    quota_bucket: 'quota',
     reason: 'admin_grant',
     note: note.value,
   });
   note.value = '';
-  diamonds.value = null;
+  quota.value = null;
   freeCount.value = null;
   await load();
 }
@@ -55,7 +55,7 @@ onMounted(load);
     <div class="mb-4 flex flex-wrap items-center gap-2">
       <Input v-model:value="userId" placeholder="用户 ID" style="width: 160px" @press-enter="load" />
       <Button @click="load">查询流水</Button>
-      <InputNumber v-model:value="diamonds" :min="0" placeholder="额度" style="width: 120px" />
+      <InputNumber v-model:value="quota" :min="0" placeholder="额度" style="width: 120px" />
       <InputNumber v-model:value="freeCount" :min="0" placeholder="免费次数" style="width: 140px" />
       <Input v-model:value="note" placeholder="原因说明" style="width: 240px" />
       <Button type="primary" :disabled="!canWrite" @click="submit">补发</Button>
@@ -76,7 +76,7 @@ onMounted(load);
         { title: '流水桶', dataIndex: 'ledger_bucket' },
         { title: '原因', dataIndex: 'reason' },
         { title: '说明', dataIndex: 'note' },
-        { title: '额度流水', dataIndex: 'diamond_ledger_id' },
+        { title: '额度流水', dataIndex: 'quota_ledger_id' },
         { title: '次数流水', dataIndex: 'count_ledger_id' },
       ]"
       :data-source="rows"
@@ -94,8 +94,8 @@ onMounted(load);
         <template v-else-if="column.dataIndex === 'kind'">
           {{ record.kind === 'free_count' ? '免费次数' : '额度' }}
         </template>
-        <template v-else-if="column.dataIndex === 'diamond_ledger_id'">
-          {{ record.diamond_ledger_id ? `#${record.diamond_ledger_id}` : '—' }}
+        <template v-else-if="column.dataIndex === 'quota_ledger_id'">
+          {{ record.quota_ledger_id ? `#${record.quota_ledger_id}` : '—' }}
         </template>
         <template v-else-if="column.dataIndex === 'count_ledger_id'">
           {{ record.count_ledger_id ? `#${record.count_ledger_id}` : '—' }}

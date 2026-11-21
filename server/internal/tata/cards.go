@@ -10,19 +10,23 @@ import (
 )
 
 type cardRow struct {
-	ID         int
-	Name       string
-	NameZhHant string
-	NameEN     string
-	NameJA     string
-	NameKO     string
-	Arcana     string
-	Suit       string
-	Rank       string
-	Yi         string
-	Thumbnail  string
-	Enabled    bool
-	SortOrder  int
+	ID              int
+	Name            string
+	NameZhHant      string
+	NameEN          string
+	NameJA          string
+	NameKO          string
+	Arcana          string
+	Suit            string
+	Rank            string
+	Yi              string
+	UprightMessage  string
+	UprightYi       string
+	ReversedMessage string
+	ReversedYi      string
+	Thumbnail       string
+	Enabled         bool
+	SortOrder       int
 }
 
 func classifyCard(id int, name string) (arcana, suit, rank string) {
@@ -47,7 +51,7 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func (s *Store) listCards(ctx context.Context) ([]cardRow, error) {
-	rows, err := s.Query(ctx, `SELECT id, name, name_zh_hant, name_en, name_ja, name_ko, arcana, suit, rank, yi, thumbnail, enabled, sort_order
+	rows, err := s.Query(ctx, `SELECT id, name, name_zh_hant, name_en, name_ja, name_ko, arcana, suit, rank, yi, upright_message, upright_yi, reversed_message, reversed_yi, thumbnail, enabled, sort_order
 		FROM cards ORDER BY sort_order, id`)
 	if err != nil {
 		return nil, err
@@ -56,7 +60,7 @@ func (s *Store) listCards(ctx context.Context) ([]cardRow, error) {
 	out := []cardRow{}
 	for rows.Next() {
 		var c cardRow
-		if err := rows.Scan(&c.ID, &c.Name, &c.NameZhHant, &c.NameEN, &c.NameJA, &c.NameKO, &c.Arcana, &c.Suit, &c.Rank, &c.Yi, &c.Thumbnail, &c.Enabled, &c.SortOrder); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.NameZhHant, &c.NameEN, &c.NameJA, &c.NameKO, &c.Arcana, &c.Suit, &c.Rank, &c.Yi, &c.UprightMessage, &c.UprightYi, &c.ReversedMessage, &c.ReversedYi, &c.Thumbnail, &c.Enabled, &c.SortOrder); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -66,8 +70,8 @@ func (s *Store) listCards(ctx context.Context) ([]cardRow, error) {
 
 func (s *Store) getCard(ctx context.Context, id int) (cardRow, error) {
 	var c cardRow
-	err := s.QueryRow(ctx, `SELECT id, name, name_zh_hant, name_en, name_ja, name_ko, arcana, suit, rank, yi, thumbnail, enabled, sort_order
-		FROM cards WHERE id=$1`, id).Scan(&c.ID, &c.Name, &c.NameZhHant, &c.NameEN, &c.NameJA, &c.NameKO, &c.Arcana, &c.Suit, &c.Rank, &c.Yi, &c.Thumbnail, &c.Enabled, &c.SortOrder)
+	err := s.QueryRow(ctx, `SELECT id, name, name_zh_hant, name_en, name_ja, name_ko, arcana, suit, rank, yi, upright_message, upright_yi, reversed_message, reversed_yi, thumbnail, enabled, sort_order
+		FROM cards WHERE id=$1`, id).Scan(&c.ID, &c.Name, &c.NameZhHant, &c.NameEN, &c.NameJA, &c.NameKO, &c.Arcana, &c.Suit, &c.Rank, &c.Yi, &c.UprightMessage, &c.UprightYi, &c.ReversedMessage, &c.ReversedYi, &c.Thumbnail, &c.Enabled, &c.SortOrder)
 	if errors.Is(err, sql.ErrNoRows) {
 		return cardRow{}, biz("牌不存在")
 	}
@@ -109,6 +113,22 @@ func (s *Store) seedCards(ctx context.Context) error {
 				yi = CASE WHEN cards.yi = '' THEN EXCLUDED.yi ELSE cards.yi END,
 				thumbnail = CASE WHEN cards.thumbnail = '' THEN EXCLUDED.thumbnail ELSE cards.thumbnail END`,
 			def.ID, def.Name, hant, en, ja, ko, arcana, suit, rank, yi, thumb); err != nil {
+			return err
+		}
+	}
+	return s.applyDailyCopy(ctx)
+}
+
+func (s *Store) applyDailyCopy(ctx context.Context) error {
+	for _, item := range dailyCardCopies {
+		if _, err := s.Exec(ctx, `UPDATE cards SET
+			upright_message = CASE WHEN upright_message = '' THEN $2 ELSE upright_message END,
+			upright_yi = CASE WHEN upright_yi = '' THEN $3 ELSE upright_yi END,
+			reversed_message = CASE WHEN reversed_message = '' THEN $4 ELSE reversed_message END,
+			reversed_yi = CASE WHEN reversed_yi = '' THEN $5 ELSE reversed_yi END,
+			yi = CASE WHEN yi = '' THEN $3 ELSE yi END
+			WHERE name=$1`,
+			item.Name, item.UprightMessage, item.UprightYi, item.ReversedMessage, item.ReversedYi); err != nil {
 			return err
 		}
 	}
@@ -195,6 +215,10 @@ func (a *App) cardConfig(ctx context.Context) map[string]string {
 		if v := strings.TrimSpace(c.NameZhHant); v != "" {
 			cfg["card."+c.Name+".name_zh_hant"] = v
 		}
+		cfg[cardCopyKey(c.Name, "upright_message")] = strings.TrimSpace(c.UprightMessage)
+		cfg[cardCopyKey(c.Name, "upright_yi")] = strings.TrimSpace(c.UprightYi)
+		cfg[cardCopyKey(c.Name, "reversed_message")] = strings.TrimSpace(c.ReversedMessage)
+		cfg[cardCopyKey(c.Name, "reversed_yi")] = strings.TrimSpace(c.ReversedYi)
 	}
 	return cfg
 }
@@ -208,22 +232,26 @@ func (a *App) cardPublic(r *http.Request, c cardRow, cfg map[string]string) map[
 		merged[cardThumbnailKey(c.Name)] = c.Thumbnail
 	}
 	return map[string]any{
-		"id":             c.ID,
-		"card_id":        c.ID,
-		"name":           c.Name,
-		"card_name":      c.Name,
-		"name_zh_hant":   c.NameZhHant,
-		"name_en":        c.NameEN,
-		"name_ja":        c.NameJA,
-		"name_ko":        c.NameKO,
-		"arcana":         c.Arcana,
-		"suit":           nullableConfig(c.Suit),
-		"rank":           nullableConfig(c.Rank),
-		"yi":             nullableConfig(c.Yi),
-		"thumbnail":      nullableConfig(c.Thumbnail),
-		"card_thumbnail": absoluteAssetAny(r, resolveCardThumbnail(merged, c.Name)),
-		"enabled":        c.Enabled,
-		"sort_order":     c.SortOrder,
+		"id":               c.ID,
+		"card_id":          c.ID,
+		"name":             c.Name,
+		"card_name":        c.Name,
+		"name_zh_hant":     c.NameZhHant,
+		"name_en":          c.NameEN,
+		"name_ja":          c.NameJA,
+		"name_ko":          c.NameKO,
+		"arcana":           c.Arcana,
+		"suit":             nullableConfig(c.Suit),
+		"rank":             nullableConfig(c.Rank),
+		"yi":               nullableConfig(c.Yi),
+		"upright_message":  nullableConfig(c.UprightMessage),
+		"upright_yi":       nullableConfig(c.UprightYi),
+		"reversed_message": nullableConfig(c.ReversedMessage),
+		"reversed_yi":      nullableConfig(c.ReversedYi),
+		"thumbnail":        nullableConfig(c.Thumbnail),
+		"card_thumbnail":   absoluteAssetAny(r, resolveCardThumbnail(merged, c.Name)),
+		"enabled":          c.Enabled,
+		"sort_order":       c.SortOrder,
 	}
 }
 
@@ -256,18 +284,22 @@ func (a *App) adminListCards(w http.ResponseWriter, r *http.Request) error {
 }
 
 type cardBody struct {
-	Name       string  `json:"name"`
-	NameZhHant *string `json:"name_zh_hant"`
-	NameEN     *string `json:"name_en"`
-	NameJA     *string `json:"name_ja"`
-	NameKO     *string `json:"name_ko"`
-	Arcana     *string `json:"arcana"`
-	Suit       *string `json:"suit"`
-	Rank       *string `json:"rank"`
-	Yi         *string `json:"yi"`
-	Thumbnail  *string `json:"thumbnail"`
-	Enabled    *bool   `json:"enabled"`
-	SortOrder  *int    `json:"sort_order"`
+	Name            string  `json:"name"`
+	NameZhHant      *string `json:"name_zh_hant"`
+	NameEN          *string `json:"name_en"`
+	NameJA          *string `json:"name_ja"`
+	NameKO          *string `json:"name_ko"`
+	Arcana          *string `json:"arcana"`
+	Suit            *string `json:"suit"`
+	Rank            *string `json:"rank"`
+	Yi              *string `json:"yi"`
+	UprightMessage  *string `json:"upright_message"`
+	UprightYi       *string `json:"upright_yi"`
+	ReversedMessage *string `json:"reversed_message"`
+	ReversedYi      *string `json:"reversed_yi"`
+	Thumbnail       *string `json:"thumbnail"`
+	Enabled         *bool   `json:"enabled"`
+	SortOrder       *int    `json:"sort_order"`
 }
 
 func derefStr(p *string) string {
@@ -381,8 +413,22 @@ func (a *App) adminUpdateCard(w http.ResponseWriter, r *http.Request) error {
 		rank = strings.TrimSpace(*req.Rank)
 	}
 	yi, thumb := cur.Yi, cur.Thumbnail
+	uprightMessage, uprightYi := cur.UprightMessage, cur.UprightYi
+	reversedMessage, reversedYi := cur.ReversedMessage, cur.ReversedYi
 	if req.Yi != nil {
 		yi = strings.TrimSpace(*req.Yi)
+	}
+	if req.UprightMessage != nil {
+		uprightMessage = strings.TrimSpace(*req.UprightMessage)
+	}
+	if req.UprightYi != nil {
+		uprightYi = strings.TrimSpace(*req.UprightYi)
+	}
+	if req.ReversedMessage != nil {
+		reversedMessage = strings.TrimSpace(*req.ReversedMessage)
+	}
+	if req.ReversedYi != nil {
+		reversedYi = strings.TrimSpace(*req.ReversedYi)
 	}
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
@@ -395,8 +441,8 @@ func (a *App) adminUpdateCard(w http.ResponseWriter, r *http.Request) error {
 	if req.SortOrder != nil {
 		sortOrder = *req.SortOrder
 	}
-	if _, err := a.Store.Exec(r.Context(), `UPDATE cards SET name_zh_hant=$1, name_en=$2, name_ja=$3, name_ko=$4, arcana=$5, suit=$6, rank=$7, yi=$8, thumbnail=$9, enabled=$10, sort_order=$11, updated_at=now() WHERE id=$12`,
-		hant, en, ja, ko, arcana, suit, rank, yi, thumb, enabled, sortOrder, id); err != nil {
+	if _, err := a.Store.Exec(r.Context(), `UPDATE cards SET name_zh_hant=$1, name_en=$2, name_ja=$3, name_ko=$4, arcana=$5, suit=$6, rank=$7, yi=$8, upright_message=$9, upright_yi=$10, reversed_message=$11, reversed_yi=$12, thumbnail=$13, enabled=$14, sort_order=$15, updated_at=now() WHERE id=$16`,
+		hant, en, ja, ko, arcana, suit, rank, yi, uprightMessage, uprightYi, reversedMessage, reversedYi, thumb, enabled, sortOrder, id); err != nil {
 		return err
 	}
 	a.Store.audit(r.Context(), act.id, "update", "card", strconv.Itoa(id), cur.Name)

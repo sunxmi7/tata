@@ -417,7 +417,7 @@ func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutc
 	if err != nil {
 		return mergeOutcome{}, err
 	}
-	if err := foldDiamonds(ctx, tx, primary, secondary); err != nil {
+	if err := foldQuota(ctx, tx, primary, secondary); err != nil {
 		return mergeOutcome{}, err
 	}
 	if err := foldAppShell(ctx, tx, primary, secondary); err != nil {
@@ -589,16 +589,16 @@ func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.
 	return beforeP, beforeS, after, nil
 }
 
-// foldDiamonds adds both diamond buckets onto the surviving account and moves
-// diamond_ledger rows with it. IAP order rows are left untouched.
-func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
+// foldQuota adds both diamond buckets onto the surviving account and moves
+// quota_ledger rows with it. IAP order rows are left untouched.
+func foldQuota(ctx context.Context, tx Tx, primary, secondary int64) error {
 	type bal struct {
 		quota int
 		ok    bool
 	}
 	load := func(uid int64) (bal, error) {
 		var b bal
-		err := tx.QueryRow(ctx, `SELECT COALESCE(quota_balance,0) FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&b.quota)
+		err := tx.QueryRow(ctx, `SELECT COALESCE(quota_balance,0) FROM quota_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&b.quota)
 		if errors.Is(err, sql.ErrNoRows) {
 			return bal{}, nil
 		}
@@ -617,10 +617,10 @@ func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
 		return err
 	}
 	if !left.ok && !right.ok {
-		_, err = tx.Exec(ctx, `UPDATE diamond_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
+		_, err = tx.Exec(ctx, `UPDATE quota_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO diamond_balances(user_id, quota_balance, updated_at)
+	if _, err = tx.Exec(ctx, `INSERT INTO quota_balances(user_id, quota_balance, updated_at)
 		VALUES ($1,$2,now())
 		ON CONFLICT (user_id) DO UPDATE SET
 			quota_balance=EXCLUDED.quota_balance,
@@ -628,10 +628,10 @@ func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
 		primary, left.quota+right.quota); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `DELETE FROM diamond_balances WHERE user_id=$1`, secondary); err != nil {
+	if _, err = tx.Exec(ctx, `DELETE FROM quota_balances WHERE user_id=$1`, secondary); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE diamond_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
+	_, err = tx.Exec(ctx, `UPDATE quota_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
 	return err
 }
 

@@ -40,7 +40,7 @@
 ## 不是 bug 的预期
 
 - 解读失败「未绑定供应商」：管理端没绑 interpret 供应商，流程仍应停在可重试。
-- 钻石单价 `diamond_cost=null`：扣到钻石步会停，文案走付费墙 / 未配置，不要当成接口挂了。
+- 钻石单价 `quota_cost=null`：扣到钻石步会停，文案走付费墙 / 未配置，不要当成接口挂了。
 - `POST /iap/verify` 不连苹果/谷歌，只做本地映射；商店商品号对不上就是「商品未映射」。
 - 活动详情、帮助正文、兑换记录行字段仍是占位。
 - 发码同一邮箱同一 scene 60 秒内只能发一次。
@@ -336,7 +336,7 @@
 - [ ] `GET /api/app/v1/iap/entitlements`
 - [ ] `GET /api/app/v1/iap/config`：恢复购买开关
 - [ ] `GET /api/app/v1/wallet/ledger`：没流水就是空数组
-- [ ] `GET /api/app/v1/quota`：display_label=塔塔币，diamond_cost 未配则为 null
+- [ ] `GET /api/app/v1/quota`：display_label=塔塔币，quota_cost 未配则为 null
 - [ ] `POST /api/app/v1/iap/verify`：用未映射商品号，应「商品未映射」（不连商店）
 
 ```json

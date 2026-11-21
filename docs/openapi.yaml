@@ -37,11 +37,11 @@ info:
     语言偏好**不上云**（无 `profile.locale`）。客户端本地保存；App 请求携带 **`Accept-Language`**（推荐 `zh-Hans`、`zh-Hant`、`en`、`ja`、`ko`），亦可传 **`X-Language`**。未带头或无法识别时按 **`zh-Hans`**。服务端用该头查 `server/internal/tata/i18n/*.json`（简体原文为 key），本地化错误 `message`、额度提示、状态/类型标签、牌名、牌组名、预设问题和固定空状态文案。运营 CMS（帮助正文、活动详情、占卜师文案）和 AI 解读原文仍按入库语言返回。`error_code` 不随语言变化。
 
     ## 未配置的价格、验单与占位
-    - 种子 SKU：`sub_month` / `sub_year` 已填会员价；`pack_quota_20/60/100` 为额度补充包（20/60/100 元），`reading_grant` 未配置为 null；`unlock_yearly` 年运解锁。`consumable_pack`（塔塔币）已下线。接口不编造会员开通赠送额度或补充包次数。
+    - 种子 SKU：`sub_month` / `sub_year` 已填会员价；`pack_quota_20/60/100` 为额度补充包（20/60/100 元），`quota_grant` 未配置为 null；`unlock_yearly` 年运解锁；牌组是 `deck_year` / `deck_bundle` / `deck_single` / `deck_addon`。接口不编造会员开通赠送额度或补充包额度。
     - `POST /api/app/v1/iap/verify` 与 restore **不调用** App Store / Google Play。只保存票据的 SHA-256，按 `product_id` 映射 `iap_skus`。发放量为 null 时 `credit_status=amount_unconfigured`，不写入账。
-    - `quota_settings.diamond_cost` 现为会员每次扣额度的单价，默认为 null。未配置时会员扣费停住：`quota_outcome=diamond_cost_unconfigured`，不猜测单次消耗。
-    - IAP：订阅发放写入统一 `quota_balance`（累加，不替换）；`reading_pack` 仅会员可买，入账 `quota_balance`；`consumable_pack` 验单失败「塔塔币已下线」。
-    - 人工补发 `diamonds` 写入统一额度，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
+    - `quota_settings.quota_cost` 现为会员每次扣额度的单价，默认为 null。未配置时会员扣费停住：`quota_outcome=quota_cost_unconfigured`，不猜测单次消耗。
+    - IAP：订阅发放写入统一 `quota_balance`（累加，不替换）；`quota_pack` 仅会员可买，入账 `quota_balance`；`consumable_pack` 验单失败「塔塔币已下线」。
+    - 人工补发 `quota` 写入统一额度，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
     - 注册奖励已下线。免费用户扣费顺序：今日免费（全局 1 次）→ 邀请奖励 → 人工补发 → 开通会员。会员只扣统一额度。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
     - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心「使用与占卜」「账号与设置」已写入正式正文；「会员与支付」仍 pending。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
@@ -65,7 +65,7 @@ tags:
   - name: 探索
     description: 探索目录分组与主题条目。spread 映射可为空 stub。
   - name: 钱包兑换
-    description: 兑换码核销、兑换记录与额度流水。diamonds 类兑换写入统一额度。兑换记录行字段仍待确认。
+    description: 兑换码核销、兑换记录与额度流水。quota 类兑换写入统一额度。兑换记录行字段仍待确认。
   - name: 活动
     description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
   - name: 帮助
@@ -344,7 +344,11 @@ components:
         yi:
           type: string
           nullable: true
-          description: 今日一牌「宜」。取 app_config 的 card.{牌名}.yi；未配置为 null。
+          description: 今日一牌「宜」。正位优先用 cards.yi，空则用 upright_yi；逆位用 reversed_yi。都空为 null。
+        card_message:
+          type: string
+          nullable: true
+          description: 今日一牌寄语。按牌的正逆位取 upright_message 或 reversed_message。无牌或未配置为 null。
         card_thumbnail:
           type: string
           nullable: true
@@ -381,16 +385,16 @@ components:
               description: 当前实现恒为 false。
             quota_outcome:
               type: string
-              enum: [charged, already, paywall, diamond_cost_unconfigured, anonymous, deferred]
+              enum: [charged, already, paywall, quota_cost_unconfigured, anonymous, deferred]
               description: 额度结算结果。charged 已扣、already 此前已扣、paywall 待付费、anonymous 匿名不预扣、deferred 推迟到仪式门槛。
             entitlement:
               type: string
               description: |
-                可能为空。取值：registration_reward、daily_free、admin_grant_free、diamond_pack、diamond_subscription、ai_trial。
+                可能为空。取值：registration_reward、daily_free、admin_grant_free、quota_pack、quota_subscription、ai_trial。
             paywall:
               type: boolean
               description: 需要付费墙时为 true。
-            diamond_cost_unconfigured:
+            quota_cost_unconfigured:
               type: boolean
               description: 走到钻石步但单价未配置时为 true，本次不扣钻石。
             kept:
@@ -459,17 +463,17 @@ components:
           description: 被拦截的占卜 id。记录一般已保留。
         quota_outcome:
           type: string
-          enum: [paywall, diamond_cost_unconfigured]
-          description: paywall 钻石不足待付费；diamond_cost_unconfigured 单价未配置。
+          enum: [paywall, quota_cost_unconfigured]
+          description: paywall 钻石不足待付费；quota_cost_unconfigured 单价未配置。
         entitlement:
           type: string
           description: 本应扣的权益种类，可能为空。
         paywall:
           type: boolean
           description: 需要弹出付费墙时为 true。
-        diamond_cost_unconfigured:
+        quota_cost_unconfigured:
           type: boolean
-          description: diamond_cost 未配置时为 true，本次不扣钻石。
+          description: quota_cost 未配置时为 true，本次不扣钻石。
         kept:
           type: boolean
           example: true
@@ -628,7 +632,23 @@ components:
         yi:
           type: string
           nullable: true
-          description: 今日一牌「宜」。空为 null。
+          description: 正位今日宜覆盖。空则 App 用 upright_yi。
+        upright_message:
+          type: string
+          nullable: true
+          description: 正位寄语。
+        upright_yi:
+          type: string
+          nullable: true
+          description: 正位今日宜，四条用 / 连接。
+        reversed_message:
+          type: string
+          nullable: true
+          description: 逆位寄语。
+        reversed_yi:
+          type: string
+          nullable: true
+          description: 逆位今日宜，四条用 / 连接。
         thumbnail:
           type: string
           nullable: true
@@ -880,7 +900,7 @@ components:
         按当前是否会员分流。免费用户返回今日免费 / 邀请 / 人工补发，不返回额度余额。
         会员返回统一额度 quota_remaining，不返回每日免费。
         免费扣费顺序：今日免费（全局 1 次，含普通≤3 张牌与今日/明日）→ 邀请奖励 → 人工补发 → 开通会员。
-        会员每次扣 quota_settings.diamond_cost；未配置为 null，quota_outcome=diamond_cost_unconfigured。
+        会员每次扣 quota_settings.quota_cost；未配置为 null，quota_outcome=quota_cost_unconfigured。
         followup_limit 为每条解读可追问次数，种子默认 5，null 不限制。
       properties:
         cycle:
@@ -951,23 +971,23 @@ components:
           type: string
           example: 今日免费次数 → 邀请奖励次数
           description: 扣减顺序说明文案。会员为「会员统一额度」。
-        diamond_spend_order:
+        quota_spend_order:
           type: string
           description: 历史字段。两桶钻石已并入统一额度，当前不再返回。
-        diamond_cost:
-          type: integer
-          nullable: true
-          description: 会员每次扣额度的单价。未配置为 null。与 quota_cost 同值。
-        diamond_cost_configured:
-          type: boolean
-          description: diamond_cost 是否已配置。false 时会员扣费停住。
         quota_cost:
           type: integer
           nullable: true
-          description: 与 diamond_cost 相同，会员单价。
+          description: 会员每次扣额度的单价。未配置为 null。与 quota_cost 同值。
         quota_cost_configured:
           type: boolean
-          description: 与 diamond_cost_configured 相同。
+          description: quota_cost 是否已配置。false 时会员扣费停住。
+        quota_cost:
+          type: integer
+          nullable: true
+          description: 与 quota_cost 相同，会员单价。
+        quota_cost_configured:
+          type: boolean
+          description: 与 quota_cost_configured 相同。
         display_label:
           type: string
           example: 额度
@@ -1015,15 +1035,15 @@ components:
         followup_limit_editable:
           type: boolean
           example: true
-        diamond_cost:
+        quota_cost:
           type: integer
           nullable: true
-        diamond_cost_configured:
+        quota_cost_configured:
           type: boolean
-        diamond_cost_editable:
+        quota_cost_editable:
           type: boolean
           example: true
-        diamond_spend_order:
+        quota_spend_order:
           type: string
           example: quota
         free_label:
@@ -1048,14 +1068,14 @@ components:
           type: integer
           nullable: true
           description: 正整数；null 表示不限制。
-        diamond_cost:
+        quota_cost:
           type: integer
           nullable: true
           description: 会员每次扣额度的单价。正整数；null 表示未配置，不编造。
         quota_cost:
           type: integer
           nullable: true
-          description: 与 diamond_cost 相同。
+          description: 与 quota_cost 相同。
     Profile:
       type: object
       properties:
@@ -2309,7 +2329,7 @@ components:
       type: object
       description: |
         只在 confirm=true 且合并成功（或已经合并、重放保存结果）时作为 data。
-        钻石余额会在库内加总到主账号并迁移 diamond_ledger，但本对象不返回钻石数量。iap_orders 不改写。
+        钻石余额会在库内加总到主账号并迁移 quota_ledger，但本对象不返回钻石数量。iap_orders 不改写。
         次账号的 App refresh（若有）会被吊销，之后次账号 access 也会因 merged_into 失效。
       properties:
         merged:
@@ -2471,8 +2491,8 @@ components:
       type: object
       description: |
         本地验单结果。verify_status=verified 只表示商品映射通过，不是商店回执。
-        credit_status=amount_unconfigured 表示发放量未配置（订阅额度或补充包次数），对应 credited_* 为 null，余额不变。
-        consumable_pack 验单失败「塔塔币已下线」。reading_pack 非会员失败「仅会员可购买额度补充包」。
+        credit_status=amount_unconfigured 表示发放额度未配置，对应 credited_quota 为 null，余额不变。
+        consumable_pack 验单失败「塔塔币已下线」。quota_pack 非会员失败「仅会员可购买额度补充包」。
         同一 platform+transaction_id 再次提交且已 verified 时 idempotent=true，不重复入账。
       properties:
         order_id:
@@ -2496,9 +2516,6 @@ components:
         sku_kind:
           type: string
           description: SKU 种类，见 IAPSKU.kind。
-        ledger_bucket:
-          type: string
-          description: SKU 的 ledger_bucket。实际入账写入 quota_balance，ledger 行为 quota。
         platform:
           type: string
           description: app_store 或 play。
@@ -2519,14 +2536,10 @@ components:
           type: string
           enum: [none, credited, amount_unconfigured, skipped_expired]
           description: credited 已入账；amount_unconfigured 发放量未配置；skipped_expired 订阅已过期未入账。
-        credited_diamonds:
+        credited_quota:
           type: integer
           nullable: true
-          description: 订阅入账额度。未配置为 null。
-        credited_readings:
-          type: integer
-          nullable: true
-          description: 额度补充包入账次数。未配置或非补充包为 null。
+          description: 会员或补充包本次入账额度。年运、牌组、未配置为 null。
         period_start:
           type: string
           format: date-time
@@ -2566,7 +2579,7 @@ components:
       description: |
         价位：会员月/年卡、额度补充包（仅会员目录可见）、年运解锁。consumable_pack（塔塔币）已下线，App 目录不返回。
         种子已填设计价（分）和 App Store 占位商品号；管理员改过的值保留。
-        kind：month_subscription、year_subscription、reading_pack（额度补充包）、consumable_pack（已停用）、yearly_unlock。
+        kind：month_subscription、year_subscription、quota_pack（额度补充包）、consumable_pack（已停用）、yearly_unlock。
       properties:
         id:
           type: integer
@@ -2577,12 +2590,8 @@ components:
           description: 内部编码，例如 sub_month、pack_quota_20。
         kind:
           type: string
-          enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
-          description: 价位种类。会员月/年卡、额度补充包、已下线塔塔币、年运解锁。
-        ledger_bucket:
-          type: string
-          enum: [subscription, consumable]
-          description: SKU 标记桶。实际额度记在 quota_balance。
+          enum: [month_subscription, year_subscription, quota_pack, yearly_unlock, deck_year, deck_bundle, deck_single, deck_addon]
+          description: 价位种类。会员月/年卡、额度补充包、年运单买、牌组。
         display_name:
           type: string
           description: 客户端展示名。
@@ -2603,14 +2612,10 @@ components:
           type: string
           nullable: true
           description: 币种，如 CNY。未配置为 null。
-        diamond_grant:
+        quota_grant:
           type: integer
           nullable: true
-          description: 历史列。订阅开通赠送额度未配置为 null，不编造。补充包与年运解锁不使用此字段。
-        reading_grant:
-          type: integer
-          nullable: true
-          description: 额度补充包入账次数。未配置为 null。验单不会把 null 当成 0。
+          description: 会员开通赠送和额度补充包入账的额度，都进 quota_balance。未配置为 null，不编造。年运和牌组必须为 null。
         period_unit:
           type: string
           description: 订阅周期单位，如 month、year。消耗型为空。
@@ -2646,7 +2651,7 @@ components:
           description: 新建必填。更新时忽略。
         kind:
           type: string
-          enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
+          enum: [month_subscription, year_subscription, quota_pack, yearly_unlock, deck_year, deck_bundle, deck_single, deck_addon]
           description: 新建必填。更新时不可改。
         display_name:
           type: string
@@ -2662,14 +2667,10 @@ components:
         price_currency:
           type: string
           description: 有价格时默认 CNY，只允许 CNY 或 USD。
-        diamond_grant:
+        quota_grant:
           type: integer
           nullable: true
-          description: 历史字段。订阅开通赠送额度，未配置为 null。补充包与年运解锁不可填。
-        reading_grant:
-          type: integer
-          nullable: true
-          description: 仅额度补充包。入账次数，未填为 null。
+          description: 会员和额度补充包的入账额度。未配置为 null。年运和牌组不能填。
         period_count:
           type: integer
           nullable: true
@@ -2775,8 +2776,6 @@ components:
           type: string
         sku_kind:
           type: string
-        ledger_bucket:
-          type: string
         platform:
           type: string
         product_id:
@@ -2790,13 +2789,10 @@ components:
           enum: [pending, verified, failed]
         credit_status:
           type: string
-        credited_diamonds:
+        credited_quota:
           type: integer
           nullable: true
-        credited_readings:
-          type: integer
-          nullable: true
-          description: 额度补充包入账数量。未配置或非补充包为 null。
+          description: 会员或补充包本次入账额度。年运、牌组、未配置为 null。
         period_start:
           type: string
           format: date-time
@@ -2828,7 +2824,7 @@ components:
           nullable: true
         unit:
           type: string
-          example: diamond
+          example: quota
     ResumedTask:
       type: object
       properties:
@@ -2861,13 +2857,13 @@ components:
         reason:
           type: string
           example: admin_grant
-        diamond_bucket_default:
+        quota_bucket_default:
           type: string
           example: quota
-        diamond_bucket_column:
+        quota_bucket_column:
           type: string
           example: quota_balance
-        diamond_ledger_bucket_for_pack:
+        quota_ledger_bucket_for_pack:
           type: string
           example: quota
         writes_iap_orders:
@@ -2927,21 +2923,21 @@ components:
           format: int64
         kind:
           type: string
-          enum: [diamonds, free_count]
+          enum: [quota, free_count]
         amount:
           type: integer
         bucket:
           type: string
-          description: diamonds 为 quota；free_count 为空字符串。
+          description: quota 为 quota；free_count 为空字符串。
         ledger_bucket:
           type: string
-          description: diamonds 对应 quota；免费次数为空。
+          description: quota 对应 quota；免费次数为空。
         reason:
           type: string
           example: admin_grant
         note:
           type: string
-        diamond_ledger_id:
+        quota_ledger_id:
           type: integer
           format: int64
           nullable: true
@@ -2964,12 +2960,12 @@ components:
         user_id:
           type: integer
           format: int64
-        diamonds:
+        quota:
           type: integer
           minimum: 0
           maximum: 100000
           description: 与 free_count 至少一个大于 0。写入统一额度 quota_balance。
-        diamond_bucket:
+        quota_bucket:
           type: string
           enum: ["", pack, subscription, quota]
           description: 兼容历史值，一律写入 quota。
@@ -3241,8 +3237,8 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [diamonds, free_count]
-          description: diamonds 入额度；free_count 入免费次数。
+          enum: [quota, free_count]
+          description: quota 入额度；free_count 入免费次数。
         amount:
           type: integer
           description: 到账数量。
@@ -3252,7 +3248,7 @@ components:
         display_label:
           type: string
           example: 额度
-          description: kind=diamonds 时为「额度」。
+          description: kind=quota 时为「额度」。
         quota_remaining:
           type: integer
           description: 核销后统一额度。
@@ -3290,7 +3286,7 @@ components:
           description: 记账时间。
         type:
           type: string
-          description: diamond_ledger.reason，例如 redeem、quota_spend、admin_grant。
+          description: quota_ledger.reason，例如 redeem、quota_spend、admin_grant。
         amount:
           type: integer
           description: 该行 delta，带符号。
@@ -3548,19 +3544,19 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [diamonds, free_count]
+          enum: [quota, free_count]
           description: 到账类型。
         amount:
           type: integer
           description: 到账数量。
         unit:
           type: string
-          enum: [diamond, count]
-          description: diamond 或 count。
+          enum: [quota, count]
+          description: quota 或 count。
         display_label:
           type: string
           nullable: true
-          description: kind=diamonds 时为「额度」。免费次数为 null。
+          description: kind=quota 时为「额度」。免费次数为 null。
     RedeemCode:
       type: object
       description: 管理端兑换码。App 核销走 POST /redeem。
@@ -3573,10 +3569,10 @@ components:
           description: 大写。自动生成形如 AB3K-9MPQ，不含 0/O/1/I。
         kind:
           type: string
-          enum: [diamonds, free_count]
+          enum: [quota, free_count]
         amount:
           type: integer
-          description: 到账数量。diamonds 为额度，free_count 为免费次数。
+          description: 到账数量。quota 为额度，free_count 为免费次数。
         benefit_name:
           type: string
         max_redemptions:
@@ -3615,7 +3611,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [diamonds, free_count]
+          enum: [quota, free_count]
         amount:
           type: integer
           minimum: 1
@@ -4925,7 +4921,7 @@ paths:
       description: |
         匿名与免费用户返回今日免费 / 邀请次数，不返回额度余额。
         会员返回 is_member、membership、quota_remaining。
-        diamond_cost / quota_cost 未配置时为 null。
+        quota_cost / quota_cost 未配置时为 null。
         display_label 与 paid_label 均为「额度」。
       responses:
         "200":
@@ -4994,7 +4990,7 @@ paths:
         状态从 QUESTION_CREATED 开始。问题最长 200 个码点。
         登录用户的 normal / tarotist 在此按共享优先级扣 play；塔罗师首次可走 ai_trial。
         explore 不在此扣费（quota_outcome=deferred）。匿名不预扣（quota_outcome=anonymous）。
-        额度不足时仍 code=0，记录保留，paywall 或 diamond_cost_unconfigured 在 data 里，不编造单价。
+        额度不足时仍 code=0，记录保留，paywall 或 quota_cost_unconfigured 在 data 里，不编造单价。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -5675,7 +5671,7 @@ paths:
         不调用 App Store 或 Google Play。票据非空且商品映射到启用的 SKU 时 verify_status=verified。
         发放量为 null：credit_status=amount_unconfigured，不写入账，不把 null 当成 0。
         订阅缺少 expires_at、商品未映射、商品未启用、交易号已被别人使用，都会失败。
-        订阅发放累加统一额度；reading_pack 仅会员可买并入额度；consumable_pack 返回「塔塔币已下线」。
+        订阅发放累加统一额度；quota_pack 仅会员可买并入额度；consumable_pack 返回「塔塔币已下线」。
         免费次数不会被这次入账改动。
       requestBody:
         required: true
@@ -5791,8 +5787,8 @@ paths:
       operationId: appIAPSKUs
       summary: 已启用的 SKU
       description: |
-        公开，不需要登录或匿名令牌。登录后按身份过滤：consumable_pack 永不返回；reading_pack 仅会员可见。
-        只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、reading_pack、yearly_unlock。
+        公开，不需要登录或匿名令牌。登录后按身份过滤：consumable_pack 永不返回；quota_pack 仅会员可见。
+        只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、quota_pack、yearly_unlock。
         种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。 unit=quota。
       parameters:
         - name: kind
@@ -5800,7 +5796,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
+            enum: [month_subscription, year_subscription, quota_pack, yearly_unlock, deck_year, deck_bundle, deck_single, deck_addon]
       responses:
         "200":
           description: data 为 IAPSKU 数组。
@@ -7429,7 +7425,7 @@ paths:
         重置时刻不可改（editable=false）。
         daily_free_count、daily_slot_count、followup_limit 可改。
         followup_limit 种子默认 5，null 不限制。
-        diamond_cost 未配置时为 null。响应不含价格。
+        quota_cost 未配置时为 null。响应不含价格。
       responses:
         "200":
           description: data 为 AdminQuotaParams。
@@ -8023,7 +8019,7 @@ paths:
               auto:
                 summary: 自动生成 10 个额度码
                 value:
-                  kind: diamonds
+                  kind: quota
                   amount: 60
                   benefit_name: 新春礼
                   count: 10
@@ -8269,7 +8265,7 @@ paths:
       summary: IAP 订单
       description: |
         只读，最多 200 条。verify_status 只允许空、pending、verified、failed。
-        credited_diamonds 在发放量未配置时为 null。
+        credited_quota 在发放量未配置时为 null。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: user_id
@@ -8312,7 +8308,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [month_subscription, year_subscription, reading_pack, consumable_pack, yearly_unlock]
+            enum: [month_subscription, year_subscription, quota_pack, yearly_unlock, deck_year, deck_bundle, deck_single, deck_addon]
       responses:
         "200":
           description: data 为 IAPSKU 数组。
@@ -8336,8 +8332,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        需要 role=admin。三类价位：会员（月卡 / 年卡）、额度补充包、年运解锁。ledger_bucket 与 period_unit 由类型推导。
-        价格单位为分；不填则为 null。补充包填 reading_grant、不能带 diamond_grant；年运解锁不能带 diamond_grant。
+        需要 role=admin。四种付款：会员（月卡 / 年卡）、额度补充包、年运单买、牌组。period_unit 由类型推导。
+        价格单位为分；不填则为 null。会员和补充包的额度都写 quota_grant；年运和牌组不能填。
       requestBody:
         required: true
         content:
@@ -8391,10 +8387,10 @@ paths:
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/admin/v1/iap/diamonds:
+  /api/admin/v1/iap/quota:
     get:
       tags: [管理端内购]
-      operationId: adminIAPDiamonds
+      operationId: adminIAPQuota
       summary: 用户额度余额与流水
       description: user_id 必填。流水最多 50 条。不返回价格。
       parameters:

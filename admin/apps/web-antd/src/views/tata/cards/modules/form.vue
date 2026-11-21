@@ -48,9 +48,33 @@ const [Form, formApi] = useVbenForm({
       label: '韩文',
     },
     {
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'upright_message',
+      label: '正位寄语',
+    },
+    {
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'upright_yi',
+      label: '正位今日宜',
+    },
+    {
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'reversed_message',
+      label: '逆位寄语',
+    },
+    {
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'reversed_yi',
+      label: '逆位今日宜',
+    },
+    {
       component: 'Input',
       fieldName: 'yi',
-      label: '今日一牌宜',
+      label: '正位今日宜覆盖',
     },
     {
       component: 'Upload',
@@ -87,6 +111,10 @@ const [Modal, modalApi] = useVbenModal<null | TataCard>({
       name_ja: data.name_ja,
       name_ko: data.name_ko,
       yi: data.yi,
+      upright_message: data.upright_message,
+      upright_yi: data.upright_yi,
+      reversed_message: data.reversed_message,
+      reversed_yi: data.reversed_yi,
       thumbnail: fileListToURL(data.thumbnail),
       enabled: data.enabled,
     };
@@ -123,6 +151,10 @@ const [Modal, modalApi] = useVbenModal<null | TataCard>({
       name_ja: data.name_ja,
       name_ko: data.name_ko,
       yi: data.yi ?? '',
+      upright_message: data.upright_message ?? '',
+      upright_yi: data.upright_yi ?? '',
+      reversed_message: data.reversed_message ?? '',
+      reversed_yi: data.reversed_yi ?? '',
       thumbnail: fileListFromURL(typeof data.thumbnail === 'string' ? data.thumbnail : ''),
       enabled: data.enabled,
     });

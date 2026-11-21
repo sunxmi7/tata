@@ -34,7 +34,7 @@ const canWrite = computed(() => hasTataWrite('pay'));
 
 function emptyForm() {
   return {
-    kind: 'diamonds',
+    kind: 'quota',
     amount: null as number | null,
     benefit_name: '',
     code: '',
@@ -60,7 +60,7 @@ function showCreate() {
 function showEdit(row: RedeemCode) {
   editing.value = row;
   form.value = {
-    kind: String(row.kind || 'diamonds'),
+    kind: String(row.kind || 'quota'),
     amount: row.amount,
     benefit_name: String(row.benefit_name || ''),
     code: String(row.code || ''),
@@ -174,7 +174,7 @@ onMounted(load);
             v-model:value="form.kind"
             :disabled="!!editing"
             :options="[
-              { label: '额度', value: 'diamonds' },
+              { label: '额度', value: 'quota' },
               { label: '免费次数', value: 'free_count' },
             ]"
           />

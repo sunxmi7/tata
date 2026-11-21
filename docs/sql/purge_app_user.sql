@@ -127,8 +127,8 @@ WHERE inviter_id IN (SELECT id FROM _purge_users)
    OR invitee_id IN (SELECT id FROM _purge_users);
 DELETE FROM rewards WHERE user_id IN (SELECT id FROM _purge_users);
 DELETE FROM daily_free_balance WHERE user_id IN (SELECT id FROM _purge_users);
-DELETE FROM diamond_ledger WHERE user_id IN (SELECT id FROM _purge_users);
-DELETE FROM diamond_balances WHERE user_id IN (SELECT id FROM _purge_users);
+DELETE FROM quota_ledger WHERE user_id IN (SELECT id FROM _purge_users);
+DELETE FROM quota_balances WHERE user_id IN (SELECT id FROM _purge_users);
 DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM _purge_users);
 DELETE FROM iap_orders WHERE user_id IN (SELECT id FROM _purge_users);
 DELETE FROM admin_grants WHERE user_id IN (SELECT id FROM _purge_users);

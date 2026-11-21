@@ -12,6 +12,8 @@ import (
 func TestAdminModuleOf(t *testing.T) {
 	cases := map[string]string{
 		"/api/admin/v1/spreads":            adminModuleContent,
+		"/api/admin/v1/deck-products":      adminModuleContent,
+		"/api/admin/v1/deck-unlocks":       adminModuleContent,
 		"/api/admin/v1/cards/1":            adminModuleContent,
 		"/api/admin/v1/card-settings":      adminModuleContent,
 		"/api/admin/v1/copy/help":          adminModuleContent,

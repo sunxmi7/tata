@@ -7,12 +7,14 @@ export interface IAPSku {
   display_name?: string;
   price_amount_minor?: number | null;
   price_currency?: string | null;
-  diamond_grant?: number | null;
-  reading_grant?: number | null;
+  quota_grant?: number | null;
   period_count?: number | null;
   app_store_product_id?: string | null;
   play_product_id?: string | null;
   copy?: string | null;
+  note?: string;
+  deck_codes?: string[];
+  covers_future?: boolean;
   enabled?: boolean;
 }
 
@@ -21,20 +23,18 @@ export interface IAPOrder {
   user_id: number;
   sku_code: string;
   sku_kind: string;
-  ledger_bucket?: string;
   platform?: string;
   product_id?: string;
   verify_status?: string;
   credit_status?: string;
-  credited_diamonds?: number | null;
-  credited_readings?: number | null;
+  credited_quota?: number | null;
   created_at: string;
   verify_message?: string;
   subscription_status?: string | null;
   subscription_expires_at?: string | null;
 }
 
-export interface IAPDiamonds {
+export interface IAPQuota {
   user_id?: number;
   quota_remaining?: number;
   balance?: number;
@@ -56,8 +56,8 @@ export function createIAPSku(data: Record<string, unknown>) {
 export function updateIAPSku(id: number, data: Record<string, unknown>) {
   return requestClient.put<IAPSku>(`/iap/skus/${id}`, data);
 }
-export function getIAPDiamonds(userId: string) {
-  return requestClient.get<IAPDiamonds>(
-    `/iap/diamonds?user_id=${encodeURIComponent(userId)}`,
+export function getIAPQuota(userId: string) {
+  return requestClient.get<IAPQuota>(
+    `/iap/quota?user_id=${encodeURIComponent(userId)}`,
   );
 }

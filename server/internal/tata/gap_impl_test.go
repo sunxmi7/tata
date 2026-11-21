@@ -246,7 +246,7 @@ func TestDeckPreferenceAndIAPPacks(t *testing.T) {
 		if sku["kind"] == "year_subscription" {
 			yearSKU = sku
 		}
-		if g, ok := sku["diamond_grant"].(float64); ok {
+		if g, ok := sku["quota_grant"].(float64); ok {
 			grants[int(g)] = true
 		}
 	}

@@ -13,7 +13,7 @@ const data = ref<Record<string, unknown>>({});
 const dailyFreeCount = ref<number>(1);
 const dailySlotCount = ref<number>(1);
 const followupLimit = ref<number | null>(null);
-const diamondCost = ref<number | null>(null);
+const quotaCost = ref<number | null>(null);
 const saving = ref(false);
 
 const canWrite = hasTataWrite('ai');
@@ -24,8 +24,8 @@ async function load() {
   dailySlotCount.value = typeof data.value.daily_slot_count === 'number' ? data.value.daily_slot_count : 1;
   const raw = data.value.followup_limit;
   followupLimit.value = typeof raw === 'number' ? raw : null;
-  const cost = data.value.diamond_cost ?? data.value.quota_cost;
-  diamondCost.value = typeof cost === 'number' ? cost : null;
+  const cost = data.value.quota_cost;
+  quotaCost.value = typeof cost === 'number' ? cost : null;
 }
 
 async function save() {
@@ -35,14 +35,14 @@ async function save() {
       daily_free_count: dailyFreeCount.value,
       daily_slot_count: dailySlotCount.value,
       followup_limit: followupLimit.value,
-      diamond_cost: diamondCost.value,
+      quota_cost: quotaCost.value,
     });
     dailyFreeCount.value = typeof data.value.daily_free_count === 'number' ? data.value.daily_free_count : 1;
     dailySlotCount.value = typeof data.value.daily_slot_count === 'number' ? data.value.daily_slot_count : 1;
     const raw = data.value.followup_limit;
     followupLimit.value = typeof raw === 'number' ? raw : null;
-    const cost = data.value.diamond_cost ?? data.value.quota_cost;
-    diamondCost.value = typeof cost === 'number' ? cost : null;
+    const cost = data.value.quota_cost;
+    quotaCost.value = typeof cost === 'number' ? cost : null;
     message.success('已保存额度参数');
   } finally {
     saving.value = false;
@@ -96,7 +96,7 @@ onMounted(load);
       <Descriptions.Item label="会员单次额度">
         <div class="flex items-center gap-2">
           <InputNumber
-            v-model:value="diamondCost"
+            v-model:value="quotaCost"
             :disabled="!canWrite"
             :min="1"
             :precision="0"

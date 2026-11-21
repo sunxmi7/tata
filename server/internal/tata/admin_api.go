@@ -2,6 +2,7 @@ package tata
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -204,6 +205,9 @@ type spreadBody struct {
 	ThemeTitle    *string    `json:"theme_title"`
 	ThemeSubtitle *string    `json:"theme_subtitle"`
 	ShortSentence *string    `json:"short_sentence"`
+	DepthGroup    *string    `json:"depth_group"`
+	QuotaPriced   *bool      `json:"quota_priced"`
+	QuotaCost     *int       `json:"quota_cost"`
 }
 
 func (b spreadBody) enabled() bool {
@@ -230,8 +234,8 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, positions, enabled, charged, recommended, thumbnail,
-		theme_key, theme_title, theme_subtitle, short_sentence
-		FROM spreads ORDER BY recommended DESC, id`)
+		theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost, sort_order
+		FROM spreads ORDER BY recommended DESC, sort_order, id`)
 	if err != nil {
 		return err
 	}
@@ -239,10 +243,11 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short string
-		var count int
+		var name, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
+		var count, sort int
 		var enabled, charged, recommended bool
-		if err := rows.Scan(&id, &name, &desc, &count, &pos, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short); err != nil {
+		var quota sql.NullInt64
+		if err := rows.Scan(&id, &name, &desc, &count, &pos, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota, &sort); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
@@ -250,6 +255,8 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 			"positions": json.RawMessage(pos), "enabled": enabled, "charged": charged, "recommended": recommended,
 			"thumbnail": nullableConfig(thumb), "preview": deckPreviewURL(thumb),
 			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub, "short_sentence": short,
+			"depth_group": depth, "depth_label": depthLabel(depth), "sort_order": sort,
+			"quota_cost": quotaCostValue(quota), "quota_priced": quota.Valid, "price_ledger": quotaLedger(quota),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -271,16 +278,25 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 	if err := validateSpread(req); err != nil {
 		return err
 	}
+	group, err := spreadDepth(req.DepthGroup)
+	if err != nil {
+		return err
+	}
+	quota, err := spreadQuota(req.QuotaPriced, req.QuotaCost, sql.NullInt64{})
+	if err != nil {
+		return err
+	}
 	var id int64
 	rec := req.Recommended != nil && *req.Recommended
 	thumb := ""
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
 	}
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, description, card_count, positions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
 		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
-		spreadText(req.ThemeKey), spreadText(req.ThemeTitle), spreadText(req.ThemeSubtitle), spreadText(req.ShortSentence)).Scan(&id)
+		spreadText(req.ThemeKey), spreadText(req.ThemeTitle), spreadText(req.ThemeSubtitle), spreadText(req.ShortSentence),
+		group, quota).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -316,9 +332,10 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var oldCount int
-	var oldPos, oldThumb string
+	var oldPos, oldThumb, oldDepth string
 	var oldRec bool
-	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, recommended, thumbnail FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldRec, &oldThumb)
+	var oldQuota sql.NullInt64
+	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, recommended, thumbnail, depth_group, quota_cost FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldRec, &oldThumb, &oldDepth, &oldQuota)
 	if err != nil {
 		return biz("牌阵不存在")
 	}
@@ -339,11 +356,24 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
 	}
+	depth := oldDepth
+	if req.DepthGroup != nil {
+		depth, err = spreadDepth(req.DepthGroup)
+		if err != nil {
+			return err
+		}
+	}
+	quota, err := spreadQuota(req.QuotaPriced, req.QuotaCost, oldQuota)
+	if err != nil {
+		return err
+	}
 	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, description=$2, card_count=$3, positions=$4, enabled=$5, charged=$6, recommended=$7, thumbnail=$8,
-		theme_key=COALESCE($9, theme_key), theme_title=COALESCE($10, theme_title), theme_subtitle=COALESCE($11, theme_subtitle), short_sentence=COALESCE($12, short_sentence)
-		WHERE id=$13`,
+		theme_key=COALESCE($9, theme_key), theme_title=COALESCE($10, theme_title), theme_subtitle=COALESCE($11, theme_subtitle), short_sentence=COALESCE($12, short_sentence),
+		depth_group=$13, quota_cost=$14
+		WHERE id=$15`,
 		req.Name, req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
-		spreadNullText(req.ThemeKey), spreadNullText(req.ThemeTitle), spreadNullText(req.ThemeSubtitle), spreadNullText(req.ShortSentence), id)
+		spreadNullText(req.ThemeKey), spreadNullText(req.ThemeTitle), spreadNullText(req.ThemeSubtitle), spreadNullText(req.ShortSentence),
+		depth, quota, id)
 	if err != nil {
 		return err
 	}
@@ -491,13 +521,13 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	cost, configured, err := loadDiamondCost(r.Context(), a.Store)
+	cost, configured, err := loadQuotaCost(r.Context(), a.Store)
 	if err != nil {
 		return err
 	}
-	var diamondCost any
+	var quotaCost any
 	if configured {
-		diamondCost = cost
+		quotaCost = cost
 	}
 	followupLimit, followupReady, err := loadFollowupLimit(r.Context(), a.Store)
 	if err != nil {
@@ -526,12 +556,10 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 		"daily_slot_editable":     true,
 		"followup_limit":          followup,
 		"followup_limit_editable": true,
-		"diamond_cost":            diamondCost,
-		"diamond_cost_configured": configured,
-		"diamond_cost_editable":   true,
-		"quota_cost":              diamondCost,
+		"quota_cost":              quotaCost,
 		"quota_cost_configured":   configured,
-		"diamond_spend_order":     "quota",
+		"quota_cost_editable":     true,
+		"quota_spend_order":       "quota",
 		"free_label":              "次数",
 		"paid_label":              "额度",
 	})
@@ -586,9 +614,9 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 		}
 		changed = true
 	}
-	if costRaw, ok := raw["diamond_cost"]; ok {
+	if costRaw, ok := raw["quota_cost"]; ok {
 		if string(costRaw) == "null" {
-			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=NULL, updated_at=now() WHERE id=1`); err != nil {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET quota_cost=NULL, updated_at=now() WHERE id=1`); err != nil {
 				return err
 			}
 		} else {
@@ -596,22 +624,7 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 			if err := json.Unmarshal(costRaw, &cost); err != nil || cost <= 0 {
 				return biz("会员单次额度须为正整数，或 null 表示未配置")
 			}
-			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=$1, updated_at=now() WHERE id=1`, cost); err != nil {
-				return err
-			}
-		}
-		changed = true
-	} else if costRaw, ok := raw["quota_cost"]; ok {
-		if string(costRaw) == "null" {
-			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=NULL, updated_at=now() WHERE id=1`); err != nil {
-				return err
-			}
-		} else {
-			var cost int
-			if err := json.Unmarshal(costRaw, &cost); err != nil || cost <= 0 {
-				return biz("会员单次额度须为正整数，或 null 表示未配置")
-			}
-			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET diamond_cost=$1, updated_at=now() WHERE id=1`, cost); err != nil {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET quota_cost=$1, updated_at=now() WHERE id=1`, cost); err != nil {
 				return err
 			}
 		}

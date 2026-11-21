@@ -11,6 +11,25 @@ export interface Spread {
   recommended?: boolean;
   thumbnail?: string | null;
   preview?: string;
+  depth_group?: string;
+  depth_label?: string;
+  quota_cost?: number | null;
+  quota_priced?: boolean;
+  price_ledger?: string | null;
+}
+
+export interface DeckProduct {
+  code: string;
+  kind: string;
+  name: string;
+  price_amount_minor: number;
+  currency: string;
+  deck_codes: string[];
+  covers_future: boolean;
+  deduct_owned: boolean;
+  note: string;
+  enabled: boolean;
+  ledger: string;
 }
 
 export interface Tarotist {
@@ -46,6 +65,10 @@ export interface TataCard {
   suit?: string | null;
   rank?: string | null;
   yi?: string | null;
+  upright_message?: string | null;
+  upright_yi?: string | null;
+  reversed_message?: string | null;
+  reversed_yi?: string | null;
   thumbnail?: string | null;
   card_thumbnail?: string;
   enabled: boolean;
@@ -66,6 +89,17 @@ export function createSpread(data: Partial<Spread>) {
 }
 export function updateSpread(id: number, data: Partial<Spread>) {
   return requestClient.put(`/spreads/${id}`, data);
+}
+
+export function listDeckProducts() {
+  return requestClient.get<DeckProduct[]>('/deck-products');
+}
+
+export function updateDeckProduct(
+  code: string,
+  data: Partial<Pick<DeckProduct, 'name' | 'price_amount_minor' | 'enabled' | 'note'>>,
+) {
+  return requestClient.put(`/deck-products/${code}`, data);
 }
 
 export function listTarotists() {

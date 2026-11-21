@@ -122,12 +122,12 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 	token, uid := registerUser(t, ts, store, "redeem")
 	code := fmt.Sprintf("TATA%d", time.Now().UnixNano())
 	if _, err := store.Exec(t.Context(), `INSERT INTO redeem_codes(code, kind, amount, benefit_name, max_redemptions, enabled)
-		VALUES ($1,'diamonds',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
+		VALUES ($1,'quota',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
 		t.Fatal(err)
 	}
 
 	out := create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": strings.ToLower(code)})
-	if out["benefit_name"] != "新春钻石礼" || out["amount"].(float64) != 60 || out["kind"] != "diamonds" {
+	if out["benefit_name"] != "新春钻石礼" || out["amount"].(float64) != 60 || out["kind"] != "quota" {
 		t.Fatalf("redeem: %#v", out)
 	}
 	if out["display_label"] != displayLabelQuota || quotaNum(out) != 60 {
@@ -279,8 +279,13 @@ func TestAppShellDailyHomeFieldsPresent(t *testing.T) {
 			t.Fatalf("daily missing %s: %#v", key, payload)
 		}
 	}
-	if payload["yi"] != nil {
-		t.Fatalf("yi must stay unset rather than invented: %#v", payload["yi"])
+	name, _ := payload["card_name"].(string)
+	if name == "" {
+		if payload["yi"] != nil || payload["card_message"] != nil {
+			t.Fatalf("daily copy must stay unset without a card: %#v", payload)
+		}
+	} else if payload["yi"] == nil || payload["card_message"] == nil {
+		t.Fatalf("daily copy must come from the card library: %#v", payload)
 	}
 }
 

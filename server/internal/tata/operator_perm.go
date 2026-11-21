@@ -42,7 +42,7 @@ func adminModuleOf(path string) string {
 	p = strings.Trim(p, "/")
 	head, _, _ := strings.Cut(p, "/")
 	switch head {
-	case "spreads", "cards", "card-settings", "tarotists", "copy", "banners", "push":
+	case "spreads", "cards", "card-settings", "tarotists", "copy", "banners", "push", "deck-products", "deck-unlocks":
 		return adminModuleContent
 	case "vendors", "bindings", "quota-params", "workflow":
 		return adminModuleAI

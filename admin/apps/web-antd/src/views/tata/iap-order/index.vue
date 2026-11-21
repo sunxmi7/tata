@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { IAPDiamonds, IAPOrder, IAPSku } from '#/api/tata';
+import type { IAPQuota, IAPOrder, IAPSku } from '#/api/tata';
 
 import { onMounted, ref } from 'vue';
 
@@ -7,14 +7,14 @@ import { Page } from '@vben/common-ui';
 
 import { Button, Input, Table } from 'ant-design-vue';
 
-import { getIAPDiamonds, listIAPOrders, listIAPSkus } from '#/api/tata';
+import { getIAPQuota, listIAPOrders, listIAPSkus } from '#/api/tata';
 
 import { useTataLookups } from '../use-tata-lookups';
 
 const userId = ref('');
 const orders = ref<IAPOrder[]>([]);
 const skus = ref<IAPSku[]>([]);
-const diamonds = ref<IAPDiamonds | null>(null);
+const quota = ref<IAPQuota | null>(null);
 const ledger = ref<Array<Record<string, unknown>>>([]);
 
 const { loadLookups, userLabel } = useTataLookups();
@@ -25,11 +25,11 @@ async function load() {
   const id = userId.value.trim();
   orders.value = await listIAPOrders(id);
   if (id) {
-    diamonds.value = await getIAPDiamonds(id);
-    ledger.value = diamonds.value.ledger || [];
+    quota.value = await getIAPQuota(id);
+    ledger.value = quota.value.ledger || [];
     filterUserLabel.value = userLabel(Number(id));
   } else {
-    diamonds.value = null;
+    quota.value = null;
     ledger.value = [];
     filterUserLabel.value = '';
   }
@@ -50,19 +50,19 @@ onMounted(async () => {
       <Input v-model:value="userId" placeholder="用户 ID" style="max-width: 240px" @press-enter="load" />
       <Button type="primary" @click="load">查询</Button>
     </div>
-    <p v-if="diamonds" class="mb-4">
-      {{ filterUserLabel }} · 额度 {{ diamonds.quota_remaining ?? diamonds.balance ?? 0 }}
+    <p v-if="quota" class="mb-4">
+      {{ filterUserLabel }} · 额度 {{ quota.quota_remaining ?? quota.balance ?? 0 }}
     </p>
     <Table
       :columns="[
         { title: '订单', dataIndex: 'id' },
         { title: '用户', dataIndex: 'user_id' },
         { title: '商品', dataIndex: 'sku_code' },
-        { title: '分账', dataIndex: 'ledger_bucket' },
+        { title: '类型', dataIndex: 'sku_kind' },
         { title: '平台', dataIndex: 'platform' },
         { title: '验单', dataIndex: 'verify_status' },
         { title: '入账', dataIndex: 'credit_status' },
-        { title: '入账额度', dataIndex: 'credited_diamonds' },
+        { title: '入账额度', dataIndex: 'credited_quota' },
         { title: '有效期', dataIndex: 'period_end' },
         { title: '订阅态', dataIndex: 'subscription_status' },
       ]"
@@ -96,11 +96,10 @@ onMounted(async () => {
       :columns="[
         { title: '商品位', dataIndex: 'display_name' },
         { title: '类型', dataIndex: 'kind' },
-        { title: '分账', dataIndex: 'ledger_bucket' },
         { title: 'App Store', dataIndex: 'app_store_product_id' },
         { title: 'Play', dataIndex: 'play_product_id' },
         { title: '价格', dataIndex: 'price_amount_minor' },
-        { title: '开通赠送额度', dataIndex: 'diamond_grant' },
+        { title: '开通赠送额度', dataIndex: 'quota_grant' },
       ]"
       :data-source="skus"
       row-key="id"

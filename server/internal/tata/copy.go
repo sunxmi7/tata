@@ -131,7 +131,7 @@ func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ..
 		}
 		item["card_thumbnail"] = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 		if _, ok := item["yi"]; !ok && knownCardName(name) {
-			item["yi"] = nullableConfig(cfg[cardYiKey(name)])
+			item["card_message"], item["yi"] = dailyLibraryCopy(cfg, name, firstCardOrientation(item["cards"]))
 		}
 	}
 }
@@ -140,12 +140,13 @@ func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[str
 	name := firstCardName(item["cards"])
 	cfg := a.cardConfig(ctx)
 	yi := item["yi"]
+	var message any
 	thumb := item["card_thumbnail"]
 	if knownCardName(name) {
-		yi = nullableConfig(cfg[cardYiKey(name)])
+		message, yi = dailyLibraryCopy(cfg, name, firstCardOrientation(item["cards"]))
 		thumb = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 	}
-	attachDailyHome(item, target, business, yi, thumb)
+	attachDailyHome(item, target, business, yi, message, thumb)
 	a.localizeReading(ctx, item)
 }
 

@@ -466,10 +466,19 @@ func (a *App) appPutDeckPreference(w http.ResponseWriter, r *http.Request) error
 			return err
 		}
 	} else {
-		if _, ok, err := a.enabledDeck(r.Context(), code); err != nil {
+		deck, ok, err := a.enabledDeck(r.Context(), code)
+		if err != nil {
 			return err
-		} else if !ok {
+		}
+		if !ok {
 			return biz("该牌面风格尚未开放")
+		}
+		unlocks, err := a.loadDeckUnlocks(r.Context(), uid)
+		if err != nil {
+			return err
+		}
+		if !unlocks.allows(deck.Code, deck.UnlockRequired) {
+			return biz("这套牌组还未解锁")
 		}
 		if err := a.setUserDeck(r.Context(), uid, code, 0); err != nil {
 			return err

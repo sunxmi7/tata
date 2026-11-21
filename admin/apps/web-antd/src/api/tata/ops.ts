@@ -115,7 +115,7 @@ export interface GrantRow {
   ledger_bucket?: string;
   reason: string;
   note: string;
-  diamond_ledger_id?: number | null;
+  quota_ledger_id?: number | null;
   count_ledger_id?: number | null;
   created_at: string;
 }
@@ -178,9 +178,9 @@ export function listGrants(userId?: string) {
 }
 export function createGrant(data: {
   user_id: number;
-  diamonds?: number;
+  quota?: number;
   free_count?: number;
-  diamond_bucket?: string;
+  quota_bucket?: string;
   reason?: string;
   note?: string;
 }) {
@@ -190,7 +190,7 @@ export function createGrant(data: {
 export interface RedeemCode {
   id: number;
   code: string;
-  kind: 'diamonds' | 'free_count' | string;
+  kind: 'quota' | 'free_count' | string;
   amount: number;
   benefit_name: string;
   max_redemptions: number | null;

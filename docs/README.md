@@ -27,7 +27,7 @@ App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 首屏 15 条（`featured`，文档《塔塔_预设问题库_V1》02 节）：最近的我最需要关注什么；TA 对这段关系的真实态度；三个月事业新机会；情绪困扰背后隐藏着什么；和 TA 接下来一个月；为了实现这个愿望可以做些什么；最近值得留意的新机会；职业方向是否继续坚持；这段关系还没看清的事；三个月财务变化；如何改善人际关系；主动迈出一步会怎样；尚未被发现的优势；一个月生活新可能；最需要听见什么样的提醒。详细 id/scene 见 `docs/openapi-app.yaml` 该接口说明。
 
-管理端价位：会员月/年卡（`month_subscription` / `year_subscription`）、额度补充包（`reading_pack`，仅会员可买，种子 `pack_quota_20/60/100`）、年运解锁（`yearly_unlock`）。`consumable_pack` 塔塔币已下线。种子已填设计价（分）和 App Store 占位商品号；`reading_grant` 未配置为 null，不编造次数。App `GET /iap/skus` 对非会员隐藏补充包。年运解锁价取已启用且已定价的 `yearly_unlock` SKU；年运玩法需有效会员，生成扣统一额度。
+管理端价位在同一张 `iap_skus`：会员月/年卡、额度补充包（`quota_pack`，仅会员可买，种子 `pack_quota_20/60/100`）、年运解锁、牌组（`deck_year` / `deck_bundle` / `deck_single` / `deck_addon`）。种子已填设计价（分）和 App Store 占位商品号。补充包测试额度按设计图写入 50 / 160 / 300。会员开通赠送没有总数，`quota_grant` 仍为 null。App `GET /iap/skus` 对非会员隐藏补充包，也不返回牌组。牌组目录走 `GET /deck-shop`。年运解锁价取已启用且已定价的 `yearly_unlock` SKU。
 
 2026-11-06 对照定稿 UI 补接口（对齐项已确认，见 [design/ui-gap-vs-api-2026-11-06.md](./design/ui-gap-vs-api-2026-11-06.md)）：
 - **月度报告**：`GET /api/app/v1/monthly-reports`、`POST /api/app/v1/monthly-reports/save`。统计来自当月 readings；寄语截取已完成解读，不编造。
@@ -40,7 +40,7 @@ App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **牌阵推荐 / 示意图**：`GET /spreads` 含 `recommended` 与 `thumbnail`。种子「时间流」为推荐；示意图未配用内置默认牌背。管理端勾选推荐时全表最多一张。
 - **日历**：`GET /calendar` 增加 `type` 过滤；日详情项含牌名 / 正逆位 / 短文 / 多张缩略图 / 占卜师 / `created_at`。
 - **消息中心**：接口领先于 UI，先行落底。
-- **今日一牌宜 / 牌面缩略图**：`yi` 取 `cards.yi`（空则 null）。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。管理端独立模块「牌面」维护 `cards` 表。
+- **今日一牌文案 / 牌面缩略图**：正位寄语和今日宜、逆位寄语和今日宜在 `cards`。`yi` 是正位今日宜的覆盖，空则用 `upright_yi`。逆位用 `reversed_yi`。响应里 `card_message` 是对应正逆位的寄语。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。管理端「牌面」维护这些字段。
 - **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；年运等无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。单牌目录以 `/api/admin/v1/cards` 为准。
 - **管理端上传**：`POST /api/admin/v1/uploads?folder=`。后台图片字段走 Vben Form 的 Upload。`folder` 分子目录：牌阵 `spreads`、风格 `decks`、单牌/默认图 `cards`，缺省 `misc`。存哪由 `upload.driver` 决定：`local` 或阿里云 OSS。
 - **邮箱验证码登录**：`POST /api/app/v1/auth/email/code` scene=`login` 或 `bind`，再 `POST /auth/login` `{email, code}`。没有单独注册接口；未注册邮箱首次验证码登录即创建账号。绑邮箱同样只验码、不设密码。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
@@ -67,14 +67,14 @@ App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 AI 模型调研（产品文档第九条，2026-11-18）：现阶段国内只用 DeepSeek Flash 主 + 百炼备用/看图，海外 Claude / OpenAI 另包再接。详见 [design/ai-models-research-2026-11-18.md](./design/ai-models-research-2026-11-18.md)。
 
-PRD 1.0.4 vs 现接口（2026-11-21）：权益差最大，年运 12+4 已对齐。见 [design/prd-1.0.4-vs-api-2026-11-21.md](./design/prd-1.0.4-vs-api-2026-11-21.md)。
+PRD 1.0.4 对照（2026-11-21）：权益差最大，年运 12+4 已对齐。接口、后台、UI 在同一份清单里。见 [design/prd-1.0.4-admin-ui-2026-11-21.md](./design/prd-1.0.4-admin-ui-2026-11-21.md)。
 
 2026-11-17 额度体系调整（对齐《塔塔 App 新人体验、每日免费次数及额度体系调整》一至五）：
 - 取消塔塔币与注册奖励。免费 / 会员每次提问按当前身份分流。
 - 免费：全局每日 1 次（普通 ≤3 张 + 今日/明日）；探索 / 年运 / AI / 超过三张需会员。邀请独立次数，最多 5×3，不过日清。
 - 会员：不享受每日免费，统一扣 `quota_balance`。补充包仅会员可买并入额度；会员过期后额度冻结不扣。
 - 新人：设备引导体验与 AI 试用（仅提问，禁止追问）独立，不扣每日/额度。
-- 待确认数字未编造：会员开通赠送、每次扣额度、补充包发放次数、剩余百分比分母。`diamond_cost` / `reading_grant` 为 null 时停住。
+- 待确认数字未编造：会员开通赠送、每次扣额度、补充包发放额度、剩余百分比分母。`quota_cost` / `quota_grant` 为 null 时停住。
 
 ## 导入 Apifox
 

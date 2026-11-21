@@ -8,13 +8,14 @@ import (
 )
 
 type deckRow struct {
-	Code        string
-	Name        string
-	Thumbnail   string
-	Enabled     bool
-	Sort        int
-	Description string
-	Tags        string
+	Code           string
+	Name           string
+	Thumbnail      string
+	Enabled        bool
+	Sort           int
+	Description    string
+	Tags           string
+	UnlockRequired bool
 }
 
 func deckPreviewURL(thumb string) string {
@@ -84,7 +85,7 @@ func normalizeDeckTagList(tags []string) []string {
 }
 
 func (s *Store) listDecks(ctx context.Context, onlyEnabled bool) ([]deckRow, error) {
-	q := `SELECT code, name, thumbnail, enabled, sort_order, description, tags FROM decks`
+	q := `SELECT code, name, thumbnail, enabled, sort_order, description, tags, unlock_required FROM decks`
 	if onlyEnabled {
 		q += ` WHERE enabled=true`
 	}
@@ -97,7 +98,7 @@ func (s *Store) listDecks(ctx context.Context, onlyEnabled bool) ([]deckRow, err
 	out := []deckRow{}
 	for rows.Next() {
 		var d deckRow
-		if err := rows.Scan(&d.Code, &d.Name, &d.Thumbnail, &d.Enabled, &d.Sort, &d.Description, &d.Tags); err != nil {
+		if err := rows.Scan(&d.Code, &d.Name, &d.Thumbnail, &d.Enabled, &d.Sort, &d.Description, &d.Tags, &d.UnlockRequired); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -115,7 +116,7 @@ func (d deckRow) public(r *http.Request) map[string]any {
 	}
 	return map[string]any{
 		"code": d.Code, "name": name, "thumbnail": absoluteAssetURL(r, deckPreviewURL(d.Thumbnail)), "available": d.Enabled,
-		"description": desc, "tags": parseDeckTags(d.Tags),
+		"description": desc, "tags": parseDeckTags(d.Tags), "unlock_required": d.UnlockRequired,
 	}
 }
 
@@ -154,6 +155,20 @@ func (a *App) resolveUserDeck(ctx context.Context, uid int64, r *http.Request) (
 	if err != nil {
 		return "", nil, nil, err
 	}
+	if len(available) == 0 {
+		available = []deckRow{{Code: "rider-waite", Name: "莱德韦特", Enabled: true}}
+	}
+	unlocks, err := a.loadDeckUnlocks(ctx, uid)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	usable := make([]deckRow, 0, len(available))
+	for _, d := range available {
+		if unlocks.allows(d.Code, d.UnlockRequired) {
+			usable = append(usable, d)
+		}
+	}
+	available = usable
 	if len(available) == 0 {
 		available = []deckRow{{Code: "rider-waite", Name: "莱德韦特", Enabled: true}}
 	}
