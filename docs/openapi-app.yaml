@@ -3339,7 +3339,11 @@ components:
           description: 今日已占用的免费次数标记位数，内部计数。
         reward_remaining:
           type: integer
-          description: 历史字段。注册奖励已下线。
+          description: 历史字段。旧注册奖励余额已下线。新的注册赠送见 registration_gift。
+        registration_gift:
+          type: object
+          nullable: true
+          description: 登录用户的注册赠送记录。间隔未配置时 granted_at 为 null、remaining 为 0。未登录不返回。
         invite_remaining:
           type: integer
           description: 邀请奖励剩余次数。不过日清。仅免费用户返回。

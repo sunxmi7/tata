@@ -2,6 +2,7 @@ package tata
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -504,6 +505,65 @@ func TestDailyQuotaCountsConfigurable(t *testing.T) {
 	reading, _ := reused["reading"].(map[string]any)
 	if asID(reading["id"]) != asID(secondDaily["id"]) {
 		t.Fatalf("reuse latest: %#v", reused)
+	}
+}
+
+func TestRegistrationGiftConfig(t *testing.T) {
+	store, ts := newMergeServer(t)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_valid_days=3, registration_grant_count=1, registration_spread_ids='[]' WHERE id=1`)
+	})
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	var oneCard, celtic int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE name='单张牌占卜' AND theme_key=''`).Scan(&oneCard); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE name='凯尔特十字牌阵' AND theme_key=''`).Scan(&celtic); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{
+		"registration_spread_ids": []int64{celtic},
+	})
+	if !strings.Contains(msg, "白名单") {
+		t.Fatalf("wide spread: %s", msg)
+	}
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{
+		"registration_grant_delay_minutes": 0,
+		"registration_valid_days":          1,
+		"registration_grant_count":         2,
+		"registration_spread_ids":          []int64{oneCard},
+	})
+	params := listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	ids, _ := params["registration_spread_ids"].([]any)
+	if params["registration_grant_delay_minutes"] != float64(0) || params["registration_valid_days"] != float64(1) || params["registration_grant_count"] != float64(2) || len(ids) != 1 {
+		t.Fatalf("params: %#v", params)
+	}
+
+	token, uid := registerUser(t, ts, store, "reggift")
+	var remaining int
+	var granted time.Time
+	var expires time.Time
+	if err := store.QueryRow(t.Context(), `SELECT remaining, granted_at, expires_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&remaining, &granted, &expires); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 || expires.Sub(granted) < 23*time.Hour || expires.Sub(granted) > 25*time.Hour {
+		t.Fatalf("grant remaining=%d granted=%s expires=%s", remaining, granted, expires)
+	}
+	quota := listOne(t, ts, token, "/api/app/v1/quota")
+	gift, _ := quota["registration_gift"].(map[string]any)
+	if gift["remaining"] != float64(2) || gift["total"] != float64(2) || gift["used"] != false {
+		t.Fatalf("app gift: %#v", gift)
+	}
+
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"registration_grant_delay_minutes": nil})
+	_, uid2 := registerUser(t, ts, store, "regwait")
+	var granted2 sql.NullTime
+	var remaining2 int
+	if err := store.QueryRow(t.Context(), `SELECT granted_at, remaining FROM registration_gifts WHERE user_id=$1`, uid2).Scan(&granted2, &remaining2); err != nil {
+		t.Fatal(err)
+	}
+	if granted2.Valid || remaining2 != 0 {
+		t.Fatalf("ungranted: valid=%v remaining=%d", granted2.Valid, remaining2)
 	}
 }
 

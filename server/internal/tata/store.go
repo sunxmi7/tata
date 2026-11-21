@@ -646,6 +646,27 @@ ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_daily_free_c
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_daily_free_chk CHECK (daily_free_count > 0);
 ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_daily_slot_chk;
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_daily_slot_chk CHECK (daily_slot_count > 0);
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS registration_grant_delay_minutes INT;
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS registration_valid_days INT NOT NULL DEFAULT 3;
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS registration_grant_count INT NOT NULL DEFAULT 1;
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS registration_spread_ids TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_reg_delay_chk;
+ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_reg_delay_chk
+  CHECK (registration_grant_delay_minutes IS NULL OR registration_grant_delay_minutes >= 0);
+ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_reg_days_chk;
+ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_reg_days_chk CHECK (registration_valid_days > 0);
+ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_reg_count_chk;
+ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_reg_count_chk CHECK (registration_grant_count > 0);
+CREATE TABLE IF NOT EXISTS registration_gifts (
+  user_id BIGINT PRIMARY KEY,
+  registered_at TIMESTAMPTZ NOT NULL,
+  granted_at TIMESTAMPTZ,
+  usable_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  total INT NOT NULL DEFAULT 0,
+  remaining INT NOT NULL DEFAULT 0,
+  used_at TIMESTAMPTZ
+);
 ALTER TABLE quota_use DROP CONSTRAINT IF EXISTS quota_use_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS quota_use_reading_uidx ON quota_use(reading_id);
 CREATE INDEX IF NOT EXISTS quota_use_user_cycle_idx ON quota_use(user_id, cycle);
@@ -972,6 +993,11 @@ COMMENT ON TABLE quota_settings IS '计费参数。id=1。quota_cost 现为会�
 COMMENT ON COLUMN quota_settings.followup_limit IS '每条解读追问上限。管理端 PUT /quota-params 可改；null 不限制。种子默认 5（设计稿）。';
 COMMENT ON COLUMN quota_settings.daily_free_count IS '每个业务日的共用免费次数。管理端可改，默认 1。';
 COMMENT ON COLUMN quota_settings.daily_slot_count IS '每个业务日可抽今日一牌（含明日运势）的次数。管理端可改，默认 1。';
+COMMENT ON COLUMN quota_settings.registration_grant_delay_minutes IS '注册完成后多少分钟发放赠送。NULL 不自动发；0 表示注册完成立即发。';
+COMMENT ON COLUMN quota_settings.registration_valid_days IS '注册赠送有效天数，从实际发放时刻起算。默认 3。';
+COMMENT ON COLUMN quota_settings.registration_grant_count IS '每次注册实际发放的次数。默认 1。';
+COMMENT ON COLUMN quota_settings.registration_spread_ids IS '注册赠送和邀请可用的普通占卜牌阵 id JSON 数组。空数组表示名单未配。只允许 3 张及以内。';
+COMMENT ON TABLE registration_gifts IS '注册赠送 1 次的独立记录。与新人引导、塔罗师试用、邀请奖励分开。间隔未配置时只记注册时间，不发放。';
 COMMENT ON TABLE quota_charges IS '单次解读扣费。entitlement=daily_free/invite_reward/admin_grant_free/member_quota/ai_trial/onboard_trial。';
 COMMENT ON TABLE device_experiences IS '设备维度新人引导体验。每设备 1 次；解读成功展示时消耗，不扣每日免费或会员额度。';
 COMMENT ON TABLE anon_devices IS '匿名会话绑定的设备识别。';

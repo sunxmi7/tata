@@ -179,6 +179,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var id int64
 	var cancelled *time.Time
+	created := false
 	err := a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE lower(email)=lower($1) AND merged_into IS NULL`, email).Scan(&id, &cancelled)
 	if errors.Is(err, sql.ErrNoRows) {
 		if a.claimed(r, "email", email) {
@@ -192,6 +193,8 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, r, http.StatusOK, "邮箱登录失败")
 				return
 			}
+		} else {
+			created = true
 		}
 	} else if err != nil {
 		writeErr(w, r, http.StatusOK, "邮箱登录失败")
@@ -199,6 +202,10 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
+		return
+	}
+	if err := a.finishRegistration(r.Context(), id, created); err != nil {
+		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
 	a.ensureProfileDefaults(r.Context(), id)
@@ -448,6 +455,9 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 	var memberExp time.Time
 	var memberAuto sql.NullBool
 	if uid > 0 {
+		if err := a.Store.ensureRegistrationGift(r.Context(), uid); err != nil {
+			return err
+		}
 		memberKind, memberExp, memberAuto, member, err = loadActiveMembership(r.Context(), a.Store, uid)
 		if err != nil {
 			return err
@@ -491,6 +501,13 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		"followup_limit":               followup,
 		"quota_cost":                   quotaCost,
 		"quota_cost_configured":        configured,
+	}
+	if uid > 0 {
+		gift, gerr := loadRegistrationGift(r.Context(), a.Store, uid)
+		if gerr != nil {
+			return gerr
+		}
+		out["registration_gift"] = gift
 	}
 	if member {
 		label := "月度会员"

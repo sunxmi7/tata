@@ -546,23 +546,35 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	reg, err := loadRegistrationSettings(r.Context(), a.Store)
+	if err != nil {
+		return err
+	}
+	var grantDelay any
+	if reg.DelayMinutes.Valid {
+		grantDelay = reg.DelayMinutes.Int64
+	}
 	writeOK(w, map[string]any{
-		"reset_at":                "北京时间 08:00",
-		"daily_free_count":        dailyFree,
-		"daily_slot_count":        dailySlot,
-		"shared_scope":            "免费用户：今日免费次数，邀请奖励次数；会员：统一额度。探索/年运/AI 不适用每日免费。",
-		"failure_policy":          "已扣不退",
-		"editable":                false,
-		"daily_free_editable":     true,
-		"daily_slot_editable":     true,
-		"followup_limit":          followup,
-		"followup_limit_editable": true,
-		"quota_cost":              quotaCost,
-		"quota_cost_configured":   configured,
-		"quota_cost_editable":     true,
-		"quota_spend_order":       "quota",
-		"free_label":              "次数",
-		"paid_label":              "额度",
+		"reset_at":                         "北京时间 08:00",
+		"daily_free_count":                 dailyFree,
+		"daily_slot_count":                 dailySlot,
+		"shared_scope":                     "免费用户：今日免费次数，邀请奖励次数；会员：统一额度。探索/年运/AI 不适用每日免费。",
+		"failure_policy":                   "已扣不退",
+		"editable":                         false,
+		"daily_free_editable":              true,
+		"daily_slot_editable":              true,
+		"followup_limit":                   followup,
+		"followup_limit_editable":          true,
+		"quota_cost":                       quotaCost,
+		"quota_cost_configured":            configured,
+		"quota_cost_editable":              true,
+		"registration_grant_delay_minutes": grantDelay,
+		"registration_valid_days":          reg.ValidDays,
+		"registration_grant_count":         reg.GrantCount,
+		"registration_spread_ids":          reg.SpreadIDs,
+		"quota_spend_order":                "quota",
+		"free_label":                       "次数",
+		"paid_label":                       "额度",
 	})
 	return nil
 }
@@ -628,6 +640,64 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET quota_cost=$1, updated_at=now() WHERE id=1`, cost); err != nil {
 				return err
 			}
+		}
+		changed = true
+	}
+	if delayRaw, ok := raw["registration_grant_delay_minutes"]; ok {
+		if string(delayRaw) == "null" {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, updated_at=now() WHERE id=1`); err != nil {
+				return err
+			}
+		} else {
+			var minutes int
+			if err := json.Unmarshal(delayRaw, &minutes); err != nil || minutes < 0 {
+				return biz("注册赠送发放间隔须为不小于 0 的分钟数，或 null 表示不自动发放")
+			}
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=$1, updated_at=now() WHERE id=1`, minutes); err != nil {
+				return err
+			}
+		}
+		changed = true
+	}
+	if daysRaw, ok := raw["registration_valid_days"]; ok {
+		var days int
+		if err := json.Unmarshal(daysRaw, &days); err != nil || days <= 0 {
+			return biz("注册赠送有效天数须为正整数")
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET registration_valid_days=$1, updated_at=now() WHERE id=1`, days); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if countRaw, ok := raw["registration_grant_count"]; ok {
+		var n int
+		if err := json.Unmarshal(countRaw, &n); err != nil || n <= 0 {
+			return biz("注册赠送次数须为正整数")
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET registration_grant_count=$1, updated_at=now() WHERE id=1`, n); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if idsRaw, ok := raw["registration_spread_ids"]; ok {
+		var ids []int64
+		if string(idsRaw) != "null" {
+			if err := json.Unmarshal(idsRaw, &ids); err != nil {
+				return biz("注册赠送白名单不正确")
+			}
+		}
+		if ids == nil {
+			ids = []int64{}
+		}
+		if err := validateRegistrationSpreads(r.Context(), a.Store, ids); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET registration_spread_ids=$1, updated_at=now() WHERE id=1`, string(encoded)); err != nil {
+			return err
 		}
 		changed = true
 	}

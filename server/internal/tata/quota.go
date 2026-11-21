@@ -507,6 +507,145 @@ func loadQuotaCost(ctx context.Context, ex execer) (int, bool, error) {
 	return int(cost.Int64), true, nil
 }
 
+type registrationSettings struct {
+	DelayMinutes sql.NullInt64
+	ValidDays    int
+	GrantCount   int
+	SpreadIDs    []int64
+}
+
+func loadRegistrationSettings(ctx context.Context, ex execer) (registrationSettings, error) {
+	var cfg registrationSettings
+	var raw string
+	err := ex.QueryRow(ctx, `SELECT registration_grant_delay_minutes, registration_valid_days, registration_grant_count, registration_spread_ids FROM quota_settings WHERE id=1`).
+		Scan(&cfg.DelayMinutes, &cfg.ValidDays, &cfg.GrantCount, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return registrationSettings{ValidDays: 3, GrantCount: 1, SpreadIDs: []int64{}}, nil
+	}
+	if err != nil {
+		return registrationSettings{}, err
+	}
+	if cfg.ValidDays <= 0 {
+		cfg.ValidDays = 3
+	}
+	if cfg.GrantCount <= 0 {
+		cfg.GrantCount = 1
+	}
+	cfg.SpreadIDs = []int64{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.SpreadIDs); err != nil {
+			return registrationSettings{}, err
+		}
+	}
+	if cfg.SpreadIDs == nil {
+		cfg.SpreadIDs = []int64{}
+	}
+	return cfg, nil
+}
+
+func (a *App) finishRegistration(ctx context.Context, uid int64, created bool) error {
+	if created {
+		return a.Store.noteRegistration(ctx, uid)
+	}
+	return a.Store.ensureRegistrationGift(ctx, uid)
+}
+
+func (s *Store) noteRegistration(ctx context.Context, uid int64) error {
+	if uid <= 0 {
+		return nil
+	}
+	if _, err := s.Exec(ctx, `INSERT INTO registration_gifts(user_id, registered_at) VALUES ($1, now()) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
+		return err
+	}
+	return s.ensureRegistrationGift(ctx, uid)
+}
+
+func (s *Store) ensureRegistrationGift(ctx context.Context, uid int64) error {
+	if uid <= 0 {
+		return nil
+	}
+	var registered time.Time
+	var granted sql.NullTime
+	err := s.QueryRow(ctx, `SELECT registered_at, granted_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&registered, &granted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if granted.Valid {
+		return nil
+	}
+	cfg, err := loadRegistrationSettings(ctx, s)
+	if err != nil {
+		return err
+	}
+	if !cfg.DelayMinutes.Valid {
+		return nil
+	}
+	if time.Now().Before(registered.Add(time.Duration(cfg.DelayMinutes.Int64) * time.Minute)) {
+		return nil
+	}
+	now := time.Now()
+	_, err = s.Exec(ctx, `UPDATE registration_gifts
+		SET granted_at=$2, usable_at=$2, expires_at=$3, total=$4, remaining=$4
+		WHERE user_id=$1 AND granted_at IS NULL`,
+		uid, now, now.Add(time.Duration(cfg.ValidDays)*24*time.Hour), cfg.GrantCount)
+	return err
+}
+
+func loadRegistrationGift(ctx context.Context, ex execer, uid int64) (map[string]any, error) {
+	empty := map[string]any{
+		"registered_at": nil, "granted_at": nil, "usable_at": nil, "expires_at": nil,
+		"total": 0, "remaining": 0, "used": false, "used_at": nil,
+	}
+	if uid <= 0 {
+		return empty, nil
+	}
+	var registered time.Time
+	var granted, usable, expires, usedAt sql.NullTime
+	var total, remaining int
+	err := ex.QueryRow(ctx, `SELECT registered_at, granted_at, usable_at, expires_at, total, remaining, used_at FROM registration_gifts WHERE user_id=$1`, uid).
+		Scan(&registered, &granted, &usable, &expires, &total, &remaining, &usedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return empty, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"registered_at": registered,
+		"granted_at":    nullTime(granted),
+		"usable_at":     nullTime(usable),
+		"expires_at":    nullTime(expires),
+		"total":         total,
+		"remaining":     remaining,
+		"used":          usedAt.Valid,
+		"used_at":       nullTime(usedAt),
+	}, nil
+}
+
+func validateRegistrationSpreads(ctx context.Context, ex execer, ids []int64) error {
+	seen := map[int64]struct{}{}
+	for _, id := range ids {
+		if id <= 0 {
+			return biz("注册赠送白名单牌阵不正确")
+		}
+		if _, ok := seen[id]; ok {
+			return biz("注册赠送白名单牌阵不正确")
+		}
+		seen[id] = struct{}{}
+		var n int
+		if err := ex.QueryRow(ctx, `SELECT count(*) FROM spreads WHERE id=$1 AND theme_key='' AND card_count BETWEEN 1 AND 3`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			return biz("注册赠送白名单只能选 3 张及以内的普通占卜牌阵")
+		}
+	}
+	return nil
+}
+
 func loadFollowupLimit(ctx context.Context, ex execer) (int, bool, error) {
 	var limit sql.NullInt64
 	err := ex.QueryRow(ctx, `SELECT followup_limit FROM quota_settings WHERE id=1`).Scan(&limit)

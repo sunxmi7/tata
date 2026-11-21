@@ -61,6 +61,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	mergeWeChatHints(&prof, req)
 	var id int64
 	var cancelled *time.Time
+	created := false
 	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, prof.ID).Scan(&id, &cancelled)
 	if err != nil {
 		if a.claimed(r, "wechat", prof.ID) {
@@ -72,9 +73,14 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, http.StatusOK, "微信登录失败")
 			return
 		}
+		created = true
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
+		return
+	}
+	if err := a.finishRegistration(r.Context(), id, created); err != nil {
+		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
 	a.applyWeChatProfile(r, id, prof)
@@ -101,6 +107,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	}
 	var id int64
 	var cancelled *time.Time
+	created := false
 	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE apple_sub=$1`, sub).Scan(&id, &cancelled)
 	if err != nil {
 		if a.claimed(r, "apple", sub) {
@@ -112,9 +119,14 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, http.StatusOK, "苹果登录失败")
 			return
 		}
+		created = true
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
+		return
+	}
+	if err := a.finishRegistration(r.Context(), id, created); err != nil {
+		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
 	a.ensureProfileDefaults(r.Context(), id)

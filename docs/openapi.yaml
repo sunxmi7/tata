@@ -937,7 +937,40 @@ components:
           description: 今日已占用的免费次数标记位数，内部计数。
         reward_remaining:
           type: integer
-          description: 历史字段。注册奖励已下线，当前不再发放，合并响应里仍可能为 0。
+          description: 历史字段。旧注册奖励余额已下线。新的注册赠送见 registration_gift。
+        registration_gift:
+          type: object
+          nullable: true
+          description: 登录用户的注册赠送记录。间隔未配置时 granted_at 为 null、remaining 为 0。未登录不返回。
+          properties:
+            registered_at:
+              type: string
+              format: date-time
+              nullable: true
+            granted_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: 实际发放时间。未发放为 null。
+            usable_at:
+              type: string
+              format: date-time
+              nullable: true
+            expires_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: 从实际发放时刻起，按配置的有效天数计算。
+            total:
+              type: integer
+            remaining:
+              type: integer
+            used:
+              type: boolean
+            used_at:
+              type: string
+              format: date-time
+              nullable: true
         invite_remaining:
           type: integer
           description: 邀请奖励剩余次数。不过日清。仅免费用户返回。
@@ -1050,6 +1083,24 @@ components:
         quota_cost_editable:
           type: boolean
           example: true
+        registration_grant_delay_minutes:
+          type: integer
+          nullable: true
+          description: 注册完成后多少分钟发放。null 不自动发；0 为注册完成立即发。
+        registration_valid_days:
+          type: integer
+          example: 3
+          description: 从实际发放时刻起的有效天数。
+        registration_grant_count:
+          type: integer
+          example: 1
+          description: 每个新账号发放的次数。
+        registration_spread_ids:
+          type: array
+          description: 注册赠送可用的普通占卜牌阵。只允许 3 张及以内。空数组表示名单未配。
+          items:
+            type: integer
+            format: int64
         quota_spend_order:
           type: string
           example: quota
@@ -1083,6 +1134,22 @@ components:
           type: integer
           nullable: true
           description: 与 quota_cost 相同。
+        registration_grant_delay_minutes:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: null 不自动发放。0 表示注册完成立即发放。
+        registration_valid_days:
+          type: integer
+          minimum: 1
+        registration_grant_count:
+          type: integer
+          minimum: 1
+        registration_spread_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
     Profile:
       type: object
       properties:
@@ -7424,7 +7491,10 @@ paths:
         - $ref: "#/components/parameters/Authorization"
       description: |
         重置时刻不可改（editable=false）。
-        daily_free_count、daily_slot_count、followup_limit 可改。
+        daily_free_count、daily_slot_count、followup_limit、quota_cost 可改，改完即用于结算。
+        registration_grant_delay_minutes 为空则不自动发放注册赠送；0 为注册完成立即发。
+        registration_valid_days 默认 3，registration_grant_count 默认 1。
+        registration_spread_ids 只接受 3 张及以内的普通占卜牌阵，结算尚未读取这份名单。
         followup_limit 种子默认 5，null 不限制。
         quota_cost 未配置时为 null。响应不含价格。
       responses:
@@ -7448,7 +7518,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        需要 role=admin。可改 daily_free_count、daily_slot_count（正整数）和 followup_limit（正整数或 null）。
+        需要 role=admin。可改每日免费次数、今日一牌次数、追问上限、会员单次额度，以及注册赠送的发放间隔、有效天数、次数和牌阵白名单。
         请求里带 reset_at 仍拒绝「重置时刻不可修改」。至少带一个可改字段。
       requestBody:
         required: true
