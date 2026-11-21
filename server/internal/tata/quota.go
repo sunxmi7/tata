@@ -224,7 +224,7 @@ func chargeComplimentary(ctx context.Context, tx Tx, opts chargeOpts, blocked st
 }
 
 func chargeMemberQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecision, error) {
-	cost, configured, err := loadQuotaCost(ctx, tx)
+	cost, configured, err := loadPlayCost(ctx, tx, opts.ReadingID)
 	if err != nil {
 		return quotaDecision{}, err
 	}
@@ -864,6 +864,20 @@ func loadQuotaBalance(ctx context.Context, q rowQuery, uid int64) (int, error) {
 	return n, err
 }
 
+func loadPlayCost(ctx context.Context, ex execer, readingID int64) (int, bool, error) {
+	if readingID > 0 {
+		var cost sql.NullInt64
+		err := ex.QueryRow(ctx, `SELECT s.quota_cost FROM readings r JOIN spreads s ON s.id=r.spread_id WHERE r.id=$1`, readingID).Scan(&cost)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, false, err
+		}
+		if err == nil && cost.Valid && cost.Int64 > 0 {
+			return int(cost.Int64), true, nil
+		}
+	}
+	return loadQuotaCost(ctx, ex)
+}
+
 func loadQuotaCost(ctx context.Context, ex execer) (int, bool, error) {
 	var cost sql.NullInt64
 	err := ex.QueryRow(ctx, `SELECT quota_cost FROM quota_settings WHERE id=1`).Scan(&cost)
@@ -1185,7 +1199,7 @@ func playCover(ctx context.Context, tx Tx, opts chargeOpts) (string, error) {
 		return "", err
 	}
 	if member {
-		cost, configured, err := loadQuotaCost(ctx, tx)
+		cost, configured, err := loadPlayCost(ctx, tx, opts.ReadingID)
 		if err != nil {
 			return "", err
 		}
@@ -1314,6 +1328,13 @@ func (a *App) gatePlay(w http.ResponseWriter, r *http.Request, action string) (b
 	id, err := pathID(r)
 	if err != nil {
 		return false, err
+	}
+	open, err := openOnboardReading(r.Context(), a.Store, id, uid)
+	if err != nil {
+		return false, err
+	}
+	if open {
+		return false, nil
 	}
 	if action == resumeShuffle || action == resumeDraw {
 		already, _, err := playAlready(r.Context(), a.Store, id)

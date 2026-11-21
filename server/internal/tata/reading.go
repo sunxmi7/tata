@@ -181,11 +181,12 @@ func (a *App) appAnonymous(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email       string `json:"email"`
-		Code        string `json:"code"`
-		AnonymousID string `json:"anonymous_id"`
-		InviteCode  string `json:"invite_code"`
-		DeviceID    string `json:"device_id"`
+		Email        string `json:"email"`
+		Code         string `json:"code"`
+		AnonymousID  string `json:"anonymous_id"`
+		InviteCode   string `json:"invite_code"`
+		InviteSource string `json:"invite_source"`
+		DeviceID     string `json:"device_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
@@ -242,7 +243,8 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	a.ensureProfileDefaults(r.Context(), id)
 	a.consumeEmailCode(r.Context(), "login", email)
 	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
-	a.tryApplyInvite(r.Context(), id, req.InviteCode)
+	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
+	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "email", "reward_consumed": settled, "needs_confirm": false})
@@ -278,6 +280,12 @@ func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
 		return false
 	}
 	hasCards := cards.Valid && strings.TrimSpace(cards.String) != ""
+	if onboard {
+		var trialUsed bool
+		if err := a.Store.QueryRow(r.Context(), `SELECT reading_trial_used FROM app_users WHERE id=$1`, uid).Scan(&trialUsed); err != nil || !trialUsed {
+			return false
+		}
+	}
 	if onboard && !hasCards {
 		return false
 	}
@@ -679,9 +687,16 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	}
 	defer tx.Rollback(ctx)
 	boundDevice := resolveDeviceID(ctx, tx, anon, deviceID)
+	onboard := false
+	if kind == "normal" {
+		onboard, err = a.prepareOnboard(ctx, tx, uid, anon, kind, boundDevice)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,FALSE,$7) RETURNING id`,
-		nullID(uid), nullStr(anon), kind, question, tarotistID, first, boundDevice).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,$7,$8) RETURNING id`,
+		nullID(uid), nullStr(anon), kind, question, tarotistID, first, onboard, boundDevice).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -781,8 +796,8 @@ func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, 
 	if deviceID == "" {
 		return false, nil
 	}
-	var consumed bool
-	err := tx.QueryRow(ctx, `SELECT consumed FROM device_experiences WHERE device_id=$1 FOR UPDATE`, deviceID).Scan(&consumed)
+	var consumed, forfeited bool
+	err := tx.QueryRow(ctx, `SELECT consumed, trial_forfeited FROM device_experiences WHERE device_id=$1 FOR UPDATE`, deviceID).Scan(&consumed, &forfeited)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = tx.Exec(ctx, `INSERT INTO device_experiences(device_id, anonymous_id) VALUES ($1,$2)`, deviceID, anon)
 		return err == nil, err
@@ -790,7 +805,50 @@ func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, 
 	if err != nil {
 		return false, err
 	}
-	return !consumed, nil
+	return !consumed && !forfeited, nil
+}
+
+func openOnboardReading(ctx context.Context, ex rowQuery, readingID, uid int64) (bool, error) {
+	if readingID <= 0 || uid <= 0 {
+		return false, nil
+	}
+	var onboard, used bool
+	err := ex.QueryRow(ctx, `SELECT r.onboard_experience, u.reading_trial_used
+		FROM readings r JOIN app_users u ON u.id=$2 WHERE r.id=$1`, readingID, uid).Scan(&onboard, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return onboard && !used, nil
+}
+
+func (a *App) consumeOnboardIfReady(ctx context.Context, readingID int64) error {
+	var uid sql.NullInt64
+	var onboard bool
+	var status string
+	err := a.Store.QueryRow(ctx, `SELECT user_id, onboard_experience, status FROM readings WHERE id=$1`, readingID).Scan(&uid, &onboard, &status)
+	if err != nil || !onboard || !uid.Valid || status != "COMPLETED" {
+		return err
+	}
+	tx, err := a.Store.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := consumeOnboardExperience(ctx, tx, uid.Int64, readingID); err != nil {
+		return err
+	}
+	if err := recordCharge(ctx, tx, chargeOpts{
+		UserID: uid.Int64, ReadingID: readingID, ChargeKey: chargeKeyPlay, ResumeAction: resumeInterpret,
+	}, entOnboard, 1, "", "消耗新人引导体验", nil); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE readings SET quota_settled=TRUE WHERE id=$1`, readingID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func userTimezone(ctx context.Context, ex execer, uid int64) string {
@@ -853,7 +911,9 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 	} else if cardCount > 3 {
 		return biz("开通会员后可使用超过三张牌的牌阵")
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), status='SPREAD_SELECTED', updated_at=now() WHERE id=$2 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, id)
+	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), status='SPREAD_SELECTED',
+		spread_selection=CASE WHEN recommended_spread_id=$1 THEN 'system_recommendation' ELSE 'manual_selection' END,
+		updated_at=now() WHERE id=$2 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, id)
 	if err != nil {
 		return err
 	}
@@ -861,6 +921,18 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 		return biz("当前状态不能选择牌阵")
 	}
 	if uid > 0 {
+		open, oerr := openOnboardReading(r.Context(), a.Store, id, uid)
+		if oerr != nil {
+			return oerr
+		}
+		if open {
+			item, err := a.loadReadingAbs(r.Context(), r, id)
+			if err != nil {
+				return err
+			}
+			writeOK(w, item)
+			return nil
+		}
 		stop, err := a.chargeAtSpread(w, r, id)
 		if err != nil || stop {
 			return err

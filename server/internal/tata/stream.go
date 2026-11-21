@@ -119,7 +119,7 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能追问")
 	}
-	if err := rejectFreeFollowup(r.Context(), a.Store, uid, kind); err != nil {
+	if err := rejectFreeFollowup(r.Context(), a.Store, uid, id, kind); err != nil {
 		return err
 	}
 	text := strings.TrimSpace(req.Text)

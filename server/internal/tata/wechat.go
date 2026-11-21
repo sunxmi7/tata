@@ -205,13 +205,14 @@ func trimWeChatLog(body []byte) string {
 }
 
 type wechatAuthBody struct {
-	Code        string `json:"code"`
-	InviteCode  string `json:"invite_code"`
-	DeviceID    string `json:"device_id"`
-	AnonymousID string `json:"anonymous_id"`
-	Nickname    string `json:"nickname"`
-	AvatarURL   string `json:"avatar_url"`
-	HeadImgURL  string `json:"headimgurl"`
+	Code         string `json:"code"`
+	InviteCode   string `json:"invite_code"`
+	InviteSource string `json:"invite_source"`
+	DeviceID     string `json:"device_id"`
+	AnonymousID  string `json:"anonymous_id"`
+	Nickname     string `json:"nickname"`
+	AvatarURL    string `json:"avatar_url"`
+	HeadImgURL   string `json:"headimgurl"`
 }
 
 func mergeWeChatHints(prof *wechatProfile, body wechatAuthBody) {

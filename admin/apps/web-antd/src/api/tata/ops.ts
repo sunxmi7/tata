@@ -220,6 +220,8 @@ export interface InviteRelation {
   inviter_id: number;
   invitee_id: number;
   invite_code: string;
+  source?: string;
+  source_label?: string;
   created_at: string;
   inviter_total?: number | null;
   inviter_remaining?: number | null;

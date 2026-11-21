@@ -33,7 +33,7 @@ var feedbackCategories = map[string]bool{
 }
 
 func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, short_sentence, theme_key, theme_title, theme_subtitle
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, short_sentence, theme_key, theme_title, theme_subtitle, positions, quick_questions
 		FROM spreads WHERE enabled=true AND theme_key<>'' ORDER BY sort_order, id`)
 	if err != nil {
 		return err
@@ -47,9 +47,9 @@ func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
 	themes := map[string]*theme{}
 	for rows.Next() {
 		var id int64
-		var name, desc, short, key, title, subtitle string
+		var name, desc, short, key, title, subtitle, positions, questions string
 		var count int
-		if err := rows.Scan(&id, &name, &desc, &count, &short, &key, &title, &subtitle); err != nil {
+		if err := rows.Scan(&id, &name, &desc, &count, &short, &key, &title, &subtitle, &positions, &questions); err != nil {
 			return err
 		}
 		item, ok := themes[key]
@@ -61,6 +61,7 @@ func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
 		item.Spreads = append(item.Spreads, map[string]any{
 			"id": id, "name": T(r.Context(), name), "card_count": count,
 			"short_sentence": T(r.Context(), short), "description": T(r.Context(), desc),
+			"positions": json.RawMessage(positions), "quick_questions": json.RawMessage(questions),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -94,7 +95,7 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	}
 	rawCode := strings.TrimSpace(req.Code)
 	if _, ok := inviteAccountID(rawCode); ok {
-		if err := a.applyInvite(r.Context(), uid, rawCode); err != nil {
+		if err := a.applyInvite(r.Context(), uid, rawCode, "code"); err != nil {
 			return err
 		}
 		remaining, err := inviteBalance(r.Context(), a.Store, uid)

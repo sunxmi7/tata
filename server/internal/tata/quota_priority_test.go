@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -248,6 +249,9 @@ func TestFollowupReentersSharedQuota(t *testing.T) {
 	resetDiamondCost(t, store)
 	setDiamondCost(t, store, 2)
 	token, uid := registerUser(t, ts, store, "follow")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
 	setMember(t, store, uid, "month")
 	setQuota(t, store, uid, 20)
 	if _, err := store.Exec(t.Context(), `DELETE FROM bindings WHERE task='tarotist'`); err != nil {
@@ -321,6 +325,9 @@ func TestFollowupLimitConfigurable(t *testing.T) {
 	}
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"followup_limit": 1})
 	token, uid := registerUser(t, ts, store, "followcap")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
 	setMember(t, store, uid, "month")
 	setDiamondCost(t, store, 1)
 	setQuota(t, store, uid, 20)
@@ -538,8 +545,13 @@ func TestDailyQuotaCountsConfigurable(t *testing.T) {
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "不再扣每日免费", "type": "normal"})
 	spreadID := ensureTimeFlow(t, store)
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
-	if playEntitlement(t, store, asID(reading["id"])) == entDaily {
+	var ent string
+	err := store.QueryRow(t.Context(), `SELECT entitlement FROM quota_charges WHERE reading_id=$1 AND charge_key='play'`, asID(reading["id"])).Scan(&ent)
+	if err == nil && ent == entDaily {
 		t.Fatal("daily free still charged")
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
 	}
 	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle", asID(reading["id"])), map[string]any{})
 	if msg != "" {
@@ -1057,6 +1069,56 @@ func TestGiftBeforeInviteAndShortPool(t *testing.T) {
 func exhaustFree(t *testing.T, ts *httptest.Server, token string) {
 	t.Helper()
 	create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "占位", "type": "normal"})
+}
+
+func TestSpreadCostOverridesGlobalQuota(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	token, uid := registerUser(t, ts, store, "spreadcost")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 20)
+	spreadID := ensureTimeFlow(t, store)
+	if _, err := store.Exec(t.Context(), `UPDATE spreads SET quota_cost=4 WHERE id=$1`, spreadID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE spreads SET quota_cost=NULL WHERE id=$1`, spreadID)
+	})
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "按这套牌阵算", "type": "normal"})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
+	var amount int
+	if err := store.QueryRow(t.Context(), `SELECT amount FROM quota_charges WHERE reading_id=$1 AND charge_key=$2`, asID(reading["id"]), chargeKeyPlay).Scan(&amount); err != nil {
+		t.Fatal(err)
+	}
+	if amount != 4 {
+		t.Fatalf("charged %d", amount)
+	}
+}
+
+func TestMemberTarotistCanFollowUpAfterTrial(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	token, uid := registerUser(t, ts, store, "tarotpaid")
+	tarotistID := firstTarotist(t, ts, token)
+	first := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "试用", "type": "tarotist", "tarotist_id": tarotistID})
+	completeReading(t, store, asID(first["id"]))
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 10)
+	second := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "正式", "type": "tarotist", "tarotist_id": tarotistID})
+	if second["entitlement"] != entQuota {
+		t.Fatalf("paid tarotist: %#v", second)
+	}
+	id := asID(second["id"])
+	completeReading(t, store, id)
+	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "继续看", "continuation": true})
+	if msg != "" {
+		t.Fatalf("member followup: %s %s", msg, raw)
+	}
 }
 
 func exhaustFreePlay(t *testing.T, ts *httptest.Server, store *Store, token string) {

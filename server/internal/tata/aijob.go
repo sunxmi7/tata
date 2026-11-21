@@ -333,7 +333,11 @@ func (a *App) executeInterpret(id int64) {
 		fail(err)
 		return
 	}
-	if !quotaConsumed && !rewardConsumed && !settled {
+	var onboard, trialUsed bool
+	if userID != nil {
+		_ = a.Store.QueryRow(bg, `SELECT r.onboard_experience, u.reading_trial_used FROM readings r JOIN app_users u ON u.id=r.user_id WHERE r.id=$1`, id).Scan(&onboard, &trialUsed)
+	}
+	if (!onboard || trialUsed) && !quotaConsumed && !rewardConsumed && !settled {
 		fail(biz("额度未扣减，记录已保留，不继续生成"))
 		return
 	}
@@ -401,6 +405,10 @@ func (a *App) executeInterpret(id int64) {
 		return
 	}
 	if _, err := a.Store.Exec(bg, `UPDATE readings SET status='COMPLETED', interpretation=$1, fail_reason=NULL, updated_at=now() WHERE id=$2`, text, id); err != nil {
+		fail(err)
+		return
+	}
+	if err := a.consumeOnboardIfReady(bg, id); err != nil {
 		fail(err)
 		return
 	}

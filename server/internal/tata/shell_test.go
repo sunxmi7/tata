@@ -69,8 +69,14 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 			t.Fatalf("spread fields: %#v", first)
 		}
 	}
-	if titles["Yes or No"] != 1 || titles["关系走向"] != 3 || titles["内心需求"] != 2 || spreadCount != 22 {
+	if titles["Yes or No"] != 1 || titles["关系走向"] != 2 || titles["内心需求"] != 2 || titles["购物抉择"] != 2 || spreadCount != 21 {
 		t.Fatalf("explore catalog: %#v count=%d", titles, spreadCount)
+	}
+	first := themes[0].(map[string]any)["spreads"].([]any)[0].(map[string]any)
+	questions, _ := first["quick_questions"].([]any)
+	positions, _ := first["positions"].([]any)
+	if len(questions) == 0 || len(positions) == 0 {
+		t.Fatalf("explore positions: %#v", first)
 	}
 
 	ledger := listOne(t, ts, token, "/api/app/v1/wallet/ledger")

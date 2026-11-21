@@ -134,7 +134,8 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	a.applyWeChatProfile(r, id, prof)
 	a.ensureProfileDefaults(r.Context(), id)
 	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
-	a.tryApplyInvite(r.Context(), id, req.InviteCode)
+	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
+	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": T(r.Context(), wechatQuotaNote)})
@@ -144,6 +145,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IdentityToken string `json:"identity_token"`
 		InviteCode    string `json:"invite_code"`
+		InviteSource  string `json:"invite_source"`
 		DeviceID      string `json:"device_id"`
 		AnonymousID   string `json:"anonymous_id"`
 	}
@@ -186,7 +188,8 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ensureProfileDefaults(r.Context(), id)
 	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
-	a.tryApplyInvite(r.Context(), id, req.InviteCode)
+	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
+	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "", "")
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "apple"})
 }
@@ -347,8 +350,71 @@ func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	a.rememberRecommendation(r.Context(), id, payload)
 	writeOK(w, payload)
 	return nil
+}
+
+func (a *App) appRecommend(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	var question string
+	if err := a.Store.QueryRow(r.Context(), `SELECT question FROM readings WHERE id=$1`, id).Scan(&question); err != nil {
+		return err
+	}
+	payload, err := a.localDetect(r.Context(), uid, question)
+	if err != nil {
+		return err
+	}
+	a.rememberRecommendation(r.Context(), id, payload)
+	writeOK(w, payload)
+	return nil
+}
+
+func (a *App) attachRecommendation(ctx context.Context, out map[string]any) error {
+	out["recommended_spread"] = nil
+	out["match_status"] = "NO_MATCH"
+	out["mapping_status"] = "unconfigured"
+	var id int64
+	var name string
+	var count int
+	err := a.Store.QueryRow(ctx, `SELECT id, name, card_count FROM spreads
+		WHERE enabled=true AND theme_key='' AND recommended=true ORDER BY id LIMIT 1`).Scan(&id, &name, &count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	out["recommended_spread"] = map[string]any{"id": id, "name": name, "card_count": count}
+	out["match_status"] = "RECOMMENDED"
+	return nil
+}
+
+func (a *App) rememberRecommendation(ctx context.Context, readingID int64, payload map[string]any) {
+	spread, _ := payload["recommended_spread"].(map[string]any)
+	if spread == nil {
+		return
+	}
+	id, ok := spread["id"].(int64)
+	if !ok {
+		if n, ok := spread["id"].(float64); ok {
+			id = int64(n)
+		}
+	}
+	if id <= 0 {
+		return
+	}
+	_, _ = a.Store.Exec(ctx, `UPDATE readings SET recommended_spread_id=$1 WHERE id=$2 AND spread_id IS NULL`, id, readingID)
 }
 
 func (a *App) localDetect(ctx context.Context, uid int64, question string) (map[string]any, error) {
@@ -364,7 +430,11 @@ func (a *App) localDetect(ctx context.Context, uid int64, question string) (map[
 	}
 	if q == "" {
 		out["reason"] = "empty"
+		out["match_status"] = "NO_MATCH"
 		return out, nil
+	}
+	if err := a.attachRecommendation(ctx, out); err != nil {
+		return nil, err
 	}
 	member := false
 	var err error
@@ -421,10 +491,31 @@ func (a *App) moveRitual(w http.ResponseWriter, r *http.Request, from, to, wrong
 	return nil
 }
 
-func rejectFreeFollowup(ctx context.Context, q rowQuery, uid int64, kind string) error {
+func rejectFreeFollowup(ctx context.Context, q *Store, uid, readingID int64, kind string) error {
+	var onboard bool
+	if err := q.QueryRow(ctx, `SELECT onboard_experience FROM readings WHERE id=$1`, readingID).Scan(&onboard); err != nil {
+		return err
+	}
+	if onboard {
+		return biz("新人体验不能追问")
+	}
 	switch kind {
 	case "tarotist":
-		return biz("塔罗师不能追问")
+		_, ent, err := playAlready(ctx, q, readingID)
+		if err != nil {
+			return err
+		}
+		if ent == entTrial {
+			return biz("塔罗师不能追问")
+		}
+		member, err := hasActiveMembership(ctx, q, uid)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return biz("免费用户不能追问")
+		}
+		return nil
 	case "daily":
 		return biz("今日和明日不能追问")
 	case "normal", "explore":
@@ -514,7 +605,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 		a.clearPendingIdem(r, scope, idemKey)
 		return biz(paywallNeedLogin)
 	}
-	if err := rejectFreeFollowup(r.Context(), a.Store, uid, kind); err != nil {
+	if err := rejectFreeFollowup(r.Context(), a.Store, uid, id, kind); err != nil {
 		a.clearPendingIdem(r, scope, idemKey)
 		return err
 	}

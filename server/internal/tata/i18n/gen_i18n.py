@@ -205,6 +205,11 @@ add("该日已使用，删除记录后不能再抽",
     "That day was already used. Deleting the record does not allow another draw.",
     "その日は使用済みです。記録を削除しても再度引けません。",
     "그날은 이미 사용했습니다. 기록을 삭제해도 다시 뽑을 수 없습니다.")
+add("新人体验不能追问", "The starter reading cannot take follow-up questions", "初回体験では追問できません", "신규 체험에서는 추가 질문할 수 없습니다")
+add("新人体验不能再次生成", "The starter reading cannot be generated again", "初回体験は再生成できません", "신규 체험은 다시 생성할 수 없습니다")
+add("已填写问题，请同步这次进度", "A question was entered. Sync this progress", "質問が入力されています。この進捗を同期してください", "질문이 입력되어 있습니다. 이번 진행을 동기화하세요")
+add("当前状态不能同步", "This status cannot be synced", "この状態は同期できません", "이 상태는 동기화할 수 없습니다")
+add("消耗新人引导体验", "Used the starter reading", "初回体験を消費", "신규 체험 사용")
 add("充值入账", "Top-up credited", "チャージ入金", "충전 입고")
 add("会员钻石刷新", "Membership diamonds refreshed", "会員ダイヤモンド更新", "멤버십 다이아 갱신")
 add("会员额度刷新", "Membership quota refreshed", "会員クォータ更新", "멤버십 한도 갱신")

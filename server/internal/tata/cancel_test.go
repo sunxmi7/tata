@@ -2,10 +2,12 @@ package tata
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCancelDisablesLogin(t *testing.T) {
@@ -83,7 +85,8 @@ func TestSoftDeleteDeviceSkipsGiftAndInvite(t *testing.T) {
 		return remaining, blocked
 	}
 
-	tokenA, uidA := login(uniqueEmail("soft-a"), "device-soft-1")
+	deviceA := fmt.Sprintf("device-soft-%d", time.Now().UnixNano())
+	tokenA, uidA := login(uniqueEmail("soft-a"), deviceA)
 	if remaining, blocked := giftRemaining(uidA); remaining != 1 || blocked {
 		t.Fatalf("first gift remaining=%d blocked=%v", remaining, blocked)
 	}
@@ -105,24 +108,24 @@ func TestSoftDeleteDeviceSkipsGiftAndInvite(t *testing.T) {
 		t.Fatalf("reading removed on cancel: %d", readings)
 	}
 	var devices int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM identity_claims WHERE kind='device' AND value='device-soft-1'`).Scan(&devices); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM identity_claims WHERE kind='device' AND value=$1`, deviceA).Scan(&devices); err != nil {
 		t.Fatal(err)
 	}
 	if devices != 1 {
 		t.Fatal("device was not kept after cancel")
 	}
 
-	tokenB, uidB := login(uniqueEmail("soft-b"), "device-soft-1")
+	tokenB, uidB := login(uniqueEmail("soft-b"), deviceA)
 	if remaining, blocked := giftRemaining(uidB); remaining != 0 || !blocked {
 		t.Fatalf("repeat device gift remaining=%d blocked=%v", remaining, blocked)
 	}
-	_, inviterID := login(uniqueEmail("soft-inviter"), "device-soft-inviter")
+	_, inviterID := login(uniqueEmail("soft-inviter"), deviceA+"-inviter")
 	msg, _ := call(t, ts, tokenB, http.MethodPost, "/api/app/v1/invites/accept", map[string]any{"code": strconv.FormatInt(inviterID, 10)})
 	if !strings.Contains(msg, "不能再领邀请奖励") {
 		t.Fatalf("invite: %s", msg)
 	}
 
-	_, uidC := login(uniqueEmail("soft-c"), "device-soft-2")
+	_, uidC := login(uniqueEmail("soft-c"), deviceA+"-fresh")
 	if remaining, blocked := giftRemaining(uidC); remaining != 1 || blocked {
 		t.Fatalf("fresh device gift remaining=%d blocked=%v", remaining, blocked)
 	}

@@ -837,6 +837,14 @@ ALTER TABLE spreads ADD COLUMN IF NOT EXISTS short_sentence TEXT NOT NULL DEFAUL
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS depth_group TEXT NOT NULL DEFAULT '';
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 1000;
 ALTER TABLE spreads ADD COLUMN IF NOT EXISTS quota_cost INT;
+ALTER TABLE spreads ADD COLUMN IF NOT EXISTS quick_questions TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS recommended_spread_id BIGINT;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS spread_selection TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS invite_attributions (
+  device_id TEXT PRIMARY KEY,
+  invite_code TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS invite_rewards (
   id BIGSERIAL PRIMARY KEY,
   inviter_id BIGINT NOT NULL,
@@ -847,6 +855,7 @@ CREATE TABLE IF NOT EXISTS invite_rewards (
   amount INT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE invite_rewards ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'code';
 CREATE TABLE IF NOT EXISTS invite_grants (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -922,6 +931,7 @@ ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS guide_completed BOOLEAN 
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS explore_preferences TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS trial_forfeited BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE device_experiences SET guide_completed=TRUE WHERE consumed=TRUE AND guide_completed=FALSE;
 CREATE TABLE IF NOT EXISTS anon_devices (
   anonymous_id TEXT PRIMARY KEY,
@@ -981,7 +991,7 @@ COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wech
 
 COMMENT ON TABLE spreads IS '牌阵。普通占卜与探索共用。theme_key 为空是普通占卜和推荐角标；非空是探索主题下的牌阵。对应 GET /spreads 与 GET /explore/topics。';
 COMMENT ON COLUMN spreads.positions IS 'JSON 牌位：index/name/meaning。';
-COMMENT ON COLUMN spreads.recommended IS '推荐牌阵。全表最多一张。App 列表推荐的排前面。';
+COMMENT ON COLUMN spreads.recommended IS '已上架普通牌阵里对外推荐的那一张，全表最多一张。映射表未冻结前，每个明确问题就推荐这一张，用户可以改选。没有这一张时不兜底。';
 COMMENT ON COLUMN spreads.name_en IS '牌阵英文名。更多牌阵文字稿里的英文名称。空则未填。';
 COMMENT ON COLUMN spreads.thumbnail IS '选阵屏牌阵示意图。空则 App 选阵仍用内置牌背占位；管理端列表不把牌背当成示意图。';
 COMMENT ON COLUMN spreads.theme_key IS '探索主题键，如 yes_or_no。空则不是探索牌阵。同一主题下可有多套。';
@@ -989,7 +999,7 @@ COMMENT ON COLUMN spreads.theme_title IS '探索牌阵主题标题。';
 COMMENT ON COLUMN spreads.theme_subtitle IS '探索牌阵主题副标题。';
 COMMENT ON COLUMN spreads.short_sentence IS '牌阵短句，对应文字总结版。';
 COMMENT ON COLUMN spreads.depth_group IS '普通占卜分组：quick 快速指引、advanced 进阶分析、panorama 深度全景。空则不是更多牌阵这 19 套。不是免费白名单。';
-COMMENT ON COLUMN spreads.quota_cost IS '普通占卜扣次，单位是额度次数。NULL 表示这套未标价。不是人民币，不是塔塔币。结算尚未读取。';
+COMMENT ON COLUMN spreads.quota_cost IS '这套牌阵的会员扣次。结算优先读这里；NULL 时用全局会员单次额度。两者都空则不猜测。';
 COMMENT ON COLUMN spreads.sort_order IS '列表顺序。普通占卜 1–19。探索从 101 起，按主题再按主题内顺序。默认 1000。';
 COMMENT ON TABLE invite_rewards IS '邀请关系。邀请码是邀请人账号 ID。一个被邀请账号只能绑定一次。双方各得一笔奖励，最多成功邀请 5 人。';
 COMMENT ON TABLE invite_grants IS '邀请奖励按笔。role=inviter/invitee，各 3 次，从发放时刻起 1 年。未过期且最早到期的先扣。';
@@ -1069,7 +1079,7 @@ COMMENT ON COLUMN app_users.cancelled_at IS '软删除时刻。行和占卜记�
 COMMENT ON TABLE quota_charges IS '单次解读扣费。entitlement=daily_free/invite_reward/admin_grant_free/member_quota/ai_trial/onboard_trial。';
 COMMENT ON TABLE device_experiences IS '设备只决定引导出不出现。解读资格在账号 reading_trial_used，每账号 1 次。';
 COMMENT ON TABLE anon_devices IS '匿名会话绑定的设备识别。';
-COMMENT ON COLUMN readings.onboard_experience IS '历史字段。新人免费解读已取消，看解读要登录后走额度。';
+COMMENT ON COLUMN readings.onboard_experience IS '新人引导那一次解读。AI 成功后才扣账号资格，失败不扣。成功后可回看，不能再免费生成、追问或补抽。';
 COMMENT ON COLUMN readings.device_id IS '登录前的进度按设备保存。登录时把同一设备、尚未归属账号的记录挂到该账号。';
 COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume。';
 COMMENT ON TABLE quota_use IS '每日免费占用（同一 reading 唯一）。条数受 quota_settings.daily_free_count 限制。并账后写入 daily_free_*。';

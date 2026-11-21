@@ -2,6 +2,7 @@ package tata
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -36,6 +37,7 @@ type deviceGuide struct {
 	found       bool
 	guideDone   bool
 	consumed    bool
+	forfeited   bool
 	gender      string
 	birth       string
 	preferences string
@@ -43,8 +45,8 @@ type deviceGuide struct {
 
 func (a *App) loadDeviceGuide(r *http.Request, deviceID string) (deviceGuide, error) {
 	var g deviceGuide
-	err := a.Store.QueryRow(r.Context(), `SELECT guide_completed, consumed, gender, birth_date, explore_preferences
-		FROM device_experiences WHERE device_id=$1`, deviceID).Scan(&g.guideDone, &g.consumed, &g.gender, &g.birth, &g.preferences)
+	err := a.Store.QueryRow(r.Context(), `SELECT guide_completed, consumed, trial_forfeited, gender, birth_date, explore_preferences
+		FROM device_experiences WHERE device_id=$1`, deviceID).Scan(&g.guideDone, &g.consumed, &g.forfeited, &g.gender, &g.birth, &g.preferences)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
@@ -57,7 +59,7 @@ func (a *App) loadDeviceGuide(r *http.Request, deviceID string) (deviceGuide, er
 
 func guideView(g deviceGuide) map[string]any {
 	show := !g.found || !g.guideDone
-	trial := !g.found || !g.consumed
+	trial := !g.found || (!g.consumed && !g.forfeited)
 	return map[string]any{
 		"show_guide":              show,
 		"guide_completed":         g.found && g.guideDone,
@@ -97,7 +99,16 @@ func (a *App) onboardingView(r *http.Request, g deviceGuide) (map[string]any, er
 	if uid == 0 {
 		return view, nil
 	}
-	view["reading_trial_available"] = false
+	if g.forfeited {
+		if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET reading_trial_used=TRUE WHERE id=$1 AND reading_trial_used=FALSE`, uid); err != nil {
+			return nil, err
+		}
+	}
+	var used bool
+	if err := a.Store.QueryRow(r.Context(), `SELECT reading_trial_used FROM app_users WHERE id=$1`, uid).Scan(&used); err != nil {
+		return nil, err
+	}
+	view["reading_trial_available"] = !used
 	return view, nil
 }
 
@@ -167,6 +178,150 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, view)
+	return nil
+}
+
+func (a *App) appAbandonOnboarding(w http.ResponseWriter, r *http.Request) error {
+	uid, _, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		DeviceID string `json:"device_id"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if !validDeviceID(deviceID) {
+		return biz("缺少设备标识")
+	}
+	var asked int
+	if uid > 0 {
+		err = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings
+			WHERE deleted_at IS NULL AND onboard_experience AND btrim(question)<>'' AND (user_id=$1 OR lower(device_id)=lower($2))`, uid, deviceID).Scan(&asked)
+	} else {
+		err = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings
+			WHERE deleted_at IS NULL AND onboard_experience AND btrim(question)<>'' AND lower(device_id)=lower($1)`, deviceID).Scan(&asked)
+	}
+	if err != nil {
+		return err
+	}
+	if asked > 0 {
+		return biz("已填写问题，请同步这次进度")
+	}
+	if uid > 0 {
+		if _, err := a.Store.Exec(r.Context(), `UPDATE readings SET deleted_at=now(), updated_at=now()
+			WHERE deleted_at IS NULL AND onboard_experience AND btrim(question)='' AND (user_id=$1 OR lower(device_id)=lower($2))`, uid, deviceID); err != nil {
+			return err
+		}
+		if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET reading_trial_used=TRUE WHERE id=$1`, uid); err != nil {
+			return err
+		}
+	} else if _, err := a.Store.Exec(r.Context(), `UPDATE readings SET deleted_at=now(), updated_at=now()
+		WHERE deleted_at IS NULL AND onboard_experience AND btrim(question)='' AND lower(device_id)=lower($1)`, deviceID); err != nil {
+		return err
+	}
+	if _, err := a.Store.Exec(r.Context(), `INSERT INTO device_experiences(device_id, trial_forfeited) VALUES ($1, TRUE)
+		ON CONFLICT (device_id) DO UPDATE SET trial_forfeited=TRUE`, deviceID); err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{"reading_trial_available": false})
+	return nil
+}
+
+func (a *App) appSyncOnboarding(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	if uid == 0 {
+		return biz(paywallNeedLogin)
+	}
+	var req struct {
+		DeviceID string          `json:"device_id"`
+		Question string          `json:"question"`
+		SpreadID *int64          `json:"spread_id"`
+		Cards    json.RawMessage `json:"cards"`
+		Status   string          `json:"status"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if !validDeviceID(deviceID) {
+		return biz("缺少设备标识")
+	}
+	question := strings.TrimSpace(req.Question)
+	if question == "" {
+		return biz("请先填写问题")
+	}
+	if len([]rune(question)) > 200 {
+		return biz("问题超过 200 个码点，正式计数口径尚未确认")
+	}
+	status := req.Status
+	switch status {
+	case "", "QUESTION_CREATED", "SPREAD_SELECTED", "SHUFFLING", "CUTTING", "CARDS_FIXED":
+		if status == "" {
+			status = "QUESTION_CREATED"
+		}
+	default:
+		return biz("当前状态不能同步")
+	}
+	if req.SpreadID != nil {
+		var enabled bool
+		if err := a.Store.QueryRow(r.Context(), `SELECT enabled FROM spreads WHERE id=$1`, *req.SpreadID).Scan(&enabled); err != nil || !enabled {
+			return biz("牌阵不可用")
+		}
+	}
+	var used bool
+	if err := a.Store.QueryRow(r.Context(), `SELECT reading_trial_used FROM app_users WHERE id=$1`, uid).Scan(&used); err != nil {
+		return err
+	}
+	var existing int64
+	err = a.Store.QueryRow(r.Context(), `SELECT id FROM readings
+		WHERE deleted_at IS NULL AND type='normal' AND onboard_experience AND status<>'COMPLETED'
+		AND (user_id=$1 OR (user_id IS NULL AND lower(device_id)=lower($2)))
+		ORDER BY id DESC LIMIT 1`, uid, deviceID).Scan(&existing)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	cards := ""
+	if len(req.Cards) > 0 && string(req.Cards) != "null" {
+		cards = string(req.Cards)
+	}
+	var spread sql.NullInt64
+	if req.SpreadID != nil {
+		spread = sql.NullInt64{Int64: *req.SpreadID, Valid: true}
+	}
+	if existing > 0 {
+		if _, err := a.Store.Exec(r.Context(), `UPDATE readings SET user_id=$1, question=$2, status=$3, device_id=$4,
+			spread_id=COALESCE($5, spread_id),
+			spread_name=CASE WHEN $5 IS NULL THEN spread_name ELSE (SELECT name FROM spreads WHERE id=$5) END,
+			cards=CASE WHEN $6='' THEN cards ELSE $6 END,
+			updated_at=now() WHERE id=$7`, uid, question, status, deviceID, spread, cards, existing); err != nil {
+			return err
+		}
+		item, err := a.loadReadingAbs(r.Context(), r, existing)
+		if err != nil {
+			return err
+		}
+		writeOK(w, item)
+		return nil
+	}
+	onboard := !used
+	var id int64
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO readings(user_id, anonymous_id, type, question, spread_id, status, onboard_experience, device_id, cards, spread_name)
+		VALUES ($1,$2,'normal',$3,$4,$5,$6,$7,NULLIF($8,''), COALESCE((SELECT name FROM spreads WHERE id=$4), '')) RETURNING id`,
+		uid, nullStr(anon), question, spread, status, onboard, deviceID, cards).Scan(&id)
+	if err != nil {
+		return err
+	}
+	item, err := a.loadReadingAbs(r.Context(), r, id)
+	if err != nil {
+		return err
+	}
+	writeOK(w, item)
 	return nil
 }
 

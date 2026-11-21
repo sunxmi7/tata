@@ -24,6 +24,7 @@ onMounted(async () => {
         { title: '邀请人', dataIndex: 'inviter_id', width: 100 },
         { title: '被邀请人', dataIndex: 'invitee_id', width: 110 },
         { title: '邀请码', dataIndex: 'invite_code', width: 120 },
+        { title: '来源', dataIndex: 'source_label', width: 90 },
         { title: '邀请人剩余', dataIndex: 'inviter_remaining', width: 110 },
         { title: '邀请人发放', dataIndex: 'inviter_granted_at' },
         { title: '邀请人到期', dataIndex: 'inviter_expires_at' },
