@@ -81,6 +81,16 @@ func TestAdminUserListAndStats(t *testing.T) {
 	}
 
 	after := listOne(t, ts, admin.access, "/api/admin/v1/users/stats")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET merged_into=$1 WHERE id=$2`, uid, uid); err != nil {
+		t.Fatal(err)
+	}
+	merged := listOne(t, ts, admin.access, "/api/admin/v1/users/stats")
+	if statCount(t, merged, "gender", "女性") != beforeGender+1 {
+		t.Fatalf("merged account dropped: %#v", merged["gender"])
+	}
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET merged_into=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
 	if statCount(t, after, "gender", "女性") != beforeGender+1 {
 		t.Fatalf("gender count: before=%d after=%#v", beforeGender, after["gender"])
 	}

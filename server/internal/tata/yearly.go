@@ -287,9 +287,9 @@ func (a *App) requireYearlyUnlocked(ctx context.Context, uid int64, year int) er
 		return err
 	}
 	if row.unlocked {
-		return biz(paywallNeedMember)
+		return nil
 	}
-	return biz(paywallNeedMember)
+	return biz("年卡未开通，请通过内购单独解锁")
 }
 
 func (a *App) chargeYearlyGenerate(ctx context.Context, uid int64, year int) error {
@@ -298,7 +298,14 @@ func (a *App) chargeYearlyGenerate(ctx context.Context, uid int64, year int) err
 		return err
 	}
 	if !member {
-		return biz(paywallNeedMember)
+		row, err := a.loadYearlyRow(ctx, uid, year)
+		if err != nil {
+			return err
+		}
+		if row.unlocked {
+			return nil
+		}
+		return biz("年卡未开通，请通过内购单独解锁")
 	}
 	key := fmt.Sprintf("yearly:%d:%d", uid, year)
 	tx, err := a.Store.Begin(ctx)
@@ -316,7 +323,7 @@ func (a *App) chargeYearlyGenerate(ctx context.Context, uid int64, year int) err
 	}
 	decision, err := chargeMemberQuota(ctx, tx, chargeOpts{
 		UserID: uid, ReadingID: 0, ChargeKey: key, Cycle: cycleOf(time.Now()),
-		ResumeAction: resumeHold,
+		ResumeAction: resumeHold, PoolOnly: true,
 	})
 	if err != nil {
 		return err

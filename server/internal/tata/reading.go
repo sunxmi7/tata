@@ -98,7 +98,21 @@ func (a *App) adminLedger(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, user_id, reading_id, entitlement, amount, reason, result, created_at, grant_id FROM ledger ORDER BY id DESC LIMIT 200`)
+	rows, err := a.Store.Query(r.Context(), `SELECT l.id, l.user_id, l.reading_id, l.entitlement, l.amount, l.reason, l.result, l.created_at, l.grant_id,
+		r.status,
+		COALESCE((
+			SELECT json_agg(json_build_object(
+				'lot_id', d.lot_id,
+				'source', d.source,
+				'amount', d.amount,
+				'remaining_after', d.remaining_after,
+				'expires_at', d.expires_at
+			) ORDER BY d.id)
+			FROM ledger_lot_draws d WHERE d.ledger_id = l.id
+		), '[]'::json)
+		FROM ledger l
+		LEFT JOIN readings r ON r.id = l.reading_id
+		ORDER BY l.id DESC LIMIT 200`)
 	if err != nil {
 		return err
 	}
@@ -108,14 +122,26 @@ func (a *App) adminLedger(w http.ResponseWriter, r *http.Request) error {
 		var id, userID int64
 		var readingID, grantID sql.NullInt64
 		var entitlement, reason, result string
+		var readingStatus sql.NullString
 		var amount int
 		var created time.Time
-		if err := rows.Scan(&id, &userID, &readingID, &entitlement, &amount, &reason, &result, &created, &grantID); err != nil {
+		var drawsRaw []byte
+		if err := rows.Scan(&id, &userID, &readingID, &entitlement, &amount, &reason, &result, &created, &grantID, &readingStatus, &drawsRaw); err != nil {
 			return err
+		}
+		var draws []any
+		if len(drawsRaw) > 0 {
+			if err := json.Unmarshal(drawsRaw, &draws); err != nil {
+				return err
+			}
+		}
+		if draws == nil {
+			draws = []any{}
 		}
 		list = append(list, map[string]any{
 			"id": id, "user_id": userID, "reading_id": nullInt(readingID), "entitlement": entitlement,
 			"amount": amount, "reason": reason, "result": result, "created_at": created, "grant_id": nullInt(grantID),
+			"reading_status": nullString(readingStatus), "draws": draws,
 		})
 	}
 	writeOK(w, list)
@@ -159,6 +185,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 		Code        string `json:"code"`
 		AnonymousID string `json:"anonymous_id"`
 		InviteCode  string `json:"invite_code"`
+		DeviceID    string `json:"device_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
@@ -204,19 +231,38 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID, req.AnonymousID); err != nil {
+		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
+		return
+	}
 	if err := a.finishRegistration(r.Context(), id, created); err != nil {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
 	a.ensureProfileDefaults(r.Context(), id)
 	a.consumeEmailCode(r.Context(), "login", email)
-	if req.AnonymousID != "" {
-		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, id, req.AnonymousID)
-	}
+	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
 	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "email", "reward_consumed": settled, "needs_confirm": false})
+}
+
+func (a *App) attachDeviceReadings(ctx context.Context, uid int64, anon, deviceID string) {
+	if uid <= 0 {
+		return
+	}
+	if strings.TrimSpace(anon) != "" {
+		_, _ = a.Store.Exec(ctx, `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, uid, anon)
+		if strings.TrimSpace(deviceID) == "" {
+			_ = a.Store.QueryRow(ctx, `SELECT device_id FROM anon_devices WHERE anonymous_id=$1`, anon).Scan(&deviceID)
+		}
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return
+	}
+	_, _ = a.Store.Exec(ctx, `UPDATE readings SET user_id=$1 WHERE user_id IS NULL AND device_id<>'' AND lower(device_id)=lower($2)`, uid, deviceID)
 }
 
 func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
@@ -442,14 +488,9 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	cycle := cycleOf(time.Now())
-	used := false
-	dailyRemaining := 0
-	usedFlags := 0
 	inviteRemaining := 0
 	adminGrantRemaining := 0
 	subPrompt := false
-	dailyFree, _ := loadDailyFreeCount(r.Context(), a.Store)
-	dailySlot, _ := loadDailySlotCount(r.Context(), a.Store)
 	member := false
 	var memberKind string
 	var memberExp time.Time
@@ -463,22 +504,11 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		_ = a.Store.QueryRow(r.Context(), `SELECT subscription_prompt_required FROM app_users WHERE id=$1`, uid).Scan(&subPrompt)
-		_ = a.Store.QueryRow(r.Context(), `SELECT invite_remaining, admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&inviteRemaining, &adminGrantRemaining)
-		if !member {
-			qerr := a.Store.QueryRow(r.Context(), `SELECT used_flags, remaining FROM daily_free_balance WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&usedFlags, &dailyRemaining)
-			if qerr == nil {
-				used = dailyRemaining <= 0
-			} else {
-				var n int
-				_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM quota_use WHERE user_id=$1 AND cycle=$2`, uid, cycle).Scan(&n)
-				usedFlags = n
-				dailyRemaining = dailyFree - n
-				if dailyRemaining < 0 {
-					dailyRemaining = 0
-				}
-				used = dailyRemaining == 0
-			}
+		inviteRemaining, err = inviteBalance(r.Context(), a.Store, uid)
+		if err != nil {
+			return err
 		}
+		_ = a.Store.QueryRow(r.Context(), `SELECT admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&adminGrantRemaining)
 	}
 	cost, configured, _ := loadQuotaCost(r.Context(), a.Store)
 	var quotaCost any
@@ -491,7 +521,7 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		followup = followupLimit
 	}
 	out := map[string]any{
-		"cycle": cycle, "reset_at": T(r.Context(), "北京时间 08:00"),
+		"cycle":                        cycle,
 		"is_member":                    member,
 		"can_buy_pack":                 member,
 		"subscription_prompt_required": subPrompt,
@@ -514,6 +544,9 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		if memberKind == "year" {
 			label = "年度会员"
 		}
+		if qerr := expireQuotaLots(r.Context(), a.Store, uid); qerr != nil {
+			return qerr
+		}
 		quota, qerr := loadQuotaBalance(r.Context(), a.Store, uid)
 		if qerr != nil {
 			return qerr
@@ -525,22 +558,16 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 		out["quota_remaining"] = quota
 		out["balance"] = quota
 		out["priority"] = T(r.Context(), "会员统一额度")
-		out["daily_slot_count"] = dailySlot
 	} else {
 		var invited int
 		if uid > 0 {
 			_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM invite_rewards WHERE inviter_id=$1`, uid).Scan(&invited)
 		}
-		out["daily_free_used"] = used
-		out["daily_free_count"] = dailyFree
-		out["daily_slot_count"] = dailySlot
-		out["daily_free_remaining"] = dailyRemaining
-		out["daily_used_flags"] = usedFlags
 		out["invite_remaining"] = inviteRemaining
 		out["invite_count"] = invited
 		out["max_invites"] = inviteMaxPeople
 		out["admin_grant_free_remaining"] = adminGrantRemaining
-		out["priority"] = T(r.Context(), "今日免费次数 → 邀请奖励次数")
+		out["priority"] = T(r.Context(), "注册赠送 → 邀请奖励 → 兑换免费次数")
 	}
 	writeOK(w, out)
 	return nil
@@ -651,20 +678,12 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	onboard, err := a.prepareOnboard(ctx, tx, uid, anon, kind, deviceID)
-	if err != nil {
-		return nil, err
-	}
+	boundDevice := resolveDeviceID(ctx, tx, anon, deviceID)
 	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,$7) RETURNING id`,
-		nullID(uid), nullStr(anon), kind, question, tarotistID, first, onboard).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,FALSE,$7) RETURNING id`,
+		nullID(uid), nullStr(anon), kind, question, tarotistID, first, boundDevice).Scan(&id)
 	if err != nil {
 		return nil, err
-	}
-	if onboard {
-		if _, err := tx.Exec(ctx, `UPDATE device_experiences SET reading_id=$1 WHERE device_id=$2 AND consumed=FALSE`, id, resolveDeviceID(ctx, tx, anon, deviceID)); err != nil {
-			return nil, err
-		}
 	}
 	cycle := cycleOf(time.Now())
 	if uid > 0 {
@@ -680,22 +699,10 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	exhausted := false
 	rewardUsed := false
 	var decision quotaDecision
-	member := false
-	if uid > 0 {
-		member, err = hasActiveMembership(ctx, tx, uid)
-		if err != nil {
-			return nil, err
-		}
-	}
 	switch {
 	case uid == 0:
 		decision.Status = quotaAnon
 	case kind == "tarotist":
-		decision, err = settleSharedQuota(ctx, tx, chargeOpts{
-			UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
-			AllowTrial: true, ResumeAction: resumeHold,
-		})
-	case member && kind != "explore":
 		decision, err = settleSharedQuota(ctx, tx, chargeOpts{
 			UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
 			AllowTrial: true, ResumeAction: resumeHold,
@@ -753,8 +760,22 @@ func resolveDeviceID(ctx context.Context, ex execer, anon, requested string) str
 }
 
 func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, deviceID string) (bool, error) {
-	if kind != "normal" || uid != 0 {
+	if kind != "normal" {
 		return false, nil
+	}
+	if uid > 0 {
+		var used bool
+		if err := tx.QueryRow(ctx, `SELECT reading_trial_used FROM app_users WHERE id=$1 FOR UPDATE`, uid).Scan(&used); err != nil {
+			return false, err
+		}
+		if used {
+			return false, nil
+		}
+		var open int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM readings WHERE user_id=$1 AND onboard_experience AND NOT quota_settled AND deleted_at IS NULL`, uid).Scan(&open); err != nil {
+			return false, err
+		}
+		return open == 0, nil
 	}
 	deviceID = resolveDeviceID(ctx, tx, anon, deviceID)
 	if deviceID == "" {
@@ -839,6 +860,12 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 	if tag.RowsAffected() == 0 {
 		return biz("当前状态不能选择牌阵")
 	}
+	if uid > 0 {
+		stop, err := a.chargeAtSpread(w, r, id)
+		if err != nil || stop {
+			return err
+		}
+	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err
@@ -895,7 +922,18 @@ func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
 	}
 	var cards []drawnCard
 	if req.Mode == "numerology" {
-		cards, err = drawCardsNumerology(positions, req.Numbers)
+		var cardCount int
+		if err := a.Store.QueryRow(r.Context(), `SELECT card_count FROM spreads WHERE id=$1`, *spreadID).Scan(&cardCount); err != nil {
+			return err
+		}
+		if len(req.Numbers) != cardCount {
+			return biz("灵数个数须等于牌阵张数")
+		}
+		slots, mapErr := a.readingNumerologyMap(r.Context(), id)
+		if mapErr != nil {
+			return mapErr
+		}
+		cards, err = cardsFromNumerologyMap(slots, req.Numbers, positions)
 	} else {
 		cards, err = drawCards(positions)
 	}
@@ -908,6 +946,104 @@ func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return biz("牌面已固定或状态已变化")
+	}
+	item, err := a.loadReadingAbs(r.Context(), r, id)
+	if err != nil {
+		return err
+	}
+	writeOK(w, item)
+	return nil
+}
+
+func (a *App) readingNumerologyMap(ctx context.Context, id int64) ([]numerologySlot, error) {
+	tx, err := a.Store.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var raw string
+	if err := tx.QueryRow(ctx, `SELECT numerology_map FROM readings WHERE id=$1 FOR UPDATE`, id).Scan(&raw); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(raw) != "" {
+		var slots []numerologySlot
+		if err := json.Unmarshal([]byte(raw), &slots); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return slots, nil
+	}
+	slots, err := newNumerologyMap()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE readings SET numerology_map=$1 WHERE id=$2`, mustJSON(slots), id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return slots, nil
+}
+
+func (a *App) appRedraw(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	var req struct {
+		Number int `json:"number"`
+	}
+	if err := decode(r, &req); err != nil || req.Number <= 0 {
+		return biz("请输入要补抽的灵数")
+	}
+	var status, cardsRaw, mapRaw string
+	if err := a.Store.QueryRow(r.Context(), `SELECT status, COALESCE(cards,''), numerology_map FROM readings WHERE id=$1`, id).Scan(&status, &cardsRaw, &mapRaw); err != nil {
+		return err
+	}
+	if strings.TrimSpace(mapRaw) == "" {
+		return biz("请先用灵数抽牌")
+	}
+	if status != "CARDS_FIXED" {
+		return biz("当前状态不能补抽")
+	}
+	var cards []drawnCard
+	if err := json.Unmarshal([]byte(cardsRaw), &cards); err != nil || len(cards) == 0 {
+		return biz("请先用灵数抽牌")
+	}
+	var slots []numerologySlot
+	if err := json.Unmarshal([]byte(mapRaw), &slots); err != nil {
+		return err
+	}
+	if len(cards) >= 78 {
+		return biz("78 张牌已全部使用")
+	}
+	for _, card := range cards {
+		if card.Number == req.Number {
+			return biz("灵数不能重复")
+		}
+	}
+	added, err := cardsFromNumerologyMap(slots, []int{req.Number}, []position{{Index: len(cards) + 1}})
+	if err != nil {
+		return err
+	}
+	for _, card := range cards {
+		if card.CardID == added[0].CardID {
+			return biz("牌面不能重复")
+		}
+	}
+	cards = append(cards, added[0])
+	if _, err := a.Store.Exec(r.Context(), `UPDATE readings SET cards=$1, updated_at=now() WHERE id=$2 AND status='CARDS_FIXED' AND numerology_map=$3`, mustJSON(cards), id, mapRaw); err != nil {
+		return err
 	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
@@ -1135,22 +1271,21 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 	default:
 		return 0, "", "", nil, false, biz("目标日期不正确")
 	}
-	slotLimit, err := loadDailySlotCount(r.Context(), a.Store)
-	if err != nil {
-		return 0, target, business, nil, false, err
-	}
 	var usedSlots int
 	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings
-		WHERE user_id=$1 AND type='daily' AND business_date=$2 AND deleted_at IS NULL
+		WHERE user_id=$1 AND type='daily' AND business_date=$2
 		AND cards IS NOT NULL AND cards <> ''`, uid, business).Scan(&usedSlots); err != nil {
 		return 0, target, business, nil, false, err
 	}
-	if usedSlots >= slotLimit {
+	if usedSlots >= 1 {
 		var existingID int64
 		err = a.Store.QueryRow(r.Context(), `SELECT id FROM readings
 			WHERE user_id=$1 AND type='daily' AND business_date=$2 AND deleted_at IS NULL
 			AND cards IS NOT NULL AND cards <> ''
 			ORDER BY id DESC LIMIT 1`, uid, business).Scan(&existingID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, target, business, nil, false, biz("该日已使用，删除记录后不能再抽")
+		}
 		if err != nil {
 			return 0, target, business, nil, false, err
 		}
@@ -1163,7 +1298,7 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 		}
 		msg := T(r.Context(), "当日今日一牌名额已占用")
 		if business != cycle {
-			msg = T(r.Context(), "该日已有结果，不重复扣次数或钻石")
+			msg = T(r.Context(), "该日已有结果，不重复扣额度")
 		}
 		a.attachDailyHome(r.Context(), r, item, req.Target, business)
 		writeJSON(w, http.StatusOK, map[string]any{

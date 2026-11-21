@@ -181,7 +181,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="启用并保存后立即用于问题检测、改写、推荐、解读、塔罗师。密钥保存后不明文回显。" title="模型供应商">
+  <Page description="密钥保存后不明文回显。App 解读使用 interpret 绑定。问题检测不调用模型，正式推荐不走模型，塔罗师绑定本期不使用。" title="模型供应商">
     <template #extra>
       <Button v-if="canWrite()" type="primary" @click="openCreate">新建</Button>
     </template>

@@ -57,7 +57,7 @@ func TestUINewScreensAPIs(t *testing.T) {
 
 	invite := listOne(t, ts, inviter, "/api/app/v1/invites")
 	code, _ := invite["code"].(string)
-	if code == "" || invite["reward_amount"] != float64(3) || invite["invited_count"] != float64(0) {
+	if code != fmt.Sprintf("%d", inviterID) || invite["reward_amount"] != float64(3) || invite["invited_count"] != float64(0) {
 		t.Fatalf("invite: %#v", invite)
 	}
 
@@ -95,6 +95,24 @@ func TestUINewScreensAPIs(t *testing.T) {
 	}
 	if granted != 3 {
 		t.Fatalf("inviter invite remaining %d", granted)
+	}
+	inviteeID := userIDByEmail(t, store, inviteeEmail)
+	var inviteeLeft int
+	if err := store.QueryRow(t.Context(), `SELECT invite_remaining FROM rewards WHERE user_id=$1`, inviteeID).Scan(&inviteeLeft); err != nil {
+		t.Fatal(err)
+	}
+	if inviteeLeft != 3 {
+		t.Fatalf("invitee invite remaining %d", inviteeLeft)
+	}
+	adminInvites := listOne(t, ts, admin.access, "/api/admin/v1/invites")
+	adminItems, _ := adminInvites["items"].([]any)
+	if len(adminItems) == 0 {
+		t.Fatalf("admin invites: %#v", adminInvites)
+	}
+	other, _ := registerUser(t, ts, store, "invite-redeem")
+	redeemed := create(t, ts, other, "/api/app/v1/redeem", map[string]any{"code": code})
+	if redeemed["kind"] != "invite" || redeemed["amount"] != float64(3) {
+		t.Fatalf("redeem invite: %#v", redeemed)
 	}
 
 	msg, _ := call(t, ts, inviteeToken, http.MethodPost, "/api/app/v1/invites/accept", map[string]any{"code": code})

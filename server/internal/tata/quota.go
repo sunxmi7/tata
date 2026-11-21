@@ -14,19 +14,18 @@ import (
 
 // Billing split by current membership (checked on every charge):
 //
-// Free users:
-//  1. today's daily free (1, configurable)
-//  2. invite reward counts (keep until used; max 15)
-//  3. admin-granted free counts (ops)
-//  4. paywall → 开通会员
-// Scope: daily 今日/明日, and ordinary readings with spread card_count <= 3.
-// Explore, yearly, AI tarotist, follow-up, and >3-card spreads are not free.
-//
 // Members:
-//  1. unified quota_balance
-//  2. paywall → 额度补充包
-// All play types deduct quota. Daily free is skipped.
-// Pack quota is frozen when membership expires (balance kept, spend blocked).
+//  1. quota lots, when the live pool covers the whole charge
+//  2. pool above 0 but short: paywall for a pack, no other source
+//  3. pool at 0: registration gift, then invite, on the shared whitelist
+//  4. paywall → 额度补充包
+// Lots may combine. A lot past expires_at is discarded.
+//
+// Free users have no pool:
+//  1. registration gift, then invite, on the shared whitelist
+//  2. redeem-code free counts on the old daily / ≤3-card scope
+//  3. paywall → 开通会员
+// Daily free is not spent. Explore, yearly, and tarotist are outside the gift and invite.
 //
 // Trials (neither daily nor quota):
 //  - onboard_trial: one per device, consumed when interpretation is shown after login
@@ -68,13 +67,12 @@ const (
 	paywallCancel  = "cancelled"
 	paywallUncfg   = "unconfigured"
 
-	quotaClosedNote = "已按优先级处理：今日免费次数，邀请奖励次数，人工补发免费次数；会员扣统一额度"
-	wechatQuotaNote = "提问时按当前身份扣每日免费、邀请次数或会员额度"
+	quotaClosedNote = "已按优先级处理：会员先扣额度池；池子为 0 时用注册赠送、邀请，免费用户还可使用兑换免费次数"
+	wechatQuotaNote = "提问时按当前身份扣会员额度、注册赠送或邀请次数"
 
 	paywallNeedMember  = "请开通会员后继续"
 	paywallNeedQuota   = "额度不足，请购买额度补充包后自动继续；取消则保留记录且不继续生成"
 	paywallNeedLogin   = "登录后才能查看解读"
-	paywallFreeDone    = "今日免费次数已用完，请开通会员后继续"
 	paywallUnconfigMsg = "会员额度单价未配置，本次未扣额度，记录已保留"
 )
 
@@ -85,6 +83,7 @@ type chargeOpts struct {
 	Cycle        string
 	AllowTrial   bool
 	ResumeAction string
+	PoolOnly     bool
 }
 
 type quotaDecision struct {
@@ -113,9 +112,9 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 		return quotaDecision{Status: quotaAnon, Message: paywallNeedLogin}, nil
 	}
 	var kind string
-	var rewardUsed, dailyUsed, settled, onboard bool
-	err := tx.QueryRow(ctx, `SELECT type, reward_consumed, quota_consumed, quota_settled, onboard_experience FROM readings WHERE id=$1 FOR UPDATE`, opts.ReadingID).
-		Scan(&kind, &rewardUsed, &dailyUsed, &settled, &onboard)
+	var rewardUsed, dailyUsed, settled bool
+	err := tx.QueryRow(ctx, `SELECT type, reward_consumed, quota_consumed, quota_settled FROM readings WHERE id=$1 FOR UPDATE`, opts.ReadingID).
+		Scan(&kind, &rewardUsed, &dailyUsed, &settled)
 	if err != nil {
 		return quotaDecision{}, err
 	}
@@ -143,6 +142,9 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 		}
 		return quotaDecision{Status: quotaAlready, Entitlement: ent, Continue: true}, nil
 	}
+	if strings.HasPrefix(opts.ChargeKey, "followup:") {
+		return quotaDecision{Continue: true}, nil
+	}
 	if opts.AllowTrial && opts.ChargeKey == chargeKeyPlay && kind == "tarotist" {
 		var used bool
 		if err := tx.QueryRow(ctx, `SELECT tarotist_trial_used FROM app_users WHERE id=$1 FOR UPDATE`, opts.UserID).Scan(&used); err != nil {
@@ -152,25 +154,12 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 			if _, err := tx.Exec(ctx, `UPDATE app_users SET tarotist_trial_used=true WHERE id=$1`, opts.UserID); err != nil {
 				return quotaDecision{}, err
 			}
-			if err := recordCharge(ctx, tx, opts, entTrial, 1, "", "消耗 AI 塔罗师试用"); err != nil {
+			if err := recordCharge(ctx, tx, opts, entTrial, 1, "", "消耗 AI 塔罗师试用", nil); err != nil {
 				return quotaDecision{}, err
 			}
 			return quotaDecision{Status: quotaCharged, Entitlement: entTrial, Amount: 1, Continue: true}, nil
 		}
 	}
-	if opts.ChargeKey == chargeKeyPlay && onboard {
-		ok, err := consumeOnboardExperience(ctx, tx, opts.UserID, opts.ReadingID)
-		if err != nil {
-			return quotaDecision{}, err
-		}
-		if ok {
-			if err := recordCharge(ctx, tx, opts, entOnboard, 1, "", "消耗新人引导体验"); err != nil {
-				return quotaDecision{}, err
-			}
-			return quotaDecision{Status: quotaCharged, Entitlement: entOnboard, Amount: 1, Continue: true}, nil
-		}
-	}
-
 	member, err := hasActiveMembership(ctx, tx, opts.UserID)
 	if err != nil {
 		return quotaDecision{}, err
@@ -178,51 +167,60 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 	if member {
 		return chargeMemberQuota(ctx, tx, opts)
 	}
+	return chargeComplimentary(ctx, tx, opts, paywallNeedMember)
+}
 
+func chargeComplimentary(ctx context.Context, tx Tx, opts chargeOpts, blocked string) (quotaDecision, error) {
+	scope, err := giftInviteScope(ctx, tx, opts.ReadingID, opts.ChargeKey)
+	if err != nil {
+		return quotaDecision{}, err
+	}
+	if scope {
+		gifted, draw, err := consumeRegistrationGift(ctx, tx, opts.UserID)
+		if err != nil {
+			return quotaDecision{}, err
+		}
+		if gifted {
+			if err := recordCharge(ctx, tx, opts, entReward, 1, "", "消耗注册赠送", []lotDraw{draw}); err != nil {
+				return quotaDecision{}, err
+			}
+			return quotaDecision{Status: quotaCharged, Entitlement: entReward, Amount: 1, Continue: true}, nil
+		}
+		invited, draw, err := consumeInviteRemaining(ctx, tx, opts.UserID)
+		if err != nil {
+			return quotaDecision{}, err
+		}
+		if invited {
+			if err := recordCharge(ctx, tx, opts, entInvite, 1, "", "消耗邀请奖励次数", []lotDraw{draw}); err != nil {
+				return quotaDecision{}, err
+			}
+			return quotaDecision{Status: quotaCharged, Entitlement: entInvite, Amount: 1, Continue: true}, nil
+		}
+	}
 	cardCount, err := readingSpreadCardCount(ctx, tx, opts.ReadingID)
 	if err != nil {
 		return quotaDecision{}, err
 	}
-	if !freePlayEligible(kind, cardCount, opts.ChargeKey) {
-		if err := upsertPaywall(ctx, tx, opts, paywallPending); err != nil {
-			return quotaDecision{}, err
-		}
-		return quotaDecision{Status: quotaPaywall, Message: paywallNeedMember}, nil
-	}
-	dailyOK, err := takeDailyFree(ctx, tx, opts.UserID, opts.Cycle, opts.ReadingID)
-	if err != nil {
+	var kind string
+	if err := tx.QueryRow(ctx, `SELECT type FROM readings WHERE id=$1`, opts.ReadingID).Scan(&kind); err != nil {
 		return quotaDecision{}, err
 	}
-	if dailyOK {
-		if err := recordCharge(ctx, tx, opts, entDaily, 1, "", "消耗今日免费次数"); err != nil {
+	if freePlayEligible(kind, cardCount, opts.ChargeKey) {
+		granted, draw, err := consumeAdminGrant(ctx, tx, opts.UserID)
+		if err != nil {
 			return quotaDecision{}, err
 		}
-		return quotaDecision{Status: quotaCharged, Entitlement: entDaily, Amount: 1, Continue: true}, nil
-	}
-	invited, err := consumeInviteRemaining(ctx, tx, opts.UserID)
-	if err != nil {
-		return quotaDecision{}, err
-	}
-	if invited {
-		if err := recordCharge(ctx, tx, opts, entInvite, 1, "", "消耗邀请奖励次数"); err != nil {
-			return quotaDecision{}, err
+		if granted {
+			if err := recordCharge(ctx, tx, opts, entAdminFree, 1, "", "消耗兑换免费次数", []lotDraw{draw}); err != nil {
+				return quotaDecision{}, err
+			}
+			return quotaDecision{Status: quotaCharged, Entitlement: entAdminFree, Amount: 1, Continue: true}, nil
 		}
-		return quotaDecision{Status: quotaCharged, Entitlement: entInvite, Amount: 1, Continue: true}, nil
-	}
-	granted, err := consumeAdminGrant(ctx, tx, opts.UserID)
-	if err != nil {
-		return quotaDecision{}, err
-	}
-	if granted {
-		if err := recordCharge(ctx, tx, opts, entAdminFree, 1, "", "消耗人工补发免费次数"); err != nil {
-			return quotaDecision{}, err
-		}
-		return quotaDecision{Status: quotaCharged, Entitlement: entAdminFree, Amount: 1, Continue: true}, nil
 	}
 	if err := upsertPaywall(ctx, tx, opts, paywallPending); err != nil {
 		return quotaDecision{}, err
 	}
-	return quotaDecision{Status: quotaPaywall, Message: paywallFreeDone}, nil
+	return quotaDecision{Status: quotaPaywall, Message: blocked}, nil
 }
 
 func chargeMemberQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecision, error) {
@@ -236,7 +234,29 @@ func chargeMemberQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 		}
 		return quotaDecision{Status: quotaUnconfig, Message: paywallUnconfigMsg}, nil
 	}
-	_, spent, err := spendQuota(ctx, tx, opts.UserID, cost)
+	if err := expireQuotaLots(ctx, tx, opts.UserID); err != nil {
+		return quotaDecision{}, err
+	}
+	bal, err := loadQuotaBalance(ctx, tx, opts.UserID)
+	if err != nil {
+		return quotaDecision{}, err
+	}
+	if bal > 0 && bal < cost {
+		if err := upsertPaywall(ctx, tx, opts, paywallPending); err != nil {
+			return quotaDecision{}, err
+		}
+		return quotaDecision{Status: quotaPaywall, Message: paywallNeedQuota}, nil
+	}
+	if bal == 0 {
+		if opts.PoolOnly {
+			if err := upsertPaywall(ctx, tx, opts, paywallPending); err != nil {
+				return quotaDecision{}, err
+			}
+			return quotaDecision{Status: quotaPaywall, Message: paywallNeedQuota}, nil
+		}
+		return chargeComplimentary(ctx, tx, opts, paywallNeedQuota)
+	}
+	_, spent, draws, err := spendQuota(ctx, tx, opts.UserID, cost)
 	if err != nil {
 		return quotaDecision{}, err
 	}
@@ -246,10 +266,70 @@ func chargeMemberQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 		}
 		return quotaDecision{Status: quotaPaywall, Message: paywallNeedQuota}, nil
 	}
-	if err := recordCharge(ctx, tx, opts, entQuota, cost, iapBucketQuota, "消耗会员额度"); err != nil {
+	if err := recordCharge(ctx, tx, opts, entQuota, cost, iapBucketQuota, "消耗会员额度", draws); err != nil {
 		return quotaDecision{}, err
 	}
 	return quotaDecision{Status: quotaCharged, Entitlement: entQuota, Amount: cost, Bucket: iapBucketQuota, Continue: true}, nil
+}
+
+func giftInviteScope(ctx context.Context, ex execer, readingID int64, chargeKey string) (bool, error) {
+	if chargeKey != chargeKeyPlay || readingID <= 0 {
+		return false, nil
+	}
+	var kind string
+	var spreadID sql.NullInt64
+	var theme, numerology string
+	if err := ex.QueryRow(ctx, `SELECT r.type, r.spread_id, COALESCE(s.theme_key,''), COALESCE(r.numerology_map,'')
+		FROM readings r LEFT JOIN spreads s ON s.id = r.spread_id WHERE r.id=$1`, readingID).Scan(&kind, &spreadID, &theme, &numerology); err != nil {
+		return false, err
+	}
+	switch kind {
+	case "daily":
+		return theme == "", nil
+	case "normal":
+		if theme != "" || !spreadID.Valid {
+			return false, nil
+		}
+		mapText := strings.TrimSpace(numerology)
+		if mapText != "" && mapText != "[]" && mapText != "null" {
+			return true, nil
+		}
+		cfg, err := loadRegistrationSettings(ctx, ex)
+		if err != nil {
+			return false, err
+		}
+		for _, id := range cfg.SpreadIDs {
+			if id == spreadID.Int64 {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func consumeRegistrationGift(ctx context.Context, tx Tx, uid int64) (bool, lotDraw, error) {
+	var remaining int
+	var expires time.Time
+	err := tx.QueryRow(ctx, `SELECT remaining, expires_at FROM registration_gifts
+		WHERE user_id=$1 AND granted_at IS NOT NULL AND usable_at <= now() AND expires_at > now() AND remaining > 0
+		FOR UPDATE`, uid).Scan(&remaining, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, lotDraw{}, nil
+	}
+	if err != nil {
+		return false, lotDraw{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE registration_gifts
+		SET remaining = remaining - 1, used_at = COALESCE(used_at, now())
+		WHERE user_id=$1`, uid); err != nil {
+		return false, lotDraw{}, err
+	}
+	return true, lotDraw{
+		LotID: uid, Source: "registration_gift", Amount: 1, Remaining: remaining - 1,
+		Expires: sql.NullTime{Time: expires, Valid: true},
+	}, nil
 }
 
 func freePlayEligible(kind string, cardCount int, chargeKey string) bool {
@@ -296,7 +376,7 @@ func loadActiveMembership(ctx context.Context, q rowQuery, uid int64) (kind stri
 	return kind, exp, auto, true, nil
 }
 
-func recordCharge(ctx context.Context, tx Tx, opts chargeOpts, ent string, amount int, bucket, reason string) error {
+func recordCharge(ctx context.Context, tx Tx, opts chargeOpts, ent string, amount int, bucket, reason string, draws []lotDraw) error {
 	tag, err := tx.Exec(ctx, `INSERT INTO quota_charges(user_id, reading_id, charge_key, entitlement, amount, bucket)
 		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (reading_id, charge_key) DO NOTHING`,
 		opts.UserID, opts.ReadingID, opts.ChargeKey, ent, amount, bucket)
@@ -306,9 +386,24 @@ func recordCharge(ctx context.Context, tx Tx, opts chargeOpts, ent string, amoun
 	if tag.RowsAffected() == 0 {
 		return biz("额度扣减冲突")
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,$3,$4,$5,'consumed')`,
-		opts.UserID, opts.ReadingID, ent, amount, reason); err != nil {
+	var ledgerID int64
+	if err := tx.QueryRow(ctx, `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,$3,$4,$5,'consumed') RETURNING id`,
+		opts.UserID, opts.ReadingID, ent, amount, reason).Scan(&ledgerID); err != nil {
 		return err
+	}
+	for _, draw := range draws {
+		var lot any
+		if draw.LotID > 0 {
+			lot = draw.LotID
+		}
+		var exp any
+		if draw.Expires.Valid {
+			exp = draw.Expires.Time
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO ledger_lot_draws(ledger_id, lot_id, source, amount, remaining_after, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6)`, ledgerID, lot, draw.Source, draw.Amount, draw.Remaining, exp); err != nil {
+			return err
+		}
 	}
 	reward := ent == entReward
 	daily := ent == entDaily
@@ -388,20 +483,80 @@ func loadPositiveSetting(ctx context.Context, ex execer, query string, fallback 
 	return int(n.Int64), nil
 }
 
-func consumeAdminGrant(ctx context.Context, ex execer, uid int64) (bool, error) {
-	tag, err := ex.Exec(ctx, `UPDATE rewards SET admin_grant_remaining = admin_grant_remaining - 1 WHERE user_id=$1 AND admin_grant_remaining > 0`, uid)
-	if err != nil {
-		return false, err
+func consumeAdminGrant(ctx context.Context, ex execer, uid int64) (bool, lotDraw, error) {
+	var remaining int
+	err := ex.QueryRow(ctx, `UPDATE rewards SET admin_grant_remaining = admin_grant_remaining - 1
+		WHERE user_id=$1 AND admin_grant_remaining > 0 RETURNING admin_grant_remaining`, uid).Scan(&remaining)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, lotDraw{}, nil
 	}
-	return tag.RowsAffected() == 1, nil
+	if err != nil {
+		return false, lotDraw{}, err
+	}
+	return true, lotDraw{Source: "redeem", Amount: 1, Remaining: remaining}, nil
 }
 
-func consumeInviteRemaining(ctx context.Context, ex execer, uid int64) (bool, error) {
-	tag, err := ex.Exec(ctx, `UPDATE rewards SET invite_remaining = invite_remaining - 1 WHERE user_id=$1 AND invite_remaining > 0`, uid)
-	if err != nil {
-		return false, err
+func consumeInviteRemaining(ctx context.Context, ex execer, uid int64) (bool, lotDraw, error) {
+	var grants int
+	if err := ex.QueryRow(ctx, `SELECT count(*) FROM invite_grants WHERE user_id=$1`, uid).Scan(&grants); err != nil {
+		return false, lotDraw{}, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if grants > 0 {
+		var id int64
+		var remaining int
+		var expires time.Time
+		err := ex.QueryRow(ctx, `SELECT id, remaining, expires_at FROM invite_grants
+			WHERE user_id=$1 AND remaining>0 AND expires_at>now()
+			ORDER BY expires_at, id LIMIT 1 FOR UPDATE`, uid).Scan(&id, &remaining, &expires)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, lotDraw{}, nil
+		}
+		if err != nil {
+			return false, lotDraw{}, err
+		}
+		tag, err := ex.Exec(ctx, `UPDATE invite_grants SET remaining=remaining-1 WHERE id=$1 AND remaining>0`, id)
+		if err != nil {
+			return false, lotDraw{}, err
+		}
+		if tag.RowsAffected() == 0 {
+			return false, lotDraw{}, nil
+		}
+		if _, err := ex.Exec(ctx, `UPDATE rewards SET invite_remaining=GREATEST(invite_remaining-1, 0) WHERE user_id=$1`, uid); err != nil {
+			return false, lotDraw{}, err
+		}
+		return true, lotDraw{
+			LotID: id, Source: "invite", Amount: 1, Remaining: remaining - 1,
+			Expires: sql.NullTime{Time: expires, Valid: true},
+		}, nil
+	}
+	var remaining int
+	err := ex.QueryRow(ctx, `UPDATE rewards SET invite_remaining = invite_remaining - 1
+		WHERE user_id=$1 AND invite_remaining > 0 RETURNING invite_remaining`, uid).Scan(&remaining)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, lotDraw{}, nil
+	}
+	if err != nil {
+		return false, lotDraw{}, err
+	}
+	return true, lotDraw{Source: "invite", Amount: 1, Remaining: remaining}, nil
+}
+
+func inviteBalance(ctx context.Context, ex execer, uid int64) (int, error) {
+	var grants int
+	if err := ex.QueryRow(ctx, `SELECT count(*) FROM invite_grants WHERE user_id=$1`, uid).Scan(&grants); err != nil {
+		return 0, err
+	}
+	if grants > 0 {
+		var n int
+		err := ex.QueryRow(ctx, `SELECT COALESCE(sum(remaining),0) FROM invite_grants WHERE user_id=$1 AND remaining>0 AND expires_at>now()`, uid).Scan(&n)
+		return n, err
+	}
+	var n int
+	err := ex.QueryRow(ctx, `SELECT invite_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
 }
 
 func creditInviteRemaining(ctx context.Context, tx Tx, uid int64, amount int) error {
@@ -418,48 +573,241 @@ func creditInviteRemaining(ctx context.Context, tx Tx, uid int64, amount int) er
 }
 
 func consumeOnboardExperience(ctx context.Context, tx Tx, uid, readingID int64) (bool, error) {
-	var deviceID string
-	err := tx.QueryRow(ctx, `SELECT device_id FROM device_experiences WHERE reading_id=$1 FOR UPDATE`, readingID).Scan(&deviceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
+	var used bool
+	if err := tx.QueryRow(ctx, `SELECT reading_trial_used FROM app_users WHERE id=$1 FOR UPDATE`, uid).Scan(&used); err != nil {
 		return false, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE device_experiences SET consumed=TRUE, user_id=$1, consumed_at=now()
-		WHERE device_id=$2 AND consumed=FALSE`, uid, deviceID)
+	var deviceID string
+	err := tx.QueryRow(ctx, `SELECT device_id FROM device_experiences WHERE reading_id=$1 FOR UPDATE`, readingID).Scan(&deviceID)
+	if err == nil {
+		if _, err := tx.Exec(ctx, `UPDATE device_experiences SET consumed=TRUE, user_id=$1, consumed_at=COALESCE(consumed_at, now())
+			WHERE device_id=$2 AND consumed=FALSE`, uid, deviceID); err != nil {
+			return false, err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if used {
+		return false, nil
+	}
+	tag, err := tx.Exec(ctx, `UPDATE app_users SET reading_trial_used=TRUE WHERE id=$1 AND reading_trial_used=FALSE`, uid)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
 }
 
-func spendQuota(ctx context.Context, tx Tx, uid int64, cost int) (after int, ok bool, err error) {
+type lotDraw struct {
+	LotID     int64
+	Source    string
+	Amount    int
+	Remaining int
+	Expires   sql.NullTime
+}
+
+func spendQuota(ctx context.Context, tx Tx, uid int64, cost int) (after int, ok bool, draws []lotDraw, err error) {
 	if cost <= 0 {
-		return 0, false, nil
+		return 0, false, nil, nil
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO quota_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return 0, false, err
+		return 0, false, nil, err
 	}
 	var bal int
 	if err = tx.QueryRow(ctx, `SELECT quota_balance FROM quota_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&bal); err != nil {
-		return 0, false, err
+		return 0, false, nil, err
+	}
+	if err = expireQuotaLots(ctx, tx, uid); err != nil {
+		return 0, false, nil, err
+	}
+	if err = tx.QueryRow(ctx, `SELECT quota_balance FROM quota_balances WHERE user_id=$1`, uid).Scan(&bal); err != nil {
+		return 0, false, nil, err
 	}
 	if bal < cost {
-		return 0, false, nil
+		return 0, false, nil, nil
+	}
+	var lots int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM quota_lots WHERE user_id=$1 AND remaining>0 AND (expires_at IS NULL OR expires_at > now())`, uid).Scan(&lots); err != nil {
+		return 0, false, nil, err
+	}
+	if lots > 0 {
+		draws, err = drawQuotaLots(ctx, tx, uid, cost)
+		if err != nil {
+			return 0, false, nil, err
+		}
 	}
 	after = bal - cost
 	if _, err = tx.Exec(ctx, `UPDATE quota_balances SET quota_balance=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
-		return 0, false, err
+		return 0, false, nil, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO quota_ledger(user_id, bucket, delta, balance_after, store_transaction_id, reason)
 		VALUES ($1,$2,$3,$4,'','quota_spend')`, uid, iapBucketQuota, -cost, after); err != nil {
-		return 0, false, err
+		return 0, false, nil, err
 	}
-	return after, true, nil
+	return after, true, draws, nil
+}
+
+// expireQuotaLots drops a pool that has no active membership, and drops lots
+// whose own expires_at has passed. Expired remainder is discarded, not frozen.
+// Users with no lots keep the legacy balance.
+func expireQuotaLots(ctx context.Context, ex execer, uid int64) error {
+	switch db := ex.(type) {
+	case Tx:
+		if err := rollDueSubscription(ctx, db, uid); err != nil {
+			return err
+		}
+	case *Store:
+		if err := rollDueSubscriptionOnStore(ctx, db, uid); err != nil {
+			return err
+		}
+	}
+	var n int
+	if err := ex.QueryRow(ctx, `SELECT count(*) FROM quota_lots WHERE user_id=$1`, uid).Scan(&n); err != nil || n == 0 {
+		return err
+	}
+	member, err := hasActiveMembership(ctx, ex, uid)
+	if err != nil {
+		return err
+	}
+	if !member {
+		if _, err := ex.Exec(ctx, `UPDATE quota_lots SET remaining=0 WHERE user_id=$1 AND remaining>0`, uid); err != nil {
+			return err
+		}
+		_, err = ex.Exec(ctx, `UPDATE quota_balances SET quota_balance=0, updated_at=now() WHERE user_id=$1`, uid)
+		return err
+	}
+	if _, err := ex.Exec(ctx, `UPDATE quota_lots SET remaining=0
+		WHERE user_id=$1 AND expires_at IS NOT NULL AND expires_at <= now() AND remaining>0`, uid); err != nil {
+		return err
+	}
+	_, err = ex.Exec(ctx, `UPDATE quota_balances b
+		SET quota_balance = s.live, updated_at=now()
+		FROM (
+			SELECT COALESCE(SUM(remaining),0) AS live FROM quota_lots
+			WHERE user_id=$1 AND remaining>0 AND (expires_at IS NULL OR expires_at > now())
+		) s
+		WHERE b.user_id=$1`, uid)
+	return err
+}
+
+func rollDueSubscriptionOnStore(ctx context.Context, store *Store, uid int64) error {
+	tx, err := store.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := rollDueSubscription(ctx, tx, uid); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func rollDueSubscription(ctx context.Context, tx Tx, uid int64) error {
+	var id int64
+	var pending time.Time
+	var quota sql.NullInt64
+	var orderID sql.NullInt64
+	err := tx.QueryRow(ctx, `SELECT id, pending_expires_at, pending_quota, pending_order_id
+		FROM subscriptions
+		WHERE user_id=$1 AND pending_expires_at IS NOT NULL AND expires_at <= now()
+		ORDER BY expires_at LIMIT 1 FOR UPDATE`, uid).Scan(&id, &pending, &quota, &orderID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !pending.After(time.Now().UTC()) {
+		_, err = tx.Exec(ctx, `UPDATE subscriptions
+			SET status='expired', pending_expires_at=NULL, pending_quota=NULL, pending_order_id=NULL, pending_sku_kind=''
+			WHERE id=$1`, id)
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE subscriptions
+		SET sku_kind=CASE WHEN pending_sku_kind<>'' THEN pending_sku_kind ELSE sku_kind END,
+			sku_id=(SELECT sku_id FROM iap_orders WHERE id=subscriptions.pending_order_id),
+			status='active', starts_at=expires_at, expires_at=$1,
+			pending_expires_at=NULL, pending_quota=NULL, pending_order_id=NULL, pending_sku_kind=''
+		WHERE id=$2`, pending, id)
+	if err != nil {
+		return err
+	}
+	if quota.Valid && quota.Int64 > 0 {
+		var oid *int64
+		if orderID.Valid {
+			v := orderID.Int64
+			oid = &v
+		}
+		if _, err = creditQuota(ctx, tx, uid, int(quota.Int64), oid, "", "iap_period_refresh"); err != nil {
+			return err
+		}
+	}
+	if orderID.Valid && quota.Valid {
+		_, err = tx.Exec(ctx, `UPDATE iap_orders SET credit_status='credited', credited_quota=$1, updated_at=now()
+			WHERE id=$2 AND credit_status='deferred'`, quota.Int64, orderID.Int64)
+	}
+	return err
+}
+
+func quotaLotSource(reason string) string {
+	switch reason {
+	case "iap_quota_pack", "iap_pack_grant", "iap_restore_pack_grant":
+		return "pack"
+	case grantReason, "admin_grant_pack":
+		return "admin"
+	default:
+		return "subscription"
+	}
+}
+
+func drawQuotaLots(ctx context.Context, tx Tx, uid int64, cost int) ([]lotDraw, error) {
+	rows, err := tx.Query(ctx, `SELECT id, source, remaining, expires_at FROM quota_lots
+		WHERE user_id=$1 AND remaining>0 AND (expires_at IS NULL OR expires_at > now())
+		ORDER BY CASE source WHEN 'subscription' THEN 0 ELSE 1 END, expires_at NULLS LAST, id
+		FOR UPDATE`, uid)
+	if err != nil {
+		return nil, err
+	}
+	var takes []lotDraw
+	left := cost
+	for rows.Next() {
+		var draw lotDraw
+		if err := rows.Scan(&draw.LotID, &draw.Source, &draw.Remaining, &draw.Expires); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if left == 0 || draw.Remaining <= 0 {
+			continue
+		}
+		n := draw.Remaining
+		if n > left {
+			n = left
+		}
+		draw.Amount = n
+		draw.Remaining -= n
+		takes = append(takes, draw)
+		left -= n
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if left > 0 {
+		return nil, biz("额度批次不足")
+	}
+	for _, tk := range takes {
+		if _, err := tx.Exec(ctx, `UPDATE quota_lots SET remaining = remaining - $2 WHERE id=$1`, tk.LotID, tk.Amount); err != nil {
+			return nil, err
+		}
+	}
+	return takes, nil
 }
 
 func creditQuota(ctx context.Context, tx Tx, uid int64, amount int, orderID *int64, txn, reason string) (int, error) {
+	return creditQuotaSource(ctx, tx, uid, amount, orderID, txn, reason, "")
+}
+
+func creditQuotaSource(ctx context.Context, tx Tx, uid int64, amount int, orderID *int64, txn, reason, source string) (int, error) {
 	if amount <= 0 {
 		return 0, nil
 	}
@@ -469,6 +817,12 @@ func creditQuota(ctx context.Context, tx Tx, uid int64, amount int, orderID *int
 	var bal int
 	if err := tx.QueryRow(ctx, `SELECT quota_balance FROM quota_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&bal); err != nil {
 		return 0, err
+	}
+	if reason == "iap_period_refresh" || reason == "iap_restore_period_refresh" {
+		if _, err := tx.Exec(ctx, `UPDATE quota_lots SET remaining=0 WHERE user_id=$1 AND remaining>0`, uid); err != nil {
+			return 0, err
+		}
+		bal = 0
 	}
 	after := bal + amount
 	if _, err := tx.Exec(ctx, `UPDATE quota_balances SET quota_balance=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
@@ -480,6 +834,24 @@ func creditQuota(ctx context.Context, tx Tx, uid int64, amount int, orderID *int
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO quota_ledger(user_id, bucket, delta, balance_after, order_id, store_transaction_id, reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`, uid, iapBucketQuota, amount, after, oid, txn, reason)
+	if err != nil {
+		return 0, err
+	}
+	var exp any
+	var expAt time.Time
+	err = tx.QueryRow(ctx, `SELECT expires_at FROM subscriptions
+		WHERE user_id=$1 AND status='active' AND expires_at > now()
+		ORDER BY expires_at DESC LIMIT 1`, uid).Scan(&expAt)
+	if err == nil {
+		exp = expAt
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if source == "" {
+		source = quotaLotSource(reason)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO quota_lots(user_id, source, total, remaining, expires_at, order_id, reason)
+		VALUES ($1,$2,$3,$3,$4,$5,$6)`, uid, source, amount, exp, oid, reason)
 	return after, err
 }
 
@@ -505,6 +877,21 @@ func loadQuotaCost(ctx context.Context, ex execer) (int, bool, error) {
 		return 0, false, nil
 	}
 	return int(cost.Int64), true, nil
+}
+
+func loadTokensPerQuota(ctx context.Context, ex execer) (int, bool, error) {
+	var n sql.NullInt64
+	err := ex.QueryRow(ctx, `SELECT tokens_per_quota FROM quota_settings WHERE id=1`).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !n.Valid || n.Int64 <= 0 {
+		return 0, false, nil
+	}
+	return int(n.Int64), true, nil
 }
 
 type registrationSettings struct {
@@ -550,11 +937,48 @@ func (a *App) finishRegistration(ctx context.Context, uid int64, created bool) e
 	return a.Store.ensureRegistrationGift(ctx, uid)
 }
 
+func rewardBlocked(ctx context.Context, ex execer, uid int64) (bool, error) {
+	if uid <= 0 {
+		return false, nil
+	}
+	var n int
+	err := ex.QueryRow(ctx, `
+		SELECT count(*) FROM (
+			SELECT 1 FROM user_devices ud
+			WHERE ud.user_id=$1 AND (
+				EXISTS (SELECT 1 FROM user_devices o WHERE o.device_id=ud.device_id AND o.user_id<>$1)
+				OR EXISTS (SELECT 1 FROM identity_claims c WHERE c.kind='device' AND c.value=ud.device_id)
+				OR EXISTS (
+					SELECT 1 FROM device_experiences d
+					WHERE lower(d.device_id)=ud.device_id AND d.user_id IS NOT NULL AND d.user_id<>$1
+				)
+			)
+			UNION ALL
+			SELECT 1 FROM app_users u
+			JOIN identity_claims c ON (
+				(c.kind='email' AND u.email IS NOT NULL AND lower(c.value)=lower(u.email))
+				OR (c.kind='wechat' AND u.wechat_openid IS NOT NULL AND lower(c.value)=lower(u.wechat_openid))
+				OR (c.kind='apple' AND u.apple_sub IS NOT NULL AND lower(c.value)=lower(u.apple_sub))
+				OR (c.kind='phone' AND u.phone IS NOT NULL AND lower(c.value)=lower(u.phone))
+			)
+			WHERE u.id=$1
+		) hits`, uid).Scan(&n)
+	return n > 0, err
+}
+
 func (s *Store) noteRegistration(ctx context.Context, uid int64) error {
 	if uid <= 0 {
 		return nil
 	}
 	if _, err := s.Exec(ctx, `INSERT INTO registration_gifts(user_id, registered_at) VALUES ($1, now()) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
+		return err
+	}
+	blocked, err := rewardBlocked(ctx, s, uid)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		_, err = s.Exec(ctx, `UPDATE registration_gifts SET reward_blocked=TRUE WHERE user_id=$1 AND granted_at IS NULL`, uid)
 		return err
 	}
 	return s.ensureRegistrationGift(ctx, uid)
@@ -566,15 +990,24 @@ func (s *Store) ensureRegistrationGift(ctx context.Context, uid int64) error {
 	}
 	var registered time.Time
 	var granted sql.NullTime
-	err := s.QueryRow(ctx, `SELECT registered_at, granted_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&registered, &granted)
+	var blocked bool
+	err := s.QueryRow(ctx, `SELECT registered_at, granted_at, reward_blocked FROM registration_gifts WHERE user_id=$1`, uid).Scan(&registered, &granted, &blocked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if granted.Valid {
+	if granted.Valid || blocked {
 		return nil
+	}
+	blocked, err = rewardBlocked(ctx, s, uid)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		_, err = s.Exec(ctx, `UPDATE registration_gifts SET reward_blocked=TRUE WHERE user_id=$1 AND granted_at IS NULL`, uid)
+		return err
 	}
 	cfg, err := loadRegistrationSettings(ctx, s)
 	if err != nil {
@@ -597,7 +1030,7 @@ func (s *Store) ensureRegistrationGift(ctx context.Context, uid int64) error {
 func loadRegistrationGift(ctx context.Context, ex execer, uid int64) (map[string]any, error) {
 	empty := map[string]any{
 		"registered_at": nil, "granted_at": nil, "usable_at": nil, "expires_at": nil,
-		"total": 0, "remaining": 0, "used": false, "used_at": nil,
+		"total": 0, "remaining": 0, "used": false, "used_at": nil, "reward_blocked": false,
 	}
 	if uid <= 0 {
 		return empty, nil
@@ -605,8 +1038,9 @@ func loadRegistrationGift(ctx context.Context, ex execer, uid int64) (map[string
 	var registered time.Time
 	var granted, usable, expires, usedAt sql.NullTime
 	var total, remaining int
-	err := ex.QueryRow(ctx, `SELECT registered_at, granted_at, usable_at, expires_at, total, remaining, used_at FROM registration_gifts WHERE user_id=$1`, uid).
-		Scan(&registered, &granted, &usable, &expires, &total, &remaining, &usedAt)
+	var blocked bool
+	err := ex.QueryRow(ctx, `SELECT registered_at, granted_at, usable_at, expires_at, total, remaining, used_at, reward_blocked FROM registration_gifts WHERE user_id=$1`, uid).
+		Scan(&registered, &granted, &usable, &expires, &total, &remaining, &usedAt, &blocked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return empty, nil
 	}
@@ -614,14 +1048,15 @@ func loadRegistrationGift(ctx context.Context, ex execer, uid int64) (map[string
 		return nil, err
 	}
 	return map[string]any{
-		"registered_at": registered,
-		"granted_at":    nullTime(granted),
-		"usable_at":     nullTime(usable),
-		"expires_at":    nullTime(expires),
-		"total":         total,
-		"remaining":     remaining,
-		"used":          usedAt.Valid,
-		"used_at":       nullTime(usedAt),
+		"registered_at":  registered,
+		"granted_at":     nullTime(granted),
+		"usable_at":      nullTime(usable),
+		"expires_at":     nullTime(expires),
+		"total":          total,
+		"remaining":      remaining,
+		"used":           usedAt.Valid,
+		"used_at":        nullTime(usedAt),
+		"reward_blocked": blocked,
 	}, nil
 }
 
@@ -733,8 +1168,141 @@ func (a *App) chargeOwned(r *http.Request, readingID int64, key, action string) 
 	return decision, nil
 }
 
-// gatePlay charges the play key before the ritual continues.
-// Anonymous callers are not pre-charged. A blocked decision is already written.
+// playCover reports whether the play charge should happen now.
+// now: a full entitlement can pay. short: member cost is missing or the pool is
+// above 0 but short, so the ritual stops. later: no entitlement yet, shuffle and
+// draw stay open and interpretation charges. done: this play was already charged.
+func playCover(ctx context.Context, tx Tx, opts chargeOpts) (string, error) {
+	already, _, err := playAlready(ctx, tx, opts.ReadingID)
+	if err != nil {
+		return "", err
+	}
+	if already {
+		return "done", nil
+	}
+	member, err := hasActiveMembership(ctx, tx, opts.UserID)
+	if err != nil {
+		return "", err
+	}
+	if member {
+		cost, configured, err := loadQuotaCost(ctx, tx)
+		if err != nil {
+			return "", err
+		}
+		if !configured {
+			return "short", nil
+		}
+		if err := expireQuotaLots(ctx, tx, opts.UserID); err != nil {
+			return "", err
+		}
+		bal, err := loadQuotaBalance(ctx, tx, opts.UserID)
+		if err != nil {
+			return "", err
+		}
+		if bal >= cost {
+			return "now", nil
+		}
+		if bal > 0 {
+			return "short", nil
+		}
+	}
+	ok, err := hasPlayCredit(ctx, tx, opts)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return "now", nil
+	}
+	return "later", nil
+}
+
+func hasPlayCredit(ctx context.Context, tx Tx, opts chargeOpts) (bool, error) {
+	scope, err := giftInviteScope(ctx, tx, opts.ReadingID, opts.ChargeKey)
+	if err != nil {
+		return false, err
+	}
+	if scope {
+		var n int
+		err = tx.QueryRow(ctx, `SELECT remaining FROM registration_gifts
+			WHERE user_id=$1 AND granted_at IS NOT NULL AND usable_at<=now() AND expires_at>now() AND remaining>0`, opts.UserID).Scan(&n)
+		if err == nil && n > 0 {
+			return true, nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+		bal, err := inviteBalance(ctx, tx, opts.UserID)
+		if err != nil {
+			return false, err
+		}
+		if bal > 0 {
+			return true, nil
+		}
+	}
+	cardCount, err := readingSpreadCardCount(ctx, tx, opts.ReadingID)
+	if err != nil {
+		return false, err
+	}
+	var kind string
+	if err := tx.QueryRow(ctx, `SELECT type FROM readings WHERE id=$1`, opts.ReadingID).Scan(&kind); err != nil {
+		return false, err
+	}
+	if !freePlayEligible(kind, cardCount, opts.ChargeKey) {
+		return false, nil
+	}
+	var admin int
+	err = tx.QueryRow(ctx, `SELECT admin_grant_remaining FROM rewards WHERE user_id=$1`, opts.UserID).Scan(&admin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return admin > 0, nil
+}
+
+// chargeAtSpread bills a covered play after the spread is stored and before shuffle.
+// A short member pool stops here. A user with no entitlement is left for interpretation.
+func (a *App) chargeAtSpread(w http.ResponseWriter, r *http.Request, readingID int64) (bool, error) {
+	uid, _, err := a.appActor(r)
+	if err != nil {
+		return false, err
+	}
+	if uid == 0 {
+		return false, nil
+	}
+	tx, err := a.Store.Begin(r.Context())
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(r.Context())
+	opts := chargeOpts{
+		UserID: uid, ReadingID: readingID, ChargeKey: chargeKeyPlay, Cycle: a.userCycle(r, uid),
+		AllowTrial: true, ResumeAction: resumeShuffle,
+	}
+	cover, err := playCover(r.Context(), tx, opts)
+	if err != nil {
+		return false, err
+	}
+	if cover == "later" || cover == "done" {
+		return false, nil
+	}
+	decision, err := settleSharedQuota(r.Context(), tx, opts)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return false, err
+	}
+	if decision.Continue {
+		return false, nil
+	}
+	writeQuotaBlock(w, r, decision, readingID)
+	return true, nil
+}
+
+// gatePlay charges before interpretation. Shuffle and draw stay open until a
+// play charge exists or a paywall is already waiting.
 func (a *App) gatePlay(w http.ResponseWriter, r *http.Request, action string) (bool, error) {
 	uid, _, err := a.appActor(r)
 	if err != nil {
@@ -746,6 +1314,23 @@ func (a *App) gatePlay(w http.ResponseWriter, r *http.Request, action string) (b
 	id, err := pathID(r)
 	if err != nil {
 		return false, err
+	}
+	if action == resumeShuffle || action == resumeDraw {
+		already, _, err := playAlready(r.Context(), a.Store, id)
+		if err != nil {
+			return false, err
+		}
+		if already {
+			return false, nil
+		}
+		var waiting int
+		if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM quota_paywall
+			WHERE reading_id=$1 AND charge_key=$2 AND status IN ($3,$4)`, id, chargeKeyPlay, paywallPending, paywallUncfg).Scan(&waiting); err != nil {
+			return false, err
+		}
+		if waiting == 0 {
+			return false, nil
+		}
 	}
 	decision, err := a.chargeOwned(r, id, chargeKeyPlay, action)
 	if err != nil {

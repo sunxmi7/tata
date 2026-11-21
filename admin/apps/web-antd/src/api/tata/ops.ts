@@ -62,6 +62,14 @@ export interface ReadingRow {
   fail_reason?: string | null;
 }
 
+export interface LedgerDraw {
+  lot_id?: number | null;
+  source: string;
+  amount: number;
+  remaining_after: number;
+  expires_at?: string | null;
+}
+
 export interface LedgerRow {
   id: number;
   user_id: number;
@@ -72,6 +80,8 @@ export interface LedgerRow {
   result: string;
   created_at: string;
   grant_id?: number | null;
+  reading_status?: string | null;
+  draws?: LedgerDraw[];
 }
 
 export interface AuditRow {
@@ -178,9 +188,8 @@ export function listGrants(userId?: string) {
 }
 export function createGrant(data: {
   user_id: number;
-  quota?: number;
-  free_count?: number;
-  quota_bucket?: string;
+  quota: number;
+  quota_bucket: 'pack' | 'subscription';
   reason?: string;
   note?: string;
 }) {
@@ -204,6 +213,93 @@ export interface RedeemCodeList {
   items: RedeemCode[];
   can_write?: boolean;
   permission_note?: string;
+}
+
+export interface InviteRelation {
+  id: number;
+  inviter_id: number;
+  invitee_id: number;
+  invite_code: string;
+  created_at: string;
+  inviter_total?: number | null;
+  inviter_remaining?: number | null;
+  inviter_granted_at?: string | null;
+  inviter_expires_at?: string | null;
+  invitee_total?: number | null;
+  invitee_remaining?: number | null;
+  invitee_granted_at?: string | null;
+  invitee_expires_at?: string | null;
+}
+
+function userQuery(userId?: number) {
+  return userId ? `?user_id=${userId}` : '';
+}
+
+export function listInvites(userId?: number) {
+  return requestClient.get<{ items: InviteRelation[] }>(`/invites${userQuery(userId)}`);
+}
+
+export interface RegistrationGift {
+  user_id: number;
+  registered_at: string;
+  granted_at?: string | null;
+  usable_at?: string | null;
+  expires_at?: string | null;
+  total: number;
+  remaining: number;
+  used_at?: string | null;
+}
+
+export function listRegistrationGifts(userId?: number) {
+  return requestClient.get<{ items: RegistrationGift[] }>(
+    `/registration-gifts${userQuery(userId)}`,
+  );
+}
+
+export interface QuotaLot {
+  id: number;
+  user_id: number;
+  source: 'subscription' | 'pack' | 'admin';
+  total: number;
+  remaining: number;
+  granted_at: string;
+  expires_at?: string | null;
+  order_id?: number | null;
+  reason: string;
+  expired: boolean;
+}
+
+export function listQuotaLots(userId?: number) {
+  return requestClient.get<{ items: QuotaLot[] }>(`/quota-lots${userQuery(userId)}`);
+}
+
+export interface YearlyQualification {
+  user_id: number;
+  year: number;
+  unlocked: boolean;
+  unlock_source: string;
+  unlocked_at?: string | null;
+  report_status: string;
+  generated_at?: string | null;
+}
+
+export interface DeviceGuide {
+  device_id: string;
+  guide_completed: boolean;
+  device_trial_consumed: boolean;
+  user_id?: number | null;
+  reading_trial_used: boolean;
+  created_at: string;
+}
+
+export function listOnboarding() {
+  return requestClient.get<{ items: DeviceGuide[] }>('/onboarding');
+}
+
+export function listYearlyQualifications(userId?: number) {
+  return requestClient.get<{ items: YearlyQualification[] }>(
+    `/yearly-qualifications${userQuery(userId)}`,
+  );
 }
 
 export function listRedeemCodes() {

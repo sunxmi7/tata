@@ -10,10 +10,9 @@ import { getQuota, listSpreads, updateQuota } from '#/api/tata';
 import { hasTataWrite } from '../access';
 
 const data = ref<Record<string, unknown>>({});
-const dailyFreeCount = ref<number>(1);
-const dailySlotCount = ref<number>(1);
 const followupLimit = ref<number | null>(null);
 const quotaCost = ref<number | null>(null);
+const tokensPerQuota = ref<number | null>(null);
 const registrationDelay = ref<number | null>(null);
 const registrationValidDays = ref<number>(3);
 const registrationGrantCount = ref<number>(1);
@@ -31,10 +30,9 @@ const canWrite = hasTataWrite('ai');
 
 function applyQuota(raw: Record<string, unknown>) {
   data.value = raw;
-  dailyFreeCount.value = typeof raw.daily_free_count === 'number' ? raw.daily_free_count : 1;
-  dailySlotCount.value = typeof raw.daily_slot_count === 'number' ? raw.daily_slot_count : 1;
   followupLimit.value = typeof raw.followup_limit === 'number' ? raw.followup_limit : null;
   quotaCost.value = typeof raw.quota_cost === 'number' ? raw.quota_cost : null;
+  tokensPerQuota.value = typeof raw.tokens_per_quota === 'number' ? raw.tokens_per_quota : null;
   registrationDelay.value = typeof raw.registration_grant_delay_minutes === 'number' ? raw.registration_grant_delay_minutes : null;
   registrationValidDays.value = typeof raw.registration_valid_days === 'number' ? raw.registration_valid_days : 3;
   registrationGrantCount.value = typeof raw.registration_grant_count === 'number' ? raw.registration_grant_count : 1;
@@ -55,10 +53,9 @@ async function save() {
   saving.value = true;
   try {
     applyQuota(await updateQuota({
-      daily_free_count: dailyFreeCount.value,
-      daily_slot_count: dailySlotCount.value,
       followup_limit: followupLimit.value,
       quota_cost: quotaCost.value,
+      tokens_per_quota: tokensPerQuota.value,
       registration_grant_delay_minutes: registrationDelay.value,
       registration_valid_days: registrationValidDays.value,
       registration_grant_count: registrationGrantCount.value,
@@ -74,33 +71,8 @@ onMounted(load);
 </script>
 
 <template>
-  <Page description="每日免费次数、今日一牌次数、追问上限和会员单次额度改完立刻生效。注册赠送间隔留空不自动发，填 0 表示注册完成马上发；次数和有效天数只作用于之后新注册、或尚未发放的账号。白名单先保存，结算还不按它扣。" title="额度参数">
+  <Page description="每日免费已下线。追问上限和会员单次额度改完立刻生效。每额度 token 数留空表示未启用，结算仍按会员单次额度。注册赠送间隔留空不自动发，填 0 表示注册完成马上发；次数和有效天数只作用于之后新注册、或尚未发放的账号。白名单决定哪些 3 张及以内的普通占卜能用注册赠送和邀请次数。" title="额度参数">
     <Descriptions bordered :column="1">
-      <Descriptions.Item label="重置时刻">{{ data.reset_at }}</Descriptions.Item>
-      <Descriptions.Item label="每日免费次数">
-        <div class="flex items-center gap-2">
-          <InputNumber
-            v-model:value="dailyFreeCount"
-            :disabled="!canWrite"
-            :min="1"
-            :precision="0"
-            style="width: 140px"
-          />
-          <span class="text-muted-foreground text-xs">免费用户每天几次，不按玩法拆分</span>
-        </div>
-      </Descriptions.Item>
-      <Descriptions.Item label="今日一牌次数">
-        <div class="flex items-center gap-2">
-          <InputNumber
-            v-model:value="dailySlotCount"
-            :disabled="!canWrite"
-            :min="1"
-            :precision="0"
-            style="width: 140px"
-          />
-          <span class="text-muted-foreground text-xs">每天可抽今日一牌几次</span>
-        </div>
-      </Descriptions.Item>
       <Descriptions.Item label="共用范围">{{ data.shared_scope }}</Descriptions.Item>
       <Descriptions.Item label="失败">{{ data.failure_policy }}</Descriptions.Item>
       <Descriptions.Item label="追问上限">
@@ -112,6 +84,20 @@ onMounted(load);
             placeholder="不限制"
             style="width: 140px"
           />
+          <span class="text-muted-foreground text-xs">每条解读最多几次。没有单次扣额，不扣额度池</span>
+        </div>
+      </Descriptions.Item>
+      <Descriptions.Item label="每额度 token 数">
+        <div class="flex items-center gap-2">
+          <InputNumber
+            v-model:value="tokensPerQuota"
+            :disabled="!canWrite"
+            :min="1"
+            :precision="0"
+            placeholder="未启用"
+            style="width: 140px"
+          />
+          <span class="text-muted-foreground text-xs">多少 token 折成 1 额度。留空未启用，结算仍按会员单次额度</span>
         </div>
       </Descriptions.Item>
       <Descriptions.Item label="会员单次额度">

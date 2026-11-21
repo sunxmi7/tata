@@ -77,8 +77,28 @@ func (a *App) appGetOnboarding(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeOK(w, guideView(g))
+	view, err := a.onboardingView(r, g)
+	if err != nil {
+		return err
+	}
+	writeOK(w, view)
 	return nil
+}
+
+func (a *App) onboardingView(r *http.Request, g deviceGuide) (map[string]any, error) {
+	view := guideView(g)
+	uid, _, err := a.appActor(r)
+	if err != nil {
+		if _, ok := err.(authFail); ok {
+			return view, nil
+		}
+		return nil, err
+	}
+	if uid == 0 {
+		return view, nil
+	}
+	view["reading_trial_available"] = false
+	return view, nil
 }
 
 func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
@@ -142,6 +162,44 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 	g.gender = gender
 	g.birth = birth
 	g.preferences = prefs
-	writeOK(w, guideView(g))
+	view, err := a.onboardingView(r, g)
+	if err != nil {
+		return err
+	}
+	writeOK(w, view)
+	return nil
+}
+
+func (a *App) adminListOnboarding(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, false); err != nil {
+		return err
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT d.device_id, d.guide_completed, d.consumed, d.user_id, d.created_at,
+		COALESCE(u.reading_trial_used, FALSE)
+		FROM device_experiences d
+		LEFT JOIN app_users u ON u.id=d.user_id
+		ORDER BY d.created_at DESC LIMIT 200`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var device string
+		var guideDone, consumed, trialUsed bool
+		var userID sql.NullInt64
+		var created time.Time
+		if err := rows.Scan(&device, &guideDone, &consumed, &userID, &created, &trialUsed); err != nil {
+			return err
+		}
+		list = append(list, map[string]any{
+			"device_id": device, "guide_completed": guideDone, "device_trial_consumed": consumed,
+			"user_id": nullInt(userID), "reading_trial_used": trialUsed, "created_at": created,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{"items": list})
 	return nil
 }

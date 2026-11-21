@@ -286,7 +286,7 @@ paths:
       description: |
         需要登录用户。身份空闲则直接绑定，data=true。
         绑定成功或重复绑定同一微信时，若档案 name / avatar_url 为空则写入微信昵称和转存后的头像。
-        已被其他未注销、未合并账号占用时不搬迁数据，返回 BindConflictEnvelope，并留下 pending_confirm 合并请求。
+        已被其他账号占用时不搬迁数据，返回「该身份已绑定其他账号」，不创建合并请求。
         换绑未开放。重复绑定同一个微信身份返回 true。请求体同微信登录，传 code 不是 openid。
       requestBody:
         required: true
@@ -301,13 +301,12 @@ paths:
                   code: 081abcWeChatCode
       responses:
         '200':
-          description: 绑定成功 code=0；冲突 code=1 且 data 为 BindConflict；其他业务错误 data 为 null。
+          description: 绑定成功 code=0 且 data 为 true。身份已被占用时 code=1，message 为「该身份已绑定其他账号」，data 为 null。
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/BoolOK'
-                  - $ref: '#/components/schemas/BindConflictEnvelope'
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -338,7 +337,6 @@ paths:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/BoolOK'
-                  - $ref: '#/components/schemas/BindConflictEnvelope'
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -352,7 +350,7 @@ paths:
       description: |
         邮箱按小写比较。邮箱和验证码必填，不设密码。先调 POST /auth/email/code，scene=bind。
         空闲则写入邮箱。
-        冲突时同样只创建待确认合并，不立刻并账。已绑定过邮箱不能换绑。
+        冲突时返回「该身份已绑定其他账号」，不创建合并请求。已绑定过邮箱不能换绑。
       requestBody:
         required: true
         content:
@@ -373,7 +371,6 @@ paths:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/BoolOK'
-                  - $ref: '#/components/schemas/BindConflictEnvelope'
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -381,14 +378,12 @@ paths:
     post:
       tags: [账号]
       operationId: appMergeConfirm
-      summary: 确认账号合并
+      summary: 不提供账号合并
       parameters:
         - $ref: '#/components/parameters/Authorization'
       description: |
-        只有发起绑定的主账号可以确认。confirm=false 不会合并。
-        成功后次账号标记 merged_into，占卜、消息、邀请次数、人工补发次数、今日免费和统一额度并入主账号。
-        钻石加总不在响应里返回数字。订阅到期相同且多于一条时 subscription_resolution=prompt_required。
-        已经合并的请求会重放当时保存的结果。
+        各账号独立，不再合并。调用一律返回「不提供账号合并」，不会搬动占卜、额度或身份。
+        身份已被其他账号占用时，绑定接口直接返回「该身份已绑定其他账号」。
       requestBody:
         required: true
         content:
@@ -425,8 +420,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Authorization'
       description: |
-        禁止再登录：把邮箱、微信、苹果写入 identity_claims（小写），清空这些身份与密码并设置 cancelled_at。当前 JWT 立刻失效，后续请求返回「账号已注销」。
-        不物理删除占卜、日历或会员记录。同一身份不能重新注册。无手机号绑定。会吊销 audience=app 的 refresh（当前 App 登录并不签发 refresh）。已注销再调用返回「账号已注销」。
+        软删除：设置 cancelled_at，不物理删除账号、占卜、日历或会员记录。把邮箱、微信、苹果、手机号和已记录的设备 ID 写入 identity_claims（小写），并清空这些登录身份与密码。当前 JWT 立刻失效，后续请求返回「账号已注销」。
+        同一邮箱、微信、苹果、手机号不能重新注册。设备可以再注册新账号，但邮箱、微信、苹果、手机号、设备里只要有一个曾经注册过，就不发注册赠送，也不能领邀请奖励。会吊销 audience=app 的 refresh（当前 App 登录并不签发 refresh）。已注销再调用返回「账号已注销」。
       responses:
         '200':
           description: 成功 data=true。
@@ -819,7 +814,7 @@ paths:
           schema:
             type: string
       description: |
-        公开。show_guide 只表示这台设备还要不要出引导。reading_trial_available 只表示设备上那一次解读资格还在。两者分开。没有价格。
+        公开。show_guide 只看这台设备的引导有没有看完。登录后 reading_trial_available 只看这个账号还有没有那一次解读；老账号换新设备可以再看引导，不能再领解读。没有价格。
       responses:
         '200':
           description: data 含 show_guide、guide_completed、reading_trial_available、gender、birth_date、explore_preferences。
@@ -1088,10 +1083,9 @@ paths:
       operationId: appDetect
       summary: 问题检测
       description: |
-        用绑定的 detect 任务跑模型。无请求体。
-        成功后把 skip_detect 置为 false。suggestions 固定为 3。
-        模型错误以业务错误返回 step.Error，不写解读正文。
-        需要打字机效果时用 `/detect/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
+        只做本地检测，不调用 detect 绑定的模型。分类树和有权益时的兜底触发还没定，所以 decided 为 false，model_called 为 false。
+        空问题 invalid 为 true，不能进入选阵。其余问题可以保留原问题并选阵。
+        需要同一次结果的事件流时用 `/detect/stream`，只发 done，不发 delta。
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/PathId'
@@ -1117,8 +1111,7 @@ paths:
       operationId: appDetectStream
       summary: 问题检测（SSE 流式）
       description: |
-        与 detect 相同，但以 SSE 逐段下发。无请求体。
-        事件：delta（data:{"text":"片段"}）、done（data:{"text","vendor","model","suggestions"}）、error。
+        与 detect 相同，只发一次 done。不调用模型，没有 delta。
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/PathId'
@@ -1213,7 +1206,7 @@ paths:
       summary: 抽牌
       description: |
         登录用户先过 play 额度门槛。状态须为 SPREAD_SELECTED 或 CUTTING。
-        SHUFFLING 会提示先切牌。mode 为 normal（随机）或 numerology（灵数 1–78 不重复、个数=牌位数，映射 Rider-Waite 顺序，正位）。
+        SHUFFLING 会提示先切牌。mode 为 normal（随机）或 numerology。灵数按这一问保存的 78 张映射取牌，含正逆位；输入个数必须等于牌阵张数。全正或全逆会重抽正逆位。补抽 POST /redraw 只收一个新数字，追加一张，不覆盖已抽出的牌。
         成功后状态 CARDS_FIXED。
       parameters:
         - $ref: '#/components/parameters/Authorization'
@@ -1517,7 +1510,7 @@ paths:
       operationId: appWorkflow
       summary: 按步骤跑工作流
       description: |
-        请求体可空。detect / rewrite / recommend 不落库。
+        请求体可空。detect 只做本地检测，不调用模型。recommend 返回「正式推荐未配置」，不指定牌阵，不调用模型。rewrite 仍走绑定。这三步不落库。
         interpret / tarotist 在牌面已固定时调用 generate，会写解读并扣已有额度规则。
         未知步骤记在 step.error，不让整个请求失败。
       parameters:
@@ -1558,7 +1551,7 @@ paths:
         - $ref: '#/components/parameters/Authorization'
       description: |
         必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
-        否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置或钻石不足为 QuotaBlockEnvelope。
+        否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置、额度不足或请开通会员为 QuotaBlockEnvelope。
         扣费成功后抽一张牌并生成解读。生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
@@ -3155,7 +3148,7 @@ components:
         quota_outcome:
           type: string
           enum: [paywall, quota_cost_unconfigured]
-          description: paywall 钻石不足待付费；quota_cost_unconfigured 单价未配置。
+          description: paywall 为额度不足或请开通会员；quota_cost_unconfigured 单价未配置。
         entitlement:
           type: string
           description: 本应扣的权益种类，可能为空。
@@ -3184,8 +3177,8 @@ components:
         message:
           type: string
           description: |
-            paywall：「今日免费次数已用完，钻石不足，请付费后自动继续；取消则保留记录且不继续生成」。
-            未配置：「今日免费次数已用完，钻石消耗未配置，本次未扣钻石，记录已保留」。
+            免费用户：「请开通会员后继续」。会员额度不够：「额度不足，请购买额度补充包后自动继续；取消则保留记录且不继续生成」。
+            未配置：「会员额度单价未配置，本次未扣额度，记录已保留」。
         data:
           $ref: '#/components/schemas/QuotaBlock'
           description: 拦截详情。
@@ -3306,10 +3299,10 @@ components:
     QuotaView:
       type: object
       description: |
-        按当前是否会员分流。免费用户返回今日免费 / 邀请 / 人工补发，不返回额度余额。
-        会员返回统一额度 quota_remaining，不返回每日免费。
-        免费扣费顺序：今日免费（全局 1 次，含普通≤3 张牌与今日/明日）→ 邀请奖励 → 人工补发 → 开通会员。
-        会员每次扣 quota_settings.quota_cost；未配置为 null。
+        按当前是否会员分流。免费用户返回注册赠送、邀请和兑换免费次数，不返回额度余额，也不再返回每日免费。
+        会员返回统一额度 quota_remaining。
+        免费扣费顺序：注册赠送 → 邀请奖励 → 兑换免费次数 → 开通会员。不再发放每日免费。
+        会员每次扣 quota_settings.quota_cost；未配置为 null。池子大于 0 但不够时只提示额度不足。
         followup_limit 为每条解读可追问次数，种子默认 5，null 不限制。
       properties:
         cycle:
@@ -3318,25 +3311,22 @@ components:
           example: '2026-10-26'
         reset_at:
           type: string
-          example: 北京时间 08:00
-          description: 今日免费次数重置点的展示文案。
+          description: 已不再返回。每日免费和 08:00 刷新已取消。
         daily_free_used:
           type: boolean
-          description: 今日免费次数是否已用完。
+          description: 已不再返回。
         daily_free_count:
           type: integer
-          example: 1
-          description: 每个业务日的免费次数配额。管理端 quota-params 可改，默认 1。
+          description: 已不再返回。
         daily_slot_count:
           type: integer
-          example: 1
-          description: 每个业务日可抽今日一牌（含明日运势）的次数。管理端可改，默认 1。
+          description: 已不再返回。今日和明日是同账号、同目标日一份结果。
         daily_free_remaining:
           type: integer
-          description: 今日免费次数剩余。
+          description: 已不再返回。
         daily_used_flags:
           type: integer
-          description: 今日已占用的免费次数标记位数，内部计数。
+          description: 已不再返回。
         reward_remaining:
           type: integer
           description: 历史字段。旧注册奖励余额已下线。新的注册赠送见 registration_gift。
@@ -3382,7 +3372,7 @@ components:
           description: 付费额度在 UI 上的名称。
         priority:
           type: string
-          example: 今日免费次数 → 邀请奖励次数
+          example: 注册赠送 → 邀请奖励 → 兑换免费次数
           description: 扣减顺序说明文案。会员为「会员统一额度」。
         quota_spend_order:
           type: string
@@ -4249,7 +4239,7 @@ components:
           type: array
           items:
             type: integer
-          description: mode=numerology 时必填。1–78、不重复、长度等于牌阵牌位数。number N 对应 Rider-Waite 第 N 张（1=愚者）。
+          description: mode=numerology 时必填。1–78 的整数、同一轮不重复。个数必须等于当前牌阵张数。数字对应这一问已保存的映射，不是固定牌序。
     ConfirmQuotaBody:
       type: object
       additionalProperties: false
@@ -4414,11 +4404,11 @@ components:
         confirm_required:
           type: boolean
           example: true
-          description: 需要再调 merge-confirm。冲突时为 true。
+          description: 历史字段。绑定接口已不再返回本对象。
         merge_request_id:
           type: integer
           format: int64
-          description: 待确认的合并请求 id。交给 POST /auth/merge-confirm。
+          description: 历史字段。绑定接口已不再创建合并请求。
         primary_user_id:
           type: integer
           format: int64
@@ -4640,8 +4630,8 @@ components:
           description: verified 只表示商品映射通过，不是商店回执。
         credit_status:
           type: string
-          enum: [none, credited, amount_unconfigured, skipped_expired]
-          description: credited 已入账；amount_unconfigured 发放量未配置；skipped_expired 订阅已过期未入账。
+          enum: [none, credited, amount_unconfigured, skipped_expired, deferred]
+          description: credited 已入账；amount_unconfigured 发放量未配置；skipped_expired 订阅已过期未入账；deferred 当前周期未结束，下一期额度尚未入账。
         credited_quota:
           type: integer
           nullable: true
@@ -4868,7 +4858,7 @@ components:
           description: 追问不改牌面，恒为 true。
         error:
           type: string
-          description: 模型失败时出现。文案说明未重新扣次数或钻石。
+          description: 模型失败时出现。文案说明未重新扣额度。
         quota_outcome:
           type: string
           description: 本轮额度结果。另开新占卜时可能为空。
@@ -4897,7 +4887,7 @@ components:
           description: 复用已有今日/明日结果时为 1，不是失败。
         message:
           type: string
-          description: 当日名额已占用，或「该日已有结果，不重复扣次数或钻石」。
+          description: 当日名额已占用，或「该日已有结果，不重复扣额度」。
         data:
           type: object
           description: 已有结果。
@@ -4946,7 +4936,7 @@ components:
           description: 额度结果。
         note:
           type: string
-          example: 已按优先级处理：注册奖励，今日免费次数，人工补发免费次数，然后钻石
+          example: 已按优先级处理：会员先扣额度池；池子为 0 时用注册赠送、邀请，免费用户还可使用兑换免费次数
           description: 优先级说明文案。
     PaywallResult:
       type: object

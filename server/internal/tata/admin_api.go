@@ -163,6 +163,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{item{"Ledger", "/ledger", map[string]any{"title": "额度流水", "order": 10}}, adminModuleRecords, false},
 		{item{"Operator", "/operator", map[string]any{"title": "操作员", "order": 11}}, "", true},
 		{item{"Users", "/users", map[string]any{"title": "用户账号", "order": 12}}, adminModuleAccounts, false},
+		{item{"Onboarding", "/onboarding", map[string]any{"title": "新人引导", "order": 12}}, adminModuleAccounts, false},
 		{item{"UserStats", "/user-stats", map[string]any{"title": "用户统计", "order": 12}}, adminModuleAccounts, false},
 		{item{"Calendar", "/calendar", map[string]any{"title": "日历", "order": 13}}, adminModuleRecords, false},
 		{item{"Messages", "/messages", map[string]any{"title": "追问消息", "order": 14}}, adminModuleRecords, false},
@@ -171,6 +172,10 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{item{"IAPSkus", "/iap-skus", map[string]any{"title": "价位", "order": 17}}, adminModulePay, false},
 		{item{"Grant", "/grant", map[string]any{"title": "人工补发", "order": 18}}, adminModulePay, false},
 		{item{"RedeemCodes", "/redeem-codes", map[string]any{"title": "兑换码", "order": 19}}, adminModulePay, false},
+		{item{"Invites", "/invites", map[string]any{"title": "邀请关系", "order": 20}}, adminModulePay, false},
+		{item{"RegistrationGifts", "/registration-gifts", map[string]any{"title": "注册赠送", "order": 21}}, adminModulePay, false},
+		{item{"QuotaLots", "/quota-lots", map[string]any{"title": "额度批次", "order": 22}}, adminModulePay, false},
+		{item{"YearlyQualifications", "/yearly-qualifications", map[string]any{"title": "年运资格", "order": 23}}, adminModulePay, false},
 	}
 	items := []item{}
 	for _, row := range all {
@@ -554,15 +559,23 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 	if reg.DelayMinutes.Valid {
 		grantDelay = reg.DelayMinutes.Int64
 	}
+	tokensPerQuota, tokensReady, err := loadTokensPerQuota(r.Context(), a.Store)
+	if err != nil {
+		return err
+	}
+	var tokens any
+	if tokensReady {
+		tokens = tokensPerQuota
+	}
 	writeOK(w, map[string]any{
 		"reset_at":                         "北京时间 08:00",
 		"daily_free_count":                 dailyFree,
 		"daily_slot_count":                 dailySlot,
-		"shared_scope":                     "免费用户：今日免费次数，邀请奖励次数；会员：统一额度。探索/年运/AI 不适用每日免费。",
+		"shared_scope":                     "会员先扣额度池。池子为 0 时，注册赠送和邀请按白名单使用。免费用户还可在 3 张及以内用兑换免费次数。不再发放每日免费。",
 		"failure_policy":                   "已扣不退",
 		"editable":                         false,
-		"daily_free_editable":              true,
-		"daily_slot_editable":              true,
+		"daily_free_editable":              false,
+		"daily_slot_editable":              false,
 		"followup_limit":                   followup,
 		"followup_limit_editable":          true,
 		"quota_cost":                       quotaCost,
@@ -572,6 +585,8 @@ func (a *App) adminQuota(w http.ResponseWriter, r *http.Request) error {
 		"registration_valid_days":          reg.ValidDays,
 		"registration_grant_count":         reg.GrantCount,
 		"registration_spread_ids":          reg.SpreadIDs,
+		"tokens_per_quota":                 tokens,
+		"tokens_per_quota_editable":        true,
 		"quota_spend_order":                "quota",
 		"free_label":                       "次数",
 		"paid_label":                       "额度",
@@ -591,25 +606,11 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 		return biz("重置时刻不可修改")
 	}
 	changed := false
-	if rawCount, ok := raw["daily_free_count"]; ok {
-		var n int
-		if err := json.Unmarshal(rawCount, &n); err != nil || n <= 0 {
-			return biz("每日免费次数须为正整数")
-		}
-		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET daily_free_count=$1, updated_at=now() WHERE id=1`, n); err != nil {
-			return err
-		}
-		changed = true
+	if _, ok := raw["daily_free_count"]; ok {
+		return biz("每日免费已下线")
 	}
-	if rawCount, ok := raw["daily_slot_count"]; ok {
-		var n int
-		if err := json.Unmarshal(rawCount, &n); err != nil || n <= 0 {
-			return biz("今日一牌次数须为正整数")
-		}
-		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET daily_slot_count=$1, updated_at=now() WHERE id=1`, n); err != nil {
-			return err
-		}
-		changed = true
+	if _, ok := raw["daily_slot_count"]; ok {
+		return biz("今日一牌次数已下线")
 	}
 	if limitRaw, ok := raw["followup_limit"]; ok {
 		if string(limitRaw) == "null" {
@@ -676,6 +677,22 @@ func (a *App) adminUpdateQuota(w http.ResponseWriter, r *http.Request) error {
 		}
 		if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET registration_grant_count=$1, updated_at=now() WHERE id=1`, n); err != nil {
 			return err
+		}
+		changed = true
+	}
+	if tokenRaw, ok := raw["tokens_per_quota"]; ok {
+		if string(tokenRaw) == "null" {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET tokens_per_quota=NULL, updated_at=now() WHERE id=1`); err != nil {
+				return err
+			}
+		} else {
+			var n int
+			if err := json.Unmarshal(tokenRaw, &n); err != nil || n <= 0 {
+				return biz("每额度 token 数须为正整数，或 null 表示未启用")
+			}
+			if _, err := a.Store.Exec(r.Context(), `UPDATE quota_settings SET tokens_per_quota=$1, updated_at=now() WHERE id=1`, n); err != nil {
+				return err
+			}
 		}
 		changed = true
 	}

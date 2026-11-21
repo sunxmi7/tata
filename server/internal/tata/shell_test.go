@@ -239,7 +239,7 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 func TestAppShellDailyHomeFieldsPresent(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, uid := registerUser(t, ts, store, "dailyhome")
-	_ = uid
+	seedGift(t, store, uid, 1)
 	raw := get(t, ts, token, "/api/app/v1/calendar")
 	var env struct {
 		Data map[string]any `json:"data"`
@@ -257,7 +257,7 @@ func TestAppShellDailyHomeFieldsPresent(t *testing.T) {
 	}
 
 	msg, body := call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
-	if msg != "" && !strings.Contains(msg, "已占用") && !strings.Contains(msg, "已用完") && !strings.Contains(msg, "钻石") && !strings.Contains(msg, "未配置") {
+	if msg != "" && !strings.Contains(msg, "已占用") && !strings.Contains(msg, "已用完") && !strings.Contains(msg, "额度") && !strings.Contains(msg, "未配置") && !strings.Contains(msg, "开通会员") {
 		t.Fatalf("daily: %s %s", msg, body)
 	}
 	var daily struct {

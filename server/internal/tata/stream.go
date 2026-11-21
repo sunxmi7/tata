@@ -117,7 +117,10 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 		return biz("牌面尚未固定")
 	}
 	if uid == 0 {
-		return biz("登录后才会扣次数或钻石")
+		return biz("登录后才能追问")
+	}
+	if err := rejectFreeFollowup(r.Context(), a.Store, uid, kind); err != nil {
+		return err
 	}
 	text := strings.TrimSpace(req.Text)
 	if strings.Contains(req.Text, "别这样说") || strings.Contains(req.Text, "不舒服") {
@@ -248,19 +251,12 @@ func (a *App) appDetectStream(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	question, _ := item["question"].(string)
-	run, err := a.ensureDetectJob(r.Context(), id, question)
+	payload, err := a.localDetect(r.Context(), uid, question)
 	if err != nil {
 		return err
 	}
 	send := sseStart(w)
-	a.attachJobSSE(r.Context(), send, run, func() error {
-		payload, _ := run.result().(map[string]any)
-		if payload == nil {
-			payload = map[string]any{"text": run.snapshot(), "suggestions": 3}
-		}
-		send("done", payload)
-		return nil
-	})
+	send("done", payload)
 	return nil
 }
 

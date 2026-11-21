@@ -11,18 +11,16 @@ import (
 	"time"
 )
 
-// Admin grants add unified quota and/or free counts. They do not update iap_orders
+// Admin grants add member quota only. They do not update iap_orders
 // and do not call resumeQuotaAfterCredit.
 //
 // Permission: pay 模块可写才能补发；role=admin 隐含全部模块。
 // 无写权限可查补发记录。流水与审计分属 records / accounts 模块。
 //
-// quota 一律写入 quota_balance，quota_ledger.bucket = quota。
-// quota_bucket 兼容历史 pack/subscription，忽略后仍入统一额度。订阅有效期不改。
-//
-// Free counts add rewards.admin_grant_remaining. They do not change
-// rewards.remaining or its expiry. Free users spend daily → invite → admin grant.
-// Members skip free counts and spend quota. Reason on every grant row is admin_grant.
+// quota 写入 quota_balance，并记入 quota_lots。quota_bucket 只能是
+// subscription（套餐赠送）或 pack（补充包）。订阅有效期不改。
+// 免费次数不能从这里补。兑换码仍按码上的配置入账。
+// Reason on every grant row is admin_grant.
 
 const (
 	grantKindQuota  = "quota"
@@ -30,8 +28,6 @@ const (
 	grantReason     = "admin_grant"
 	grantBucketPack = "pack"
 	grantBucketSub  = "subscription"
-	grantFreeResult = "granted"
-	grantFreeEnt    = "free_count"
 	grantMaxAmount  = 100000
 	grantNoteMax    = 500
 )
@@ -109,23 +105,16 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 	if req.UserID <= 0 {
 		return biz("请指定用户")
 	}
-	if req.Quota < 0 || req.FreeCount < 0 {
-		return biz("补发数量不正确")
+	if req.FreeCount != 0 {
+		return biz("人工补发只补会员额度")
 	}
-	if req.Quota == 0 && req.FreeCount == 0 {
-		return biz("请填写额度或免费次数")
-	}
-	if req.Quota > grantMaxAmount || req.FreeCount > grantMaxAmount {
-		return biz("补发数量超出单次上限")
+	if req.Quota <= 0 || req.Quota > grantMaxAmount {
+		return biz("请填写会员额度")
 	}
 	bucket := strings.TrimSpace(req.QuotaBucket)
-	if bucket == "" {
-		bucket = grantBucketPack
+	if bucket != grantBucketPack && bucket != grantBucketSub {
+		return biz("请选择套餐赠送或补充包")
 	}
-	if bucket != grantBucketPack && bucket != grantBucketSub && bucket != "quota" {
-		return biz("额度补发写入统一额度账户")
-	}
-	bucket = "quota"
 
 	tx, err := a.Store.Begin(r.Context())
 	if err != nil {
@@ -136,21 +125,11 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	now := time.Now().UTC()
-	grants := []map[string]any{}
-	if req.Quota > 0 {
-		item, err := applyQuotaGrant(r.Context(), tx, act.id, req.UserID, req.Quota, bucket, note, now)
-		if err != nil {
-			return err
-		}
-		grants = append(grants, item)
+	item, err := applyQuotaGrant(r.Context(), tx, act.id, req.UserID, req.Quota, bucket, note, now)
+	if err != nil {
+		return err
 	}
-	if req.FreeCount > 0 {
-		item, err := applyFreeGrant(r.Context(), tx, act.id, req.UserID, req.FreeCount, note, now)
-		if err != nil {
-			return err
-		}
-		grants = append(grants, item)
-	}
+	grants := []map[string]any{item}
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
@@ -173,14 +152,15 @@ func (a *App) adminCreateGrant(w http.ResponseWriter, r *http.Request) error {
 func grantMeta(canWrite bool) map[string]any {
 	return map[string]any{
 		"reason":                       grantReason,
-		"quota_bucket_default":         "quota",
+		"quota_bucket_default":         grantBucketPack,
+		"quota_buckets":                []string{grantBucketSub, grantBucketPack},
 		"quota_bucket_column":          "quota_balance",
 		"quota_ledger_bucket_for_pack": iapBucketQuota,
 		"writes_iap_orders":            false,
 		"resumes_paywall":              false,
 		"can_write":                    canWrite,
 		"write_role":                   "admin",
-		"permission_note":              "付费模块可写才能补发额度或免费次数。quota 字段写入统一额度。",
+		"permission_note":              "付费模块可写才能补发。只补会员额度，写入套餐赠送或补充包。",
 	}
 }
 
@@ -217,14 +197,14 @@ func lockGrantUser(ctx context.Context, tx Tx, uid int64) error {
 
 func applyQuotaGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount int, bucket, note string, now time.Time) (map[string]any, error) {
 	ledgerBucket := iapBucketQuota
-	after, err := creditQuota(ctx, tx, uid, amount, nil, "", grantReason)
+	after, err := creditQuotaSource(ctx, tx, uid, amount, nil, "", grantReason, bucket)
 	if err != nil {
 		return nil, err
 	}
 	var grantID int64
 	if err := tx.QueryRow(ctx, `INSERT INTO admin_grants(user_id, operator_id, kind, amount, bucket, ledger_bucket, reason, note, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		uid, operatorID, grantKindQuota, amount, "quota", ledgerBucket, grantReason, note, now).Scan(&grantID); err != nil {
+		uid, operatorID, grantKindQuota, amount, bucket, ledgerBucket, grantReason, note, now).Scan(&grantID); err != nil {
 		return nil, err
 	}
 	var ledgerID int64
@@ -254,49 +234,6 @@ func applyQuotaGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount i
 		"kind": grantKindQuota, "amount": amount, "bucket": bucket, "ledger_bucket": ledgerBucket,
 		"reason": grantReason, "note": note, "quota_ledger_id": ledgerID, "balance_after": after,
 		"created_at": now,
-	}, nil
-}
-
-func applyFreeGrant(ctx context.Context, tx Tx, operatorID, uid int64, amount int, note string, now time.Time) (map[string]any, error) {
-	if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining)
-		VALUES ($1, now(), now(), 0, 0)
-		ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return nil, err
-	}
-	var remaining, rewardRemaining int
-	if err := tx.QueryRow(ctx, `UPDATE rewards SET admin_grant_remaining = admin_grant_remaining + $2
-		WHERE user_id=$1 RETURNING admin_grant_remaining, remaining`, uid, amount).Scan(&remaining, &rewardRemaining); err != nil {
-		return nil, err
-	}
-	var grantID int64
-	if err := tx.QueryRow(ctx, `INSERT INTO admin_grants(user_id, operator_id, kind, amount, bucket, ledger_bucket, reason, note, created_at)
-		VALUES ($1,$2,$3,$4,'','',$5,$6,$7) RETURNING id`,
-		uid, operatorID, grantKindFree, amount, grantReason, note, now).Scan(&grantID); err != nil {
-		return nil, err
-	}
-	var ledgerID int64
-	if err := tx.QueryRow(ctx, `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result, grant_id, created_at)
-		VALUES ($1, NULL, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		uid, grantFreeEnt, amount, grantReason, grantFreeResult, grantID, now).Scan(&ledgerID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE admin_grants SET count_ledger_id=$1 WHERE id=$2`, ledgerID, grantID); err != nil {
-		return nil, err
-	}
-	if err := writeGrantAudit(ctx, tx, operatorID, grantID, map[string]any{
-		"grant_id": grantID, "user_id": uid, "operator_id": operatorID,
-		"kind": grantKindFree, "amount": amount, "reason": grantReason, "note": note,
-		"count_ledger_id": ledgerID, "free_count_after": remaining,
-		"registration_reward_remaining": rewardRemaining,
-		"created_at":                    now, "iap_order_rewritten": false,
-	}); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"id": grantID, "user_id": uid, "operator_id": operatorID,
-		"kind": grantKindFree, "amount": amount, "bucket": "", "ledger_bucket": "",
-		"reason": grantReason, "note": note, "count_ledger_id": ledgerID,
-		"free_count_after": remaining, "created_at": now,
 	}, nil
 }
 

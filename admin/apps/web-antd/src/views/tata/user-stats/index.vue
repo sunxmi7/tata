@@ -65,7 +65,7 @@ onMounted(async () => {
 
 <template>
   <Page
-    description="未注销、未合并用户。性别与年龄按人数；探索偏好多选按选择次数，未选任何项计入「未选择」。"
+    description="未注销用户，历史上已合并的账号也计入。性别与年龄按人数；探索偏好多选按选择次数，未选任何项计入「未选择」。"
     :title="`用户统计（${total} 人）`"
   >
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">

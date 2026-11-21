@@ -145,7 +145,11 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	if !yearSub {
+	member, err := hasActiveMembership(r.Context(), a.Store, uid)
+	if err != nil {
+		return err
+	}
+	if !member && !yearSub {
 		price, _, err := a.yearlyUnlockPrice(r.Context())
 		if err != nil {
 			return err
@@ -155,10 +159,16 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 		}
 		return biz("年卡未开通，请通过内购单独解锁")
 	}
+	source := "membership"
+	if yearSub {
+		source = "year_subscription"
+	}
 	if _, err := a.Store.Exec(r.Context(), `INSERT INTO yearly_reports(user_id, year, unlocked, unlock_source, unlocked_at)
-		VALUES ($1,$2,TRUE,'year_subscription',now())
-		ON CONFLICT (user_id, year) DO UPDATE SET unlocked=TRUE, unlock_source='year_subscription', unlocked_at=COALESCE(yearly_reports.unlocked_at, now())`,
-		uid, year); err != nil {
+		VALUES ($1,$2,TRUE,$3,now())
+		ON CONFLICT (user_id, year) DO UPDATE SET unlocked=TRUE,
+			unlock_source=CASE WHEN yearly_reports.unlock_source IN ('','membership') THEN EXCLUDED.unlock_source ELSE yearly_reports.unlock_source END,
+			unlocked_at=COALESCE(yearly_reports.unlocked_at, now())`,
+		uid, year, source); err != nil {
 		return err
 	}
 	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
@@ -331,16 +341,24 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int, r *htt
 	if err != nil {
 		return nil, err
 	}
+	member, err := hasActiveMembership(ctx, a.Store, uid)
+	if err != nil {
+		return nil, err
+	}
 	var unlocked bool
 	var source string
 	err = a.Store.QueryRow(ctx, `SELECT unlocked, unlock_source FROM yearly_reports WHERE user_id=$1 AND year=$2`, uid, year).Scan(&unlocked, &source)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if yearSub {
+	if member {
 		unlocked = true
 		if source == "" {
-			source = "year_subscription"
+			if yearSub {
+				source = "year_subscription"
+			} else {
+				source = "membership"
+			}
 		}
 	}
 	priceMinor, priceCurrency, err := a.yearlyUnlockPrice(ctx)
@@ -368,6 +386,7 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int, r *htt
 		"year_member_unlocks":   true,
 		"unlock_price_minor":    priceMinor,
 		"unlock_price_currency": priceCurrency,
+		"standalone_purchase":   !member,
 		"content_status":        status,
 		"theme":                 bodies["theme"],
 		"domain":                bodies["domain"],

@@ -30,6 +30,7 @@ const (
 	iapCreditCredited   = "credited"
 	iapCreditUnconfig   = "amount_unconfigured"
 	iapCreditExpired    = "skipped_expired"
+	iapCreditDeferred   = "deferred"
 	iapSourceVerify     = "verify"
 	iapSourceRestore    = "restore"
 
@@ -229,6 +230,9 @@ func (a *App) appIAPSKUs(w http.ResponseWriter, r *http.Request) error {
 			continue
 		}
 		if k == iapKindQuotaPack && !member {
+			continue
+		}
+		if k == iapKindYearlyUnlock && member {
 			continue
 		}
 		item["unit"] = "quota"
@@ -765,11 +769,15 @@ func (a *App) verifyPurchase(ctx context.Context, uid int64, in iapPurchase) (ma
 			status = "expired"
 			write.CreditStatus = iapCreditExpired
 		}
-		subID, err := upsertIAPSubscription(ctx, tx, uid, sku, in, periodStart, *periodEnd, status, orderID)
+		subID, held, err := upsertIAPSubscription(ctx, tx, uid, sku, in, periodStart, *periodEnd, status, orderID)
 		if err != nil {
 			return nil, err
 		}
 		write.SubscriptionID = &subID
+		if held {
+			write.CreditStatus = iapCreditDeferred
+			write.Message = "下一期尚未开始"
+		}
 	}
 	if sku.Kind == iapKindYearlyUnlock {
 		if write.CreditStatus == iapCreditCredited {
@@ -897,7 +905,7 @@ func finishIAPOrder(ctx context.Context, tx Tx, orderID int64, w iapOrderWrite) 
 	return err
 }
 
-func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, in iapPurchase, start, end time.Time, status string, orderID int64) (int64, error) {
+func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, in iapPurchase, start, end time.Time, status string, orderID int64) (int64, bool, error) {
 	skuKind := "month"
 	if sku.Kind == "year_subscription" {
 		skuKind = "year"
@@ -911,15 +919,32 @@ func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, i
 			user_id, sku_kind, status, starts_at, expires_at, sku_id, platform, store_original_transaction_id, last_order_id)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
 			uid, skuKind, status, start, end, sku.ID, in.Platform, in.OriginalTransactionID, orderID).Scan(&id)
-		return id, err
+		return id, false, err
 	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
+	}
+	var curStatus string
+	var curExp time.Time
+	if err = tx.QueryRow(ctx, `SELECT status, expires_at FROM subscriptions WHERE id=$1`, id).Scan(&curStatus, &curExp); err != nil {
+		return 0, false, err
+	}
+	now := time.Now().UTC()
+	if status == "active" && curStatus == "active" && curExp.After(now) && end.After(curExp) {
+		var pending any
+		if sku.Grant.Valid && sku.Grant.Int64 > 0 {
+			pending = int(sku.Grant.Int64)
+		}
+		_, err = tx.Exec(ctx, `UPDATE subscriptions
+			SET pending_expires_at=$1, pending_quota=$2, pending_order_id=$3, pending_sku_kind=$4
+			WHERE id=$5`, end, pending, orderID, skuKind, id)
+		return id, true, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE subscriptions
-		SET sku_kind=$1, status=$2, expires_at=$3, sku_id=$4, last_order_id=$5
+		SET sku_kind=$1, status=$2, expires_at=$3, sku_id=$4, last_order_id=$5,
+			pending_expires_at=NULL, pending_quota=NULL, pending_order_id=NULL, pending_sku_kind=''
 		WHERE id=$6`, skuKind, status, end, sku.ID, orderID, id)
-	return id, err
+	return id, false, err
 }
 
 func quotaReason(source, kind string) string {

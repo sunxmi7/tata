@@ -38,6 +38,50 @@ func (a *App) userCycle(r *http.Request, uid int64) string {
 	return cycleFor(time.Now(), userTimezone(r.Context(), a.Store, uid))
 }
 
+func canonicalDevice(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if !validDeviceID(raw) {
+		return ""
+	}
+	return raw
+}
+
+func (a *App) rememberLoginDevice(ctx context.Context, uid int64, deviceID, anonymousID string) error {
+	deviceID = canonicalDevice(deviceID)
+	if deviceID == "" && strings.TrimSpace(anonymousID) != "" {
+		var stored string
+		_ = a.Store.QueryRow(ctx, `SELECT device_id FROM anon_devices WHERE anonymous_id=$1`, strings.TrimSpace(anonymousID)).Scan(&stored)
+		deviceID = canonicalDevice(stored)
+	}
+	if uid <= 0 || deviceID == "" {
+		return nil
+	}
+	_, err := a.Store.Exec(ctx, `INSERT INTO user_devices(user_id, device_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, uid, deviceID)
+	return err
+}
+
+func (a *App) claimDevices(ctx context.Context, uid int64) {
+	rows, err := a.Store.Query(ctx, `
+		SELECT device_id FROM user_devices WHERE user_id=$1
+		UNION
+		SELECT lower(device_id) FROM device_experiences WHERE user_id=$1 AND device_id<>''`, uid)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var device string
+		if err := rows.Scan(&device); err != nil {
+			return
+		}
+		device = canonicalDevice(device)
+		if device == "" {
+			continue
+		}
+		_, _ = a.Store.Exec(ctx, `INSERT INTO identity_claims(kind, value) VALUES ('device',$1) ON CONFLICT DO NOTHING`, device)
+	}
+}
+
 func (a *App) claimed(r *http.Request, kind, value string) bool {
 	if value == "" {
 		return false
@@ -79,12 +123,17 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID, req.AnonymousID); err != nil {
+		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
+		return
+	}
 	if err := a.finishRegistration(r.Context(), id, created); err != nil {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
 	a.applyWeChatProfile(r, id, prof)
 	a.ensureProfileDefaults(r.Context(), id)
+	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
 	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
@@ -95,6 +144,8 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IdentityToken string `json:"identity_token"`
 		InviteCode    string `json:"invite_code"`
+		DeviceID      string `json:"device_id"`
+		AnonymousID   string `json:"anonymous_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
@@ -125,11 +176,16 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID, req.AnonymousID); err != nil {
+		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
+		return
+	}
 	if err := a.finishRegistration(r.Context(), id, created); err != nil {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
 	a.ensureProfileDefaults(r.Context(), id)
+	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
 	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "apple"})
@@ -206,6 +262,7 @@ func (a *App) appCancel(w http.ResponseWriter, r *http.Request) error {
 	claim("wechat", openid)
 	claim("apple", apple)
 	claim("phone", phone)
+	a.claimDevices(r.Context(), uid)
 	_, err = a.Store.Exec(r.Context(), `UPDATE app_users SET cancelled_at=now(), email=NULL, wechat_openid=NULL, apple_sub=NULL, phone=NULL, password_hash=NULL WHERE id=$1`, uid)
 	if err != nil {
 		return err
@@ -286,19 +343,43 @@ func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	question, _ := item["question"].(string)
-	run, err := a.ensureDetectJob(r.Context(), id, question)
+	payload, err := a.localDetect(r.Context(), uid, question)
 	if err != nil {
 		return err
 	}
-	if err := run.wait(r.Context()); err != nil {
-		return err
-	}
-	payload, _ := run.result().(map[string]any)
-	if payload == nil {
-		return biz("问题检测失败")
-	}
 	writeOK(w, payload)
 	return nil
+}
+
+func (a *App) localDetect(ctx context.Context, uid int64, question string) (map[string]any, error) {
+	q := strings.TrimSpace(question)
+	out := map[string]any{
+		"question":          q,
+		"source":            "local",
+		"decided":           false,
+		"model_called":      false,
+		"can_keep_question": true,
+		"invalid":           q == "",
+		"can_select_spread": q != "",
+	}
+	if q == "" {
+		out["reason"] = "empty"
+		return out, nil
+	}
+	member := false
+	var err error
+	if uid > 0 {
+		member, err = hasActiveMembership(ctx, a.Store, uid)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !member {
+		out["reason"] = "no_entitlement"
+		return out, nil
+	}
+	out["reason"] = "fallback_unconfigured"
+	return out, nil
 }
 
 func (a *App) appShuffle(w http.ResponseWriter, r *http.Request) error {
@@ -338,6 +419,26 @@ func (a *App) moveRitual(w http.ResponseWriter, r *http.Request, from, to, wrong
 	}
 	writeOK(w, item)
 	return nil
+}
+
+func rejectFreeFollowup(ctx context.Context, q rowQuery, uid int64, kind string) error {
+	switch kind {
+	case "tarotist":
+		return biz("塔罗师不能追问")
+	case "daily":
+		return biz("今日和明日不能追问")
+	case "normal", "explore":
+		member, err := hasActiveMembership(ctx, q, uid)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return biz("免费用户不能追问")
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
@@ -412,6 +513,10 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		a.clearPendingIdem(r, scope, idemKey)
 		return biz(paywallNeedLogin)
+	}
+	if err := rejectFreeFollowup(r.Context(), a.Store, uid, kind); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
 	}
 	if strings.Contains(req.Text, "别这样说") || strings.Contains(req.Text, "不舒服") {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE app_users SET tease_off=true WHERE id=$1`, uid)
@@ -552,7 +657,7 @@ func (a *App) answerFollowup(ctx context.Context, readingID, uid, turn int64, te
 	prompt := a.personaPrompt(ctx, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
 	_, _, output, err := a.runEino(ctx, "tarotist", prompt)
 	if err != nil {
-		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣次数或钻石", "cards_unchanged": true, "bubbles": []string{}}, nil
+		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣额度", "cards_unchanged": true, "bubbles": []string{}}, nil
 	}
 	parts := strings.Split(output, "\n\n")
 	bubbles := []string{}
@@ -597,7 +702,7 @@ func (a *App) answerFollowupStreaming(ctx context.Context, readingID, uid, turn 
 	prompt := a.personaPrompt(ctx, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
 	_, _, output, err := a.runEinoStream(ctx, "tarotist", prompt, onChunk)
 	if err != nil {
-		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣次数或钻石", "cards_unchanged": true, "bubbles": []string{}}, nil
+		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣额度", "cards_unchanged": true, "bubbles": []string{}}, nil
 	}
 	parts := strings.Split(output, "\n\n")
 	bubbles := []string{}

@@ -1,26 +1,89 @@
 <script lang="ts" setup>
-import type { AppUser } from '#/api/tata';
+import type {
+  AppUser,
+  InviteRelation,
+  QuotaLot,
+  RegistrationGift,
+  YearlyQualification,
+} from '#/api/tata';
 
-import { onMounted, ref } from 'vue';
+import { ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Image, Table, Tag } from 'ant-design-vue';
+import { Button, Drawer, Image, Table, Tag } from 'ant-design-vue';
 
-import { listUsers } from '#/api/tata';
+import {
+  listInvites,
+  listQuotaLots,
+  listRegistrationGifts,
+  listUsers,
+  listYearlyQualifications,
+} from '#/api/tata';
 
 const rows = ref<AppUser[]>([]);
-onMounted(async () => {
-  rows.value = await listUsers();
-});
+const open = ref(false);
+const loading = ref(false);
+const current = ref<AppUser | null>(null);
+const gifts = ref<RegistrationGift[]>([]);
+const invites = ref<InviteRelation[]>([]);
+const lots = ref<QuotaLot[]>([]);
+const years = ref<YearlyQualification[]>([]);
 
 function prefs(row: AppUser) {
   return row.explore_preferences ?? [];
 }
+
+function lotSource(source: string) {
+  if (source === 'subscription') return '套餐赠送';
+  if (source === 'pack') return '补充包';
+  if (source === 'admin') return '人工补发';
+  return source;
+}
+
+function yearSource(source: string) {
+  if (source === 'purchase') return '单买';
+  if (source === 'year_subscription') return '年卡';
+  if (source === 'membership') return '会员';
+  return source || '未记录';
+}
+
+async function load() {
+  rows.value = await listUsers();
+}
+
+async function showEntitlements(row: AppUser) {
+  current.value = row;
+  open.value = true;
+  loading.value = true;
+  gifts.value = [];
+  invites.value = [];
+  lots.value = [];
+  years.value = [];
+  try {
+    const [gift, invite, lot, year] = await Promise.all([
+      listRegistrationGifts(row.id),
+      listInvites(row.id),
+      listQuotaLots(row.id),
+      listYearlyQualifications(row.id),
+    ]);
+    gifts.value = gift.items || [];
+    invites.value = invite.items || [];
+    lots.value = lot.items || [];
+    years.value = year.items || [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+load();
 </script>
 
 <template>
-  <Page description="头像、昵称、性别、探索偏好与注销状态。没有手机号。注册奖励不在这里扣。画像占比见「用户统计」。" title="用户账号">
+  <Page
+    description="头像、昵称、性别、探索偏好与注销状态。点「权益」查看这个账号的注册赠送、邀请、额度批次和年运资格。注册奖励不在这里扣。"
+    title="用户账号"
+  >
     <Table
       :columns="[
         { title: 'ID', dataIndex: 'id', width: 72 },
@@ -34,11 +97,12 @@ function prefs(row: AppUser) {
         { title: '苹果', dataIndex: 'apple_sub', ellipsis: true },
         { title: '时区', dataIndex: 'timezone', width: 140 },
         { title: '状态', dataIndex: 'cancelled_at', width: 180 },
+        { title: '权益', dataIndex: 'action', width: 80, fixed: 'right' },
       ]"
       :data-source="rows"
       row-key="id"
       :pagination="{ pageSize: 20 }"
-      :scroll="{ x: 1480 }"
+      :scroll="{ x: 1560 }"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'avatar_url'">
@@ -55,8 +119,8 @@ function prefs(row: AppUser) {
           {{ record.birth_date || '—' }}
         </template>
         <template v-else-if="column.dataIndex === 'explore_preferences'">
-          <template v-if="prefs(record).length">
-            <Tag v-for="item in prefs(record)" :key="item" class="mb-1 mr-1">{{ item }}</Tag>
+          <template v-if="prefs(record as AppUser).length">
+            <Tag v-for="item in prefs(record as AppUser)" :key="item" class="mb-1 mr-1">{{ item }}</Tag>
           </template>
           <span v-else>未选择</span>
         </template>
@@ -64,7 +128,94 @@ function prefs(row: AppUser) {
           <Tag v-if="record.cancelled_at" color="red">已注销 {{ record.cancelled_at }}</Tag>
           <Tag v-else color="green">正常</Tag>
         </template>
+        <template v-else-if="column.dataIndex === 'action'">
+          <Button type="link" @click="showEntitlements(record as AppUser)">权益</Button>
+        </template>
       </template>
     </Table>
+    <Drawer v-model:open="open" :title="`账号 ${current?.id ?? ''} 的权益`" width="760">
+      <h3 class="mb-2 font-medium">注册赠送</h3>
+      <Table
+        :columns="[
+          { title: '发放', dataIndex: 'granted_at' },
+          { title: '可用', dataIndex: 'usable_at' },
+          { title: '到期', dataIndex: 'expires_at' },
+          { title: '剩余', dataIndex: 'remaining', width: 80 },
+          { title: '使用', dataIndex: 'used_at' },
+        ]"
+        :data-source="gifts"
+        :loading="loading"
+        :locale="{ emptyText: '没有注册赠送' }"
+        :pagination="false"
+        row-key="user_id"
+        size="small"
+      />
+      <h3 class="mb-2 mt-4 font-medium">邀请</h3>
+      <Table
+        :columns="[
+          { title: '邀请人', dataIndex: 'inviter_id', width: 90 },
+          { title: '被邀请人', dataIndex: 'invitee_id', width: 100 },
+          { title: '邀请人剩余', dataIndex: 'inviter_remaining', width: 110 },
+          { title: '邀请人到期', dataIndex: 'inviter_expires_at' },
+          { title: '被邀请人剩余', dataIndex: 'invitee_remaining', width: 120 },
+          { title: '被邀请人到期', dataIndex: 'invitee_expires_at' },
+        ]"
+        :data-source="invites"
+        :loading="loading"
+        :locale="{ emptyText: '没有邀请关系' }"
+        :pagination="false"
+        row-key="id"
+        size="small"
+      />
+      <h3 class="mb-2 mt-4 font-medium">额度批次</h3>
+      <Table
+        :columns="[
+          { title: '来源', dataIndex: 'source', width: 110 },
+          { title: '剩余', dataIndex: 'remaining', width: 80 },
+          { title: '总数', dataIndex: 'total', width: 80 },
+          { title: '到期', dataIndex: 'expires_at' },
+          { title: '已到期', dataIndex: 'expired', width: 80 },
+        ]"
+        :data-source="lots"
+        :loading="loading"
+        :locale="{ emptyText: '没有额度批次' }"
+        :pagination="false"
+        row-key="id"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'source'">
+            {{ lotSource(record.source) }}
+          </template>
+          <template v-else-if="column.dataIndex === 'expired'">
+            {{ record.expired ? '是' : '否' }}
+          </template>
+        </template>
+      </Table>
+      <h3 class="mb-2 mt-4 font-medium">年运资格</h3>
+      <Table
+        :columns="[
+          { title: '年份', dataIndex: 'year', width: 80 },
+          { title: '已解锁', dataIndex: 'unlocked', width: 90 },
+          { title: '来源', dataIndex: 'unlock_source', width: 90 },
+          { title: '报告状态', dataIndex: 'report_status' },
+        ]"
+        :data-source="years"
+        :loading="loading"
+        :locale="{ emptyText: '没有年运资格' }"
+        :pagination="false"
+        row-key="year"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'unlocked'">
+            {{ record.unlocked ? '是' : '否' }}
+          </template>
+          <template v-else-if="column.dataIndex === 'unlock_source'">
+            {{ yearSource(record.unlock_source) }}
+          </template>
+        </template>
+      </Table>
+    </Drawer>
   </Page>
 </template>

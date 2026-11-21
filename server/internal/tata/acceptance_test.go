@@ -47,17 +47,9 @@ func TestAcceptance(t *testing.T) {
 		t.Fatalf("price accepted: %s", body)
 	}
 	qstatus, qraw := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 9, "daily_slot_count": 3})
-	if qstatus != "" {
-		t.Fatalf("quota counts: %s %s", qstatus, qraw)
+	if !strings.Contains(qstatus, "已下线") {
+		t.Fatalf("daily free still editable: %s %s", qstatus, qraw)
 	}
-	params := decodeData(t, qraw)
-	if params["daily_free_count"] != float64(9) || params["daily_slot_count"] != float64(3) {
-		t.Fatalf("quota saved: %#v", params)
-	}
-	t.Cleanup(func() {
-		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET daily_free_count=1, daily_slot_count=1 WHERE id=1`)
-	})
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 1, "daily_slot_count": 1})
 	lstatus, _ := call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/ledger", map[string]any{"amount": 1})
 	if !strings.Contains(lstatus, "不能") {
 		t.Fatalf("ledger writable: %s", lstatus)
@@ -124,6 +116,11 @@ func TestAcceptance(t *testing.T) {
 	if reading["quota_outcome"] != quotaDeferred {
 		t.Fatalf("new user defers charge until spread: %#v", reading)
 	}
+	uid := userIDByEmail(t, store, email)
+	setMember(t, store, uid, "month")
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 5)
 	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
 	drawn := create(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
 	cardsBefore, _ := json.Marshal(drawn["cards"])
@@ -210,17 +207,17 @@ func TestAcceptance(t *testing.T) {
 	}
 
 	firstDaily, _ := call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(firstDaily, "已用完") && !strings.Contains(firstDaily, "开通会员") {
-		t.Fatalf("ordinary reading should consume the shared daily free: %s", firstDaily)
+	if firstDaily != "" {
+		t.Fatalf("member daily: %s", firstDaily)
 	}
 	dailyMsg, _ := call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(dailyMsg, "已用完") && !strings.Contains(dailyMsg, "已占用") && !strings.Contains(dailyMsg, "开通会员") {
+	if !strings.Contains(dailyMsg, "已占用") && !strings.Contains(dailyMsg, "不重复扣") {
 		t.Fatalf("second daily: %s", dailyMsg)
 	}
 	must(t, ts, appToken, http.MethodDelete, fmt.Sprintf("/api/app/v1/readings/%d", rid), nil)
 	dailyMsg, _ = call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(dailyMsg, "已用完") && !strings.Contains(dailyMsg, "已占用") {
-		t.Fatalf("delete refunded quota: %s", dailyMsg)
+	if !strings.Contains(dailyMsg, "已占用") && !strings.Contains(dailyMsg, "不重复扣") {
+		t.Fatalf("delete refunded the day: %s", dailyMsg)
 	}
 	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%.0f", spreadID), map[string]any{
 		"name": "时间流", "description": "过去 / 现在 / 未来", "card_count": 3,

@@ -92,7 +92,23 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	rawCode := strings.TrimSpace(req.Code)
+	if _, ok := inviteAccountID(rawCode); ok {
+		if err := a.applyInvite(r.Context(), uid, rawCode); err != nil {
+			return err
+		}
+		remaining, err := inviteBalance(r.Context(), a.Store, uid)
+		if err != nil {
+			return err
+		}
+		writeOK(w, map[string]any{
+			"code": rawCode, "kind": "invite", "benefit_name": "邀请奖励", "amount": inviteRewardAmount,
+			"unit": "count", "display_label": T(r.Context(), "次"),
+			"invite_remaining": remaining,
+		})
+		return nil
+	}
+	code := strings.ToUpper(rawCode)
 	if code == "" || utf8.RuneCountInString(code) > 64 {
 		return biz("兑换码无效")
 	}

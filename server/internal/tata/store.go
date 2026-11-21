@@ -197,11 +197,18 @@ ALTER TABLE app_users ADD COLUMN IF NOT EXISTS birth_time TEXT NOT NULL DEFAULT 
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS birth_place TEXT NOT NULL DEFAULT '';
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tarotist_trial_used BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS reading_trial_used BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE app_users u SET reading_trial_used=TRUE
+WHERE reading_trial_used=FALSE AND (
+  EXISTS (SELECT 1 FROM device_experiences d WHERE d.user_id=u.id AND d.consumed)
+  OR EXISTS (SELECT 1 FROM quota_charges c WHERE c.user_id=u.id AND c.entitlement='onboard_trial')
+);
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tease_off BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS spread_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS business_date TEXT NOT NULL DEFAULT '';
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS skip_detect BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS reward_consumed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS numerology_map TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS voice TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS banned TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS ask_style TEXT NOT NULL DEFAULT '';
@@ -304,6 +311,13 @@ ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAUL
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS store_original_transaction_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS auto_renew BOOLEAN;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_order_id BIGINT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_expires_at TIMESTAMPTZ;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_quota INT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_order_id BIGINT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_sku_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE iap_orders DROP CONSTRAINT IF EXISTS iap_orders_credit_chk;
+ALTER TABLE iap_orders ADD CONSTRAINT iap_orders_credit_chk
+  CHECK (credit_status IN ('none','credited','amount_unconfigured','skipped_expired','deferred'));
 CREATE INDEX IF NOT EXISTS subscriptions_store_txn_idx ON subscriptions(user_id, platform, store_original_transaction_id);
 CREATE TABLE IF NOT EXISTS iap_skus (
   id BIGSERIAL PRIMARY KEY,
@@ -365,7 +379,7 @@ CREATE TABLE IF NOT EXISTS iap_orders (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT iap_orders_platform_chk CHECK (platform IN ('app_store','play')),
   CONSTRAINT iap_orders_verify_chk CHECK (verify_status IN ('pending','verified','failed')),
-  CONSTRAINT iap_orders_credit_chk CHECK (credit_status IN ('none','credited','amount_unconfigured','skipped_expired')),
+  CONSTRAINT iap_orders_credit_chk CHECK (credit_status IN ('none','credited','amount_unconfigured','skipped_expired','deferred')),
   CONSTRAINT iap_orders_source_chk CHECK (source IN ('verify','restore'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS iap_orders_platform_txn ON iap_orders(platform, store_transaction_id);
@@ -375,6 +389,20 @@ CREATE TABLE IF NOT EXISTS quota_balances (
   quota_balance INT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS quota_lots (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  source TEXT NOT NULL,
+  total INT NOT NULL,
+  remaining INT NOT NULL,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ,
+  order_id BIGINT,
+  reason TEXT NOT NULL DEFAULT '',
+  CONSTRAINT quota_lots_source_chk CHECK (source IN ('subscription','pack','admin')),
+  CONSTRAINT quota_lots_amount_chk CHECK (total > 0 AND remaining >= 0 AND remaining <= total)
+);
+CREATE INDEX IF NOT EXISTS quota_lots_user_idx ON quota_lots(user_id, expires_at, id);
 CREATE TABLE IF NOT EXISTS quota_ledger (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -446,6 +474,16 @@ CREATE TABLE IF NOT EXISTS quota_paywall (
 ALTER TABLE rewards ADD COLUMN IF NOT EXISTS admin_grant_remaining INT NOT NULL DEFAULT 0;
 ALTER TABLE ledger ALTER COLUMN reading_id DROP NOT NULL;
 ALTER TABLE ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
+CREATE TABLE IF NOT EXISTS ledger_lot_draws (
+  id BIGSERIAL PRIMARY KEY,
+  ledger_id BIGINT NOT NULL,
+  lot_id BIGINT,
+  source TEXT NOT NULL,
+  amount INT NOT NULL,
+  remaining_after INT NOT NULL,
+  expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ledger_lot_draws_ledger_idx ON ledger_lot_draws(ledger_id, id);
 ALTER TABLE quota_ledger ADD COLUMN IF NOT EXISTS grant_id BIGINT;
 CREATE TABLE IF NOT EXISTS admin_grants (
   id BIGSERIAL PRIMARY KEY,
@@ -657,6 +695,18 @@ ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_reg_days_chk
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_reg_days_chk CHECK (registration_valid_days > 0);
 ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_reg_count_chk;
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_reg_count_chk CHECK (registration_grant_count > 0);
+ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS tokens_per_quota INT;
+ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_tokens_chk;
+ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_tokens_chk
+  CHECK (tokens_per_quota IS NULL OR tokens_per_quota > 0);
+ALTER TABLE registration_gifts ADD COLUMN IF NOT EXISTS reward_blocked BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS user_devices (
+  user_id BIGINT NOT NULL,
+  device_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, device_id)
+);
+CREATE INDEX IF NOT EXISTS user_devices_device_idx ON user_devices(device_id);
 CREATE TABLE IF NOT EXISTS registration_gifts (
   user_id BIGINT PRIMARY KEY,
   registered_at TIMESTAMPTZ NOT NULL,
@@ -797,6 +847,18 @@ CREATE TABLE IF NOT EXISTS invite_rewards (
   amount INT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS invite_grants (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  relationship_id BIGINT NOT NULL,
+  role TEXT NOT NULL,
+  total INT NOT NULL,
+  remaining INT NOT NULL,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (relationship_id, role)
+);
+CREATE INDEX IF NOT EXISTS invite_grants_user_idx ON invite_grants(user_id, expires_at, id);
 CREATE INDEX IF NOT EXISTS invite_rewards_inviter_idx ON invite_rewards(inviter_id, id DESC);
 CREATE TABLE IF NOT EXISTS custom_decks (
   id BIGSERIAL PRIMARY KEY,
@@ -845,6 +907,7 @@ BEGIN
 END $$;
 ALTER TABLE rewards ADD COLUMN IF NOT EXISTS invite_remaining INT NOT NULL DEFAULT 0;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS onboard_experience BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS device_experiences (
   device_id TEXT PRIMARY KEY,
   anonymous_id TEXT NOT NULL DEFAULT '',
@@ -911,7 +974,7 @@ COMMENT ON COLUMN app_users.deck_code IS '当前官方牌面风格 code，须对
 COMMENT ON COLUMN app_users.gender IS '档案性别。入库值：女性 / 男性 / 其他 / 不愿透露。PUT /profile 另接受女、男。';
 COMMENT ON COLUMN app_users.explore_preferences IS '探索偏好 JSON 字符串数组。对应个人档案多选项，PUT /profile。';
 COMMENT ON COLUMN app_users.custom_deck_id IS '当前使用的自定义牌组。空则用 deck_code 官方风格。';
-COMMENT ON COLUMN app_users.merged_into IS '并账后指向主账号 id。被合并账号不可再登录。';
+COMMENT ON COLUMN app_users.merged_into IS '历史并账标记。新请求不再合并；非空的旧账号仍不能登录。';
 
 COMMENT ON TABLE refresh_tokens IS '刷新令牌。App 登录不签发；管理端会话用。';
 COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wechat/apple），删号后仍占坑防抢注。';
@@ -928,7 +991,8 @@ COMMENT ON COLUMN spreads.short_sentence IS '牌阵短句，对应文字总结�
 COMMENT ON COLUMN spreads.depth_group IS '普通占卜分组：quick 快速指引、advanced 进阶分析、panorama 深度全景。空则不是更多牌阵这 19 套。不是免费白名单。';
 COMMENT ON COLUMN spreads.quota_cost IS '普通占卜扣次，单位是额度次数。NULL 表示这套未标价。不是人民币，不是塔塔币。结算尚未读取。';
 COMMENT ON COLUMN spreads.sort_order IS '列表顺序。普通占卜 1–19。探索从 101 起，按主题再按主题内顺序。默认 1000。';
-COMMENT ON TABLE invite_rewards IS '好友邀请到账。邀请人 public_id 为邀请码；被邀请人只能绑定一次；每人数 +3 写入 rewards.invite_remaining，最多 5 人。';
+COMMENT ON TABLE invite_rewards IS '邀请关系。邀请码是邀请人账号 ID。一个被邀请账号只能绑定一次。双方各得一笔奖励，最多成功邀请 5 人。';
+COMMENT ON TABLE invite_grants IS '邀请奖励按笔。role=inviter/invitee，各 3 次，从发放时刻起 1 年。未过期且最早到期的先扣。';
 COMMENT ON TABLE custom_decks IS '用户自定义牌组。face_source/back_source 为 upload 或官方 decks.code。';
 COMMENT ON TABLE custom_deck_faces IS '自定义牌组已上传的牌面。card_id 对应韦特 0–77。';
 COMMENT ON TABLE tarotists IS '塔罗师。对应 GET /tarotists；会员权益 benefits.tarotists.count 统计 enabled=true。';
@@ -975,14 +1039,15 @@ COMMENT ON TABLE iap_settings IS 'IAP 开关单行表 id=1。restore_hook_enable
 COMMENT ON TABLE iap_orders IS '本地验单订单。不请求苹果/谷歌，只按 product_id 映射 iap_skus。对应 POST /iap/verify、/iap/restore。';
 COMMENT ON COLUMN iap_orders.sku_kind IS '下单时拷贝的 iap_skus.kind。';
 COMMENT ON COLUMN iap_orders.credited_quota IS '本次入账额度。年运、牌组、未配置额度为 null。';
-COMMENT ON COLUMN iap_orders.credit_status IS 'none/credited/amount_unconfigured/skipped_expired。';
+COMMENT ON COLUMN iap_orders.credit_status IS 'none/credited/amount_unconfigured/skipped_expired/deferred。deferred 表示下一期尚未开始。';
 
 COMMENT ON TABLE subscriptions IS '商店订阅有效期。sku_kind 这里是 month/year（与 iap_skus.kind 不同）。年卡有效则年运免费解锁。';
 COMMENT ON COLUMN subscriptions.sku_kind IS 'month 或 year，由 month_subscription/year_subscription 推导。';
 
 COMMENT ON TABLE quota_balances IS '会员统一额度。只保留 quota_balance。塔塔币分账列由 docs/sql/drop_tata_coin_2026-11-17.sql 删除。';
 COMMENT ON TABLE quota_ledger IS '统一额度流水。新写入 bucket=quota。历史 subscription/consumable 由 drop SQL 回写。';
-COMMENT ON COLUMN quota_balances.quota_balance IS '会员统一额度。补充包与后台补发入账；仅有效会员可扣。到期后余额保留但不可用。';
+COMMENT ON TABLE quota_lots IS '会员额度批次。source=subscription 先扣，再按 expires_at 扣 pack/admin。到期剩余作废，不冻结、不恢复。';
+COMMENT ON COLUMN quota_balances.quota_balance IS '会员额度池合计，等于未到期 quota_lots.remaining 之和。没有批次的旧余额仍按原账户扣。';
 
 COMMENT ON TABLE rewards IS '免费次数账本。invite_remaining=邀请奖励；admin_grant_remaining=后台补发/兑换码。remaining 注册奖励已下线。';
 COMMENT ON COLUMN rewards.remaining IS '历史注册奖励，扣费不再读取。';
@@ -997,18 +1062,22 @@ COMMENT ON COLUMN quota_settings.registration_grant_delay_minutes IS '注册完�
 COMMENT ON COLUMN quota_settings.registration_valid_days IS '注册赠送有效天数，从实际发放时刻起算。默认 3。';
 COMMENT ON COLUMN quota_settings.registration_grant_count IS '每次注册实际发放的次数。默认 1。';
 COMMENT ON COLUMN quota_settings.registration_spread_ids IS '注册赠送和邀请可用的普通占卜牌阵 id JSON 数组。空数组表示名单未配。只允许 3 张及以内。';
-COMMENT ON TABLE registration_gifts IS '注册赠送 1 次的独立记录。与新人引导、塔罗师试用、邀请奖励分开。间隔未配置时只记注册时间，不发放。';
+COMMENT ON COLUMN quota_settings.tokens_per_quota IS '多少 token 折成 1 额度。NULL 未启用。启用后解读、改写、年运生成、会员追问按输入加输出 token 向上取整。结算尚未读取。';
+COMMENT ON TABLE registration_gifts IS '注册赠送的独立记录。与新人引导、塔罗师试用、邀请奖励分开。间隔未配置时只记注册时间，不发放。reward_blocked 为真表示邮箱、微信、苹果、手机号或设备曾注册过，不再发放。';
+COMMENT ON TABLE user_devices IS '账号登录时记下的设备。注销不删这行。同一设备再注册新账号时不再发注册赠送和邀请奖励。';
+COMMENT ON COLUMN app_users.cancelled_at IS '软删除时刻。行和占卜记录保留。邮箱、微信、苹果、手机号、设备写入 identity_claims 后不能再注册。';
 COMMENT ON TABLE quota_charges IS '单次解读扣费。entitlement=daily_free/invite_reward/admin_grant_free/member_quota/ai_trial/onboard_trial。';
-COMMENT ON TABLE device_experiences IS '设备维度新人引导体验。每设备 1 次；解读成功展示时消耗，不扣每日免费或会员额度。';
+COMMENT ON TABLE device_experiences IS '设备只决定引导出不出现。解读资格在账号 reading_trial_used，每账号 1 次。';
 COMMENT ON TABLE anon_devices IS '匿名会话绑定的设备识别。';
-COMMENT ON COLUMN readings.onboard_experience IS '是否占用设备引导体验。登录后出解读时消耗。';
+COMMENT ON COLUMN readings.onboard_experience IS '历史字段。新人免费解读已取消，看解读要登录后走额度。';
+COMMENT ON COLUMN readings.device_id IS '登录前的进度按设备保存。登录时把同一设备、尚未归属账号的记录挂到该账号。';
 COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume。';
 COMMENT ON TABLE quota_use IS '每日免费占用（同一 reading 唯一）。条数受 quota_settings.daily_free_count 限制。并账后写入 daily_free_*。';
 COMMENT ON TABLE daily_free_balance IS '并账后的每日免费余额快照。';
 COMMENT ON TABLE daily_free_uses IS '并账后每日免费消耗明细。';
 COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 额度记在 quota_ledger。';
 
-COMMENT ON TABLE admin_grants IS '管理端人工补发。kind=quota 入 quota_balance；free_count 入 rewards.admin_grant_remaining。';
+COMMENT ON TABLE admin_grants IS '管理端人工补发。新记录只写 kind=quota，bucket 为 subscription 或 pack。历史 free_count 只保留查询。';
 COMMENT ON TABLE redeem_codes IS '兑换码。kind=quota 入额度，free_count 入免费次数。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
 COMMENT ON TABLE redeem_redemptions IS '兑换码核销记录。对应 GET /redeem/records。';
 
@@ -1037,7 +1106,7 @@ COMMENT ON COLUMN decks.tags IS '套装标签 JSON 数组。空为未填。';
 COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist。';
 COMMENT ON TABLE feedback IS '反馈意见。category=使用问题/内容建议/其他。对应 POST /feedback。';
 
-COMMENT ON TABLE account_merge_requests IS '确认合并并账请求。';
+COMMENT ON TABLE account_merge_requests IS '历史合并请求。新的绑定冲突不再写入，确认接口已下线。';
 COMMENT ON TABLE retained_identities IS '并账后保留的登录身份。';
 COMMENT ON TABLE audit_log IS '审计。operator 操作或 App iap_verify/restore。';
 COMMENT ON TABLE idempotency IS '写接口幂等键。';

@@ -86,7 +86,8 @@ func TestDailyStream(t *testing.T) {
 	})
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/interpret",
 		map[string]any{"vendor_id": vendor["id"], "model": "demo"})
-	token, _ := registerUser(t, ts, store, "dailystream")
+	token, uid := registerUser(t, ts, store, "dailystream")
+	seedGift(t, store, uid, 1)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/app/v1/daily/stream", strings.NewReader(`{"target":"today"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -114,7 +115,7 @@ func TestDetectStream(t *testing.T) {
 	})
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/detect",
 		map[string]any{"vendor_id": vendor["id"], "model": "demo"})
-	token, _ := registerUser(t, ts, store, "detectstream")
+	token, uid := registerUser(t, ts, store, "detectstream")
 	rd := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "我该怎么选？", "type": "normal"})
 	id := int64(rd["id"].(float64))
 	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/app/v1/readings/%d/detect/stream", ts.URL, id), nil)
@@ -130,8 +131,26 @@ func TestDetectStream(t *testing.T) {
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	body := string(raw)
-	if strings.Count(body, "event: delta") < 1 || !strings.Contains(body, "event: done") {
+	if strings.Contains(body, "event: delta") || !strings.Contains(body, "event: done") || !strings.Contains(body, `"model_called":false`) || !strings.Contains(body, `"reason":"no_entitlement"`) {
 		t.Fatalf("detect stream:\n%s", body)
+	}
+	var jobs int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ai_jobs WHERE reading_id=$1 AND kind='detect'`, id).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("detect called the model: %d", jobs)
+	}
+	setMember(t, store, uid, "month")
+	detected := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/detect", id), map[string]any{})
+	if detected["model_called"] != false || detected["decided"] != false || detected["reason"] != "fallback_unconfigured" || detected["source"] != "local" {
+		t.Fatalf("member detect: %#v", detected)
+	}
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ai_jobs WHERE reading_id=$1 AND kind='detect'`, id).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("member detect called the model: %d", jobs)
 	}
 }
 

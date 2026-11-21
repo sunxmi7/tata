@@ -31,7 +31,7 @@ const columns = [
   { title: '示意图', dataIndex: 'preview', width: 88 },
   { title: '启用', dataIndex: 'enabled', width: 80 },
   { title: '推荐', dataIndex: 'recommended', width: 72 },
-  { title: '收费', dataIndex: 'charged', width: 72 },
+  { title: '旧收费', dataIndex: 'charged', width: 80 },
   { title: '操作', dataIndex: 'action', width: 80 },
 ];
 
@@ -56,7 +56,7 @@ onMounted(load);
 
 <template>
   <Page
-    description="普通占卜按快速指引、进阶分析、深度全景分组，可改英文名和含义说明。示意图没上传时显示未上传，不用牌背代替。探索牌阵按主题挂在同一张表。扣次是额度。"
+    description="普通占卜按快速指引、进阶分析、深度全景分组，可改英文名和含义说明。探索牌阵在同一张表里改主题键、主题名、副标题和一句说明。推荐只是角标，不会按问题自动选牌阵。扣次是额度，探索扣次没标就不填。收费是旧开关，结算不读。"
     title="牌阵"
   >
     <template #extra>

@@ -60,6 +60,26 @@ const [Form, formApi] = useVbenForm({
       label: '普通占卜分组',
     },
     {
+      component: 'Input',
+      fieldName: 'theme_key',
+      label: '探索主题键',
+    },
+    {
+      component: 'Input',
+      fieldName: 'theme_title',
+      label: '探索主题',
+    },
+    {
+      component: 'Input',
+      fieldName: 'theme_subtitle',
+      label: '主题副标题',
+    },
+    {
+      component: 'Input',
+      fieldName: 'short_sentence',
+      label: '一句说明',
+    },
+    {
       component: 'Switch',
       defaultValue: false,
       fieldName: 'quota_priced',
@@ -148,6 +168,10 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         recommended: data.recommended,
         thumbnail: fileListToURL(data.thumbnail),
         depth_group: data.depth_group ?? '',
+        theme_key: data.theme_key ?? '',
+        theme_title: data.theme_title ?? '',
+        theme_subtitle: data.theme_subtitle ?? '',
+        short_sentence: data.short_sentence ?? '',
         quota_priced: Boolean(data.quota_priced),
         quota_cost: data.quota_priced ? data.quota_cost : null,
       };
@@ -181,6 +205,10 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         recommended: data.recommended ?? false,
         thumbnail: fileListFromURL(data.thumbnail),
         depth_group: data.depth_group ?? '',
+        theme_key: data.theme_key ?? '',
+        theme_title: data.theme_title ?? '',
+        theme_subtitle: data.theme_subtitle ?? '',
+        short_sentence: data.short_sentence ?? '',
         quota_priced: Boolean(data.quota_priced),
         quota_cost: data.quota_cost,
       });

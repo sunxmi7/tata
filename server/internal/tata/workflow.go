@@ -201,7 +201,19 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 	steps := make([]flowStep, 0, len(req.Steps))
 	for _, task := range req.Steps {
 		switch task {
-		case "detect", "rewrite", "recommend":
+		case "detect":
+			step := flowStep{Task: "detect", Input: question}
+			payload, derr := a.localDetect(r.Context(), uid, question)
+			if derr != nil {
+				step.Error = derr.Error()
+			} else {
+				raw, _ := json.Marshal(payload)
+				step.Output = string(raw)
+			}
+			steps = append(steps, step)
+		case "recommend":
+			steps = append(steps, flowStep{Task: "recommend", Input: question, Error: "正式推荐未配置"})
+		case "rewrite":
 			steps = append(steps, a.runStep(r, task, question))
 		case "interpret", "tarotist":
 			if cards == "" || cards == "null" {

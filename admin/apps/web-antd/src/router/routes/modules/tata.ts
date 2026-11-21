@@ -130,6 +130,12 @@ const routes: RouteRecordRaw[] = [
             meta: { icon: 'lucide:users', title: '用户账号', authority: can('accounts') },
           },
           {
+            name: 'TataOnboarding',
+            path: '/tata/onboarding',
+            component: () => import('#/views/tata/onboarding/index.vue'),
+            meta: { icon: 'lucide:smartphone', title: '新人引导', authority: can('accounts') },
+          },
+          {
             name: 'TataUserStats',
             path: '/tata/user-stats',
             component: () => import('#/views/tata/user-stats/index.vue'),
@@ -178,6 +184,30 @@ const routes: RouteRecordRaw[] = [
             path: '/tata/redeem-codes',
             component: () => import('#/views/tata/redeem/index.vue'),
             meta: { icon: 'lucide:ticket', title: '兑换码', authority: can('pay') },
+          },
+          {
+            name: 'TataInvites',
+            path: '/tata/invites',
+            component: () => import('#/views/tata/invite/index.vue'),
+            meta: { icon: 'lucide:users', title: '邀请关系', authority: can('pay') },
+          },
+          {
+            name: 'TataRegistrationGifts',
+            path: '/tata/registration-gifts',
+            component: () => import('#/views/tata/registration-gift/index.vue'),
+            meta: { icon: 'lucide:gift', title: '注册赠送', authority: can('pay') },
+          },
+          {
+            name: 'TataQuotaLots',
+            path: '/tata/quota-lots',
+            component: () => import('#/views/tata/quota-lot/index.vue'),
+            meta: { icon: 'lucide:layers', title: '额度批次', authority: can('pay') },
+          },
+          {
+            name: 'TataYearlyQualifications',
+            path: '/tata/yearly-qualifications',
+            component: () => import('#/views/tata/yearly-qualification/index.vue'),
+            meta: { icon: 'lucide:calendar-range', title: '年运资格', authority: can('pay') },
           },
         ],
       },

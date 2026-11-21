@@ -48,9 +48,9 @@ func adminModuleOf(path string) string {
 		return adminModuleAI
 	case "readings", "ledger", "messages", "calendar":
 		return adminModuleRecords
-	case "users", "operators", "audit", "account-merges":
+	case "users", "operators", "audit", "account-merges", "onboarding":
 		return adminModuleAccounts
-	case "iap", "grants", "redeem-codes":
+	case "iap", "grants", "redeem-codes", "invites", "registration-gifts", "quota-lots", "yearly-qualifications":
 		return adminModulePay
 	default:
 		return ""

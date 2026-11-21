@@ -45,6 +45,34 @@ func TestAdminSimulateUsesEinoWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestAppWorkflowDetectAndRecommendStayLocal(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	vendor := create(t, ts, admin.access, "/api/admin/v1/vendors", map[string]any{
+		"name": "流程检测", "base_url": ts.URL + "/demo/openai/v1", "api_key": "k", "models": []string{"demo"}, "enabled": true,
+	})
+	for _, task := range []string{"detect", "recommend"} {
+		must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/"+task, map[string]any{"vendor_id": vendor["id"], "model": "demo"})
+	}
+	token, _ := registerUser(t, ts, store, "workflowlocal")
+	rd := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "要不要换工作", "type": "normal"})
+	id := asID(rd["id"])
+	out := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/workflow", id), map[string]any{
+		"steps": []string{"detect", "recommend"},
+	})
+	raw := mustJSON(out["steps"])
+	if !strings.Contains(raw, "model_called") || !strings.Contains(raw, "false") || !strings.Contains(raw, "正式推荐未配置") || strings.Contains(raw, "时间流") {
+		t.Fatalf("workflow steps: %s", raw)
+	}
+	var jobs int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ai_jobs WHERE reading_id=$1 AND kind IN ('detect','recommend')`, id).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("workflow called the model: %d", jobs)
+	}
+}
+
 func TestEnableVendorAppliesAllBindings(t *testing.T) {
 	_, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})

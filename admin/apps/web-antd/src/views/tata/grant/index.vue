@@ -5,7 +5,7 @@ import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Input, InputNumber, Table } from 'ant-design-vue';
+import { Button, Input, InputNumber, Select, Table } from 'ant-design-vue';
 
 import { createGrant, listGrants } from '#/api/tata';
 
@@ -13,7 +13,7 @@ import { useTataLookups } from '../use-tata-lookups';
 
 const userId = ref('');
 const quota = ref<number | null>(null);
-const freeCount = ref<number | null>(null);
+const bucket = ref<'pack' | 'subscription'>('pack');
 const note = ref('');
 const view = ref<GrantList>({ grants: [] });
 const rows = ref<GrantRow[]>([]);
@@ -33,14 +33,12 @@ async function submit() {
   await createGrant({
     user_id: Number(userId.value.trim()),
     quota: quota.value || 0,
-    free_count: freeCount.value || 0,
-    quota_bucket: 'quota',
+    quota_bucket: bucket.value,
     reason: 'admin_grant',
     note: note.value,
   });
   note.value = '';
   quota.value = null;
-  freeCount.value = null;
   await load();
 }
 
@@ -49,20 +47,27 @@ onMounted(load);
 
 <template>
   <Page
-    description="独立加账，不改历史 IAP 订单，也不代替付费成功后的自动续跑。额度写入统一账户；免费次数记入可消耗余额。付费模块可写才能补发。"
+    description="只补会员额度，写入套餐赠送或补充包。不改历史订单，也不补免费次数。付费模块可写才能补发。"
     title="人工补发"
   >
     <div class="mb-4 flex flex-wrap items-center gap-2">
       <Input v-model:value="userId" placeholder="用户 ID" style="width: 160px" @press-enter="load" />
       <Button @click="load">查询流水</Button>
-      <InputNumber v-model:value="quota" :min="0" placeholder="额度" style="width: 120px" />
-      <InputNumber v-model:value="freeCount" :min="0" placeholder="免费次数" style="width: 140px" />
+      <InputNumber v-model:value="quota" :min="1" placeholder="额度" style="width: 120px" />
+      <Select
+        v-model:value="bucket"
+        :options="[
+          { label: '补充包', value: 'pack' },
+          { label: '套餐赠送', value: 'subscription' },
+        ]"
+        style="width: 140px"
+      />
       <Input v-model:value="note" placeholder="原因说明" style="width: 240px" />
       <Button type="primary" :disabled="!canWrite" @click="submit">补发</Button>
     </div>
     <p v-if="view.user_id" class="mb-4">
-      用户 {{ userLabel(view.user_id) }} · 额度 {{ view.quota_remaining ?? view.balance ?? 0 }} / 补发免费次数
-      {{ view.free_count_remaining }} / 邀请次数 {{ view.invite_remaining ?? 0 }}
+      用户 {{ userLabel(view.user_id) }} · 额度 {{ view.quota_remaining ?? view.balance ?? 0 }} / 邀请次数
+      {{ view.invite_remaining ?? 0 }}
     </p>
     <p class="mb-4 text-sm opacity-70">{{ view.permission_note }}</p>
     <Table
@@ -92,7 +97,7 @@ onMounted(load);
           {{ operatorLabel(record.operator_id) }}
         </template>
         <template v-else-if="column.dataIndex === 'kind'">
-          {{ record.kind === 'free_count' ? '免费次数' : '额度' }}
+          {{ record.kind === 'free_count' ? '历史免费次数' : record.bucket === 'subscription' ? '套餐赠送' : '补充包' }}
         </template>
         <template v-else-if="column.dataIndex === 'quota_ledger_id'">
           {{ record.quota_ledger_id ? `#${record.quota_ledger_id}` : '—' }}

@@ -130,10 +130,6 @@ func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindS
 	if !ok || spec.value == "" {
 		return biz("请求字段不正确")
 	}
-	storedValue := spec.value
-	if spec.kind == "email" {
-		storedValue = strings.ToLower(strings.TrimSpace(spec.value))
-	}
 	var current *string
 	var cancelled *time.Time
 	var merged *int64
@@ -163,13 +159,13 @@ func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindS
 		return biz("该登录方式已绑定，换绑未开放")
 	}
 
-	var other int64
+	var found int
 	var findErr error
 	if spec.kind == "email" {
-		findErr = a.Store.QueryRow(r.Context(), `SELECT id FROM app_users WHERE lower(email)=lower($1) AND id<>$2`, spec.value, uid).Scan(&other)
+		findErr = a.Store.QueryRow(r.Context(), `SELECT 1 FROM app_users WHERE lower(email)=lower($1) AND id<>$2`, spec.value, uid).Scan(&found)
 	} else {
-		findQ := fmt.Sprintf(`SELECT id FROM app_users WHERE %s=$1 AND id<>$2`, col)
-		findErr = a.Store.QueryRow(r.Context(), findQ, spec.value, uid).Scan(&other)
+		findQ := fmt.Sprintf(`SELECT 1 FROM app_users WHERE %s=$1 AND id<>$2`, col)
+		findErr = a.Store.QueryRow(r.Context(), findQ, spec.value, uid).Scan(&found)
 	}
 	if findErr != nil {
 		if !errors.Is(findErr, sql.ErrNoRows) {
@@ -177,44 +173,7 @@ func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindS
 		}
 		return a.bindFreeIdentity(w, r, spec, col, uid)
 	}
-	var otherCancelled *time.Time
-	var otherMerged *int64
-	if err := a.Store.QueryRow(r.Context(), `SELECT cancelled_at, merged_into FROM app_users WHERE id=$1`, other).Scan(&otherCancelled, &otherMerged); err != nil {
-		return err
-	}
-	if otherCancelled != nil {
-		return biz("对方账号已注销，不能合并")
-	}
-	if otherMerged != nil {
-		return biz("对方账号已合并")
-	}
-	requestID, created, err := a.ensureMergeRequest(r.Context(), uid, other, spec.kind, storedValue, spec.passwordHash)
-	if err != nil {
-		return err
-	}
-	if created {
-		detail, _ := json.Marshal(map[string]any{
-			"before":            map[string]int64{"primary_user_id": uid, "secondary_user_id": other},
-			"after":             map[string]int64{"primary_user_id": uid, "secondary_user_id": other},
-			"merged":            false,
-			"confirm_required":  true,
-			"identity_kind":     spec.kind,
-			"confirmer_kind":    "app_user",
-			"confirmer_user_id": uid,
-		})
-		a.Store.auditActor(r.Context(), uid, "app_user", "account_merge_conflict", "app_user", fmtID(uid), string(detail))
-	}
-	writeBindConflict(w, map[string]any{
-		"bound":             false,
-		"conflict":          true,
-		"merged":            false,
-		"confirm_required":  true,
-		"merge_request_id":  requestID,
-		"primary_user_id":   uid,
-		"secondary_user_id": other,
-		"identity_kind":     spec.kind,
-	})
-	return nil
+	return biz("该身份已绑定其他账号")
 }
 
 func (a *App) bindFreeIdentity(w http.ResponseWriter, r *http.Request, spec bindSpec, col string, uid int64) error {
@@ -265,14 +224,6 @@ func (a *App) ensureMergeRequest(ctx context.Context, primary, secondary int64, 
 	return id, true, nil
 }
 
-func writeBindConflict(w http.ResponseWriter, payload map[string]any) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"code":    1,
-		"data":    payload,
-		"message": "身份已被其他账号占用，需要确认后才会合并",
-	})
-}
-
 func (s *Store) auditActor(ctx context.Context, operatorID int64, actorKind, action, objectType, objectID, detail string) {
 	if actorKind == "" {
 		actorKind = "operator"
@@ -282,61 +233,10 @@ func (s *Store) auditActor(ctx context.Context, operatorID int64, actorKind, act
 }
 
 func (a *App) appMergeConfirm(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
-	if err != nil {
+	if _, _, err := a.appActor(r); err != nil {
 		return err
 	}
-	if uid == 0 {
-		return biz("登录后才能确认合并")
-	}
-	var req struct {
-		MergeRequestID int64 `json:"merge_request_id"`
-		Confirm        bool  `json:"confirm"`
-	}
-	if err := decode(r, &req); err != nil || req.MergeRequestID <= 0 {
-		return biz("请求字段不正确")
-	}
-	if !req.Confirm {
-		return biz("未确认，不会合并账号")
-	}
-	var status string
-	var primary int64
-	var result string
-	err = a.Store.QueryRow(r.Context(), `SELECT status, primary_user_id, result FROM account_merge_requests WHERE id=$1`, req.MergeRequestID).Scan(&status, &primary, &result)
-	if err != nil {
-		return biz("合并请求不存在")
-	}
-	if primary != uid {
-		return biz("只能确认自己发起的合并")
-	}
-	if status == "merged" {
-		return writeStoredMerge(w, result)
-	}
-	if status != "pending_confirm" {
-		return biz("合并请求不可确认")
-	}
-	out, err := a.applyMerge(r.Context(), req.MergeRequestID, uid)
-	if errors.Is(err, errMergeAlready) {
-		_ = a.Store.QueryRow(r.Context(), `SELECT result FROM account_merge_requests WHERE id=$1`, req.MergeRequestID).Scan(&result)
-		return writeStoredMerge(w, result)
-	}
-	if err != nil {
-		return err
-	}
-	writeOK(w, out)
-	return nil
-}
-
-func writeStoredMerge(w http.ResponseWriter, raw string) error {
-	if raw == "" {
-		return biz("合并结果缺失")
-	}
-	var out mergeOutcome
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return err
-	}
-	writeOK(w, out)
-	return nil
+	return biz("不提供账号合并")
 }
 
 func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutcome, error) {
@@ -926,27 +826,5 @@ func (a *App) adminListAccountMerges(w http.ResponseWriter, r *http.Request) err
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, primary_user_id, secondary_user_id, identity_kind, status, subscription_resolution, confirm_at, result, created_at
-		FROM account_merge_requests ORDER BY id DESC LIMIT 200`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	list := []map[string]any{}
-	for rows.Next() {
-		var id, primary, secondary int64
-		var kind, status, resolution, result string
-		var confirmAt *time.Time
-		var created time.Time
-		if err := rows.Scan(&id, &primary, &secondary, &kind, &status, &resolution, &confirmAt, &result, &created); err != nil {
-			return err
-		}
-		list = append(list, map[string]any{
-			"id": id, "primary_user_id": primary, "secondary_user_id": secondary,
-			"identity_kind": kind, "status": status, "subscription_resolution": resolution,
-			"confirm_at": confirmAt, "result": result, "created_at": created,
-		})
-	}
-	writeOK(w, list)
-	return nil
+	return biz("不提供账号合并")
 }

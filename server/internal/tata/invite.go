@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -19,22 +21,16 @@ func (a *App) appGetInvites(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	var publicID string
-	if err := a.Store.QueryRow(r.Context(), `SELECT COALESCE(public_id,'') FROM app_users WHERE id=$1`, uid).Scan(&publicID); err != nil {
-		return err
-	}
-	publicID, err = a.ensurePublicID(r.Context(), uid, publicID)
-	if err != nil {
-		return err
-	}
 	var invited int
 	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM invite_rewards WHERE inviter_id=$1`, uid).Scan(&invited); err != nil {
 		return err
 	}
-	var remaining int
-	_ = a.Store.QueryRow(r.Context(), `SELECT invite_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&remaining)
+	remaining, err := inviteBalance(r.Context(), a.Store, uid)
+	if err != nil {
+		return err
+	}
 	writeOK(w, map[string]any{
-		"code": publicID, "reward_amount": inviteRewardAmount, "reward_unit": "count",
+		"code": strconv.FormatInt(uid, 10), "reward_amount": inviteRewardAmount, "reward_unit": "count",
 		"invited_count": invited, "max_invites": inviteMaxPeople,
 		"invite_remaining": remaining, "can_invite": invited < inviteMaxPeople,
 		"amount_label": inviteAmountLabel(r, inviteRewardAmount),
@@ -65,8 +61,11 @@ func (a *App) applyInvite(ctx context.Context, inviteeID int64, code string) err
 	if code == "" {
 		return biz("邀请码不正确")
 	}
-	var inviterID int64
-	err := a.Store.QueryRow(ctx, `SELECT id FROM app_users WHERE public_id=$1 AND merged_into IS NULL AND cancelled_at IS NULL`, code).Scan(&inviterID)
+	inviterID, ok := inviteAccountID(code)
+	if !ok {
+		return biz("邀请码不正确")
+	}
+	err := a.Store.QueryRow(ctx, `SELECT id FROM app_users WHERE id=$1 AND merged_into IS NULL AND cancelled_at IS NULL`, inviterID).Scan(&inviterID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return biz("邀请码不正确")
 	}
@@ -75,6 +74,13 @@ func (a *App) applyInvite(ctx context.Context, inviteeID int64, code string) err
 	}
 	if inviterID == inviteeID {
 		return biz("不能填写自己的邀请码")
+	}
+	blocked, err := rewardBlocked(ctx, a.Store, inviteeID)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return biz("该身份已注册过，不能再领邀请奖励")
 	}
 	var exists int
 	if err := a.Store.QueryRow(ctx, `SELECT count(*) FROM invite_rewards WHERE invitee_id=$1`, inviteeID).Scan(&exists); err != nil {
@@ -100,17 +106,85 @@ func (a *App) applyInvite(ctx context.Context, inviteeID int64, code string) err
 	if invited >= inviteMaxPeople {
 		return biz("邀请人数已达上限")
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO invite_rewards(inviter_id, invitee_id, invite_code, invitee_name, invitee_avatar, amount)
-		VALUES ($1,$2,$3,$4,$5,$6)`, inviterID, inviteeID, code, strings.TrimSpace(name), strings.TrimSpace(avatar), inviteRewardAmount); err != nil {
+	var relationshipID int64
+	err = tx.QueryRow(ctx, `INSERT INTO invite_rewards(inviter_id, invitee_id, invite_code, invitee_name, invitee_avatar, amount)
+		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, inviterID, inviteeID, strconv.FormatInt(inviterID, 10), strings.TrimSpace(name), strings.TrimSpace(avatar), inviteRewardAmount).Scan(&relationshipID)
+	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return biz("已经绑定过邀请人")
 		}
 		return err
 	}
-	if err := creditInviteRemaining(ctx, tx, inviterID, inviteRewardAmount); err != nil {
-		return err
+	expires := time.Now().AddDate(1, 0, 0)
+	for _, side := range []struct {
+		id   int64
+		role string
+	}{{inviterID, "inviter"}, {inviteeID, "invitee"}} {
+		if _, err := tx.Exec(ctx, `INSERT INTO invite_grants(user_id, relationship_id, role, total, remaining, expires_at)
+			VALUES ($1,$2,$3,$4,$4,$5)`, side.id, relationshipID, side.role, inviteRewardAmount, expires); err != nil {
+			return err
+		}
+		if err := creditInviteRemaining(ctx, tx, side.id, inviteRewardAmount); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
+}
+
+func inviteAccountID(code string) (int64, bool) {
+	code = strings.TrimSpace(code)
+	id, err := strconv.ParseInt(code, 10, 64)
+	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != code {
+		return 0, false
+	}
+	return id, true
+}
+
+func (a *App) adminListInvites(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, false); err != nil {
+		return err
+	}
+	uid, err := adminUserFilter(r)
+	if err != nil {
+		return err
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT r.id, r.inviter_id, r.invitee_id, r.invite_code, r.created_at,
+		gi.total, gi.remaining, gi.granted_at, gi.expires_at,
+		ge.total, ge.remaining, ge.granted_at, ge.expires_at
+		FROM invite_rewards r
+		LEFT JOIN invite_grants gi ON gi.relationship_id=r.id AND gi.role='inviter'
+		LEFT JOIN invite_grants ge ON ge.relationship_id=r.id AND ge.role='invitee'
+		WHERE ($1 = 0 OR r.inviter_id = $1 OR r.invitee_id = $1)
+		ORDER BY r.id DESC LIMIT 200`, uid)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, inviterID, inviteeID int64
+		var code string
+		var created time.Time
+		var inviterTotal, inviterLeft, inviteeTotal, inviteeLeft sql.NullInt64
+		var inviterAt, inviterExp, inviteeAt, inviteeExp sql.NullTime
+		if err := rows.Scan(&id, &inviterID, &inviteeID, &code, &created,
+			&inviterTotal, &inviterLeft, &inviterAt, &inviterExp,
+			&inviteeTotal, &inviteeLeft, &inviteeAt, &inviteeExp); err != nil {
+			return err
+		}
+		list = append(list, map[string]any{
+			"id": id, "inviter_id": inviterID, "invitee_id": inviteeID, "invite_code": code, "created_at": created,
+			"inviter_total": nullInt(inviterTotal), "inviter_remaining": nullInt(inviterLeft),
+			"inviter_granted_at": nullTime(inviterAt), "inviter_expires_at": nullTime(inviterExp),
+			"invitee_total": nullInt(inviteeTotal), "invitee_remaining": nullInt(inviteeLeft),
+			"invitee_granted_at": nullTime(inviteeAt), "invitee_expires_at": nullTime(inviteeExp),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{"items": list})
+	return nil
 }
 
 func (a *App) tryApplyInvite(ctx context.Context, inviteeID int64, code string) {

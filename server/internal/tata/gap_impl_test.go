@@ -92,6 +92,12 @@ func TestNumerologyDrawMapsDeck(t *testing.T) {
 	if !strings.Contains(msg, "不能重复") {
 		t.Fatalf("dup numbers: %s", msg)
 	}
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{
+		"mode": "numerology", "numbers": []int{1, 9},
+	})
+	if !strings.Contains(msg, "牌阵张数") {
+		t.Fatalf("short draw: %s", msg)
+	}
 	drawn := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{
 		"mode": "numerology", "numbers": []int{1, 9, 12},
 	})
@@ -100,11 +106,67 @@ func TestNumerologyDrawMapsDeck(t *testing.T) {
 	if err := json.Unmarshal(raw, &cards); err != nil {
 		t.Fatal(err, string(raw))
 	}
-	if len(cards) != 3 || cards[0].Name != "愚者" || cards[1].Name != "力量" || cards[2].Name != "正义" {
-		t.Fatalf("map: %s", raw)
+	if len(cards) != 3 || cards[0].Number != 1 || cards[1].Number != 9 || cards[2].Number != 12 {
+		t.Fatalf("count follows spread: %s", raw)
 	}
-	if cards[0].Orientation != "upright" {
+	if cards[0].Orientation != "upright" && cards[0].Orientation != "reversed" {
 		t.Fatalf("orientation: %#v", cards[0])
+	}
+	var mapRaw string
+	if err := store.QueryRow(t.Context(), `SELECT numerology_map FROM readings WHERE id=$1`, rid).Scan(&mapRaw); err != nil {
+		t.Fatal(err)
+	}
+	var slots []numerologySlot
+	if err := json.Unmarshal([]byte(mapRaw), &slots); err != nil || len(slots) != 78 {
+		t.Fatalf("map: %d %v", len(slots), err)
+	}
+	slotByNumber := map[int]numerologySlot{}
+	seenCard := map[int]bool{}
+	upright, reversed := 0, 0
+	for _, slot := range slots {
+		if seenCard[slot.CardID] || slot.Orientation != "upright" && slot.Orientation != "reversed" {
+			t.Fatalf("slot: %#v", slot)
+		}
+		if slot.Orientation == "upright" {
+			upright++
+		} else {
+			reversed++
+		}
+		seenCard[slot.CardID] = true
+		slotByNumber[slot.Number] = slot
+	}
+	if upright == 0 || reversed == 0 {
+		t.Fatal("map is all one orientation")
+	}
+	if cards[0].CardID != slotByNumber[1].CardID || cards[0].Orientation != slotByNumber[1].Orientation || cards[1].Name != slotByNumber[9].Name {
+		t.Fatalf("draw left the map: %s", raw)
+	}
+	kept := cards[0]
+	again := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/redraw", rid), map[string]any{"number": 20})
+	raw, _ = json.Marshal(again["cards"])
+	var redrawn []drawnCard
+	if err := json.Unmarshal(raw, &redrawn); err != nil {
+		t.Fatal(err)
+	}
+	if len(redrawn) != 4 || redrawn[0].Number != kept.Number || redrawn[0].CardID != kept.CardID || redrawn[0].Orientation != kept.Orientation {
+		t.Fatalf("redraw overwrote the hand: %s", raw)
+	}
+	extra := redrawn[3]
+	if extra.Number != 20 || extra.CardID != slotByNumber[20].CardID || extra.Orientation != slotByNumber[20].Orientation || extra.Position != 4 {
+		t.Fatalf("appended card: %#v", extra)
+	}
+	var mapAfter string
+	if err := store.QueryRow(t.Context(), `SELECT numerology_map FROM readings WHERE id=$1`, rid).Scan(&mapAfter); err != nil {
+		t.Fatal(err)
+	}
+	if mapAfter != mapRaw {
+		t.Fatal("redraw rewrote the map")
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/redraw", rid), map[string]any{
+		"number": 9,
+	})
+	if !strings.Contains(msg, "不能重复") {
+		t.Fatalf("redraw dup: %s", msg)
 	}
 }
 
@@ -376,6 +438,45 @@ func TestSpreadRecommended(t *testing.T) {
 		if s["recommended"] == true {
 			t.Fatalf("disabled recommended still listed: %#v", appList)
 		}
+	}
+}
+
+func TestAdminExploreThemeFields(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	name := fmt.Sprintf("探索主题表单%d", time.Now().UnixNano())
+	key := fmt.Sprintf("theme_%d", time.Now().UnixNano())
+	created := create(t, ts, admin.access, "/api/admin/v1/spreads", map[string]any{
+		"name": name, "description": "主题下的牌阵", "card_count": 1,
+		"positions":      []map[string]any{{"index": 1, "name": "结果", "meaning": ""}},
+		"theme_key":      key,
+		"theme_title":    "要不要",
+		"theme_subtitle": "先看一句",
+		"short_sentence": "只问这一件",
+	})
+	id := asID(created["id"])
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `DELETE FROM spreads WHERE id=$1`, id)
+	})
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", id), map[string]any{
+		"name": name, "description": "主题下的牌阵", "card_count": 1,
+		"positions":      []map[string]any{{"index": 1, "name": "结果", "meaning": ""}},
+		"theme_key":      key,
+		"theme_title":    "要不要",
+		"theme_subtitle": "改过的副标题",
+		"short_sentence": "只问这一件",
+	})
+	var row map[string]any
+	for _, item := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if asID(item["id"]) == id {
+			row = item
+		}
+	}
+	if row == nil || row["theme_key"] != key || row["theme_title"] != "要不要" || row["theme_subtitle"] != "改过的副标题" || row["short_sentence"] != "只问这一件" {
+		t.Fatalf("theme fields: %#v", row)
+	}
+	if row["quota_priced"] != false {
+		t.Fatalf("explore price invented: %#v", row)
 	}
 }
 

@@ -88,7 +88,7 @@ func (a *App) adminUserStats(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT COALESCE(gender,''), COALESCE(birth_date,''), COALESCE(explore_preferences,'[]')
-		FROM app_users WHERE cancelled_at IS NULL AND merged_into IS NULL`)
+		FROM app_users WHERE cancelled_at IS NULL`)
 	if err != nil {
 		return err
 	}

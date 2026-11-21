@@ -197,10 +197,14 @@ add("今日免费体验额度已用完，本次记录已保存到历史记录",
     "Today's free trial is used up. This record was saved to history.",
     "本日の無料体験は使い切りました。この記録は履歴に保存されています。",
     "오늘 무료 체험을 모두 썼습니다. 이 기록은 히스토리에 저장되었습니다.")
-add("该日已有结果，不重复扣次数或钻石",
-    "That day already has a result. Reads and diamonds were not charged again.",
-    "その日は既に結果があります。回数とダイヤモンドは再控除しません。",
-    "그날 결과가 이미 있어 횟수와 다이아를 다시 차감하지 않았습니다.")
+add("该日已有结果，不重复扣额度",
+    "That day already has a result. Quota was not charged again.",
+    "その日は既に結果があります。クォータは再控除しません。",
+    "그날 결과가 이미 있어 한도를 다시 차감하지 않았습니다.")
+add("该日已使用，删除记录后不能再抽",
+    "That day was already used. Deleting the record does not allow another draw.",
+    "その日は使用済みです。記録を削除しても再度引けません。",
+    "그날은 이미 사용했습니다. 기록을 삭제해도 다시 뽑을 수 없습니다.")
 add("充值入账", "Top-up credited", "チャージ入金", "충전 입고")
 add("会员钻石刷新", "Membership diamonds refreshed", "会員ダイヤモンド更新", "멤버십 다이아 갱신")
 add("会员额度刷新", "Membership quota refreshed", "会員クォータ更新", "멤버십 한도 갱신")
@@ -513,7 +517,7 @@ ERRORS = {
     "用户不存在": ("User not found", "ユーザーがありません", "사용자가 없습니다"),
     "用户名已存在": ("Username already exists", "ユーザー名は既にあります", "사용자 이름이 이미 있습니다"),
     "用户名或密码错误": ("Incorrect username or password", "ユーザー名またはパスワードが違います", "사용자 이름 또는 비밀번호가 올바르지 않습니다"),
-    "登录后才会扣次数或钻石": ("Reads or diamonds are only charged after login", "ログイン後に回数またはダイヤモンドを控除します", "로그인 후에만 횟수나 다이아가 차감됩니다"),
+    "登录后才能追问": ("Log in to ask a follow-up", "追問するにはログインしてください", "추가 질문을 하려면 로그인하세요"),
     "登录后才能上传": ("Log in to upload", "アップロードするにはログインしてください", "업로드하려면 로그인하세요"),
     "登录后才能使用注册奖励": ("Log in to use the registration reward", "登録特典を使うにはログインしてください", "가입 보상을 쓰려면 로그인하세요"),
     "登录后才能保存通知设置": ("Log in to save notification settings", "通知設定の保存にはログインが必要です", "알림 설정을 저장하려면 로그인하세요"),
