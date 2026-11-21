@@ -226,14 +226,18 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	}
 
 	article := listOne(t, ts, anonToken, "/api/app/v1/help/articles/how_to_start")
-	if article["title"] != "如何开始一次塔罗占卜？" || article["body"] != "待确认" || article["body_status"] != "pending" {
+	if article["title"] != "如何开始一次塔罗占卜？" || article["body_status"] != "ready" {
 		t.Fatalf("article: %#v", article)
+	}
+	if !strings.Contains(fmt.Sprint(article["body"]), "开始抽牌") || !strings.Contains(fmt.Sprint(article["body"]), "探索") {
+		t.Fatalf("article body: %#v", article["body"])
 	}
 	if article["category_title"] != "使用与占卜" {
 		t.Fatalf("article category: %#v", article)
 	}
-	if strings.Contains(fmt.Sprint(article["body"]), "退款") || strings.Contains(fmt.Sprint(article["body"]), "额度") {
-		t.Fatalf("article invented rules: %#v", article)
+	lang := listOne(t, ts, anonToken, "/api/app/v1/help/articles/language_theme")
+	if lang["body_status"] != "ready" || !strings.Contains(fmt.Sprint(lang["body"]), "浅色或深色") {
+		t.Fatalf("language article: %#v", lang)
 	}
 	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/help/articles/missing_article", nil); msg != "问题不存在" {
 		t.Fatalf("missing article: %s", msg)

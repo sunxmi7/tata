@@ -7,10 +7,34 @@ export interface AppUser {
   apple_sub: string | null;
   phone: string | null;
   timezone: string | null;
+  name?: string;
+  nickname?: string;
+  avatar_url?: string | null;
+  gender?: string | null;
+  birth_date?: string | null;
+  explore_preferences?: string[];
   tarotist_trial_used: boolean;
   tease_off: boolean;
   cancelled_at: string | null;
   created_at: string;
+}
+
+export interface UserStatItem {
+  label: string;
+  count: number;
+  percent: number;
+}
+
+export interface UserStatGroup {
+  total: number;
+  items: UserStatItem[];
+}
+
+export interface UserStats {
+  total_users: number;
+  gender: UserStatGroup;
+  age: UserStatGroup;
+  explore: UserStatGroup;
 }
 
 export interface OperatorModule {
@@ -135,6 +159,9 @@ export function updateOperator(
 }
 export function listUsers() {
   return requestClient.get<AppUser[]>('/users');
+}
+export function getUserStats() {
+  return requestClient.get<UserStats>('/users/stats');
 }
 export function listAudit() {
   return requestClient.get<AuditRow[]>('/audit');

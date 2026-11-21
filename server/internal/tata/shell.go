@@ -320,6 +320,12 @@ func (a *App) serveUpload(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(defaultCardPNG)
 		return
 	}
+	if name == defaultAvatarName {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(defaultAvatarPNG)
+		return
+	}
 	if !validUploadPath(name) {
 		http.NotFound(w, r)
 		return
@@ -406,7 +412,7 @@ func parseUploadFolder(r *http.Request) (string, error) {
 }
 
 func validUploadPath(name string) bool {
-	if name == defaultCardThumbnailName {
+	if name == defaultCardThumbnailName || name == defaultAvatarName {
 		return true
 	}
 	folder, file, ok := strings.Cut(name, "/")

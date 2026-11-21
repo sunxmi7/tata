@@ -424,7 +424,7 @@ func TestBindDoesNotRebind(t *testing.T) {
 	}
 }
 
-func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
+func newMergeApp(t *testing.T) (*Store, *App, *httptest.Server) {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -438,6 +438,11 @@ func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	t.Cleanup(ts.Close)
+	return store, app, ts
+}
+
+func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
+	store, _, ts := newMergeApp(t)
 	return store, ts
 }
 

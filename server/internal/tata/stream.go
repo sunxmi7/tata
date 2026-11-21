@@ -287,10 +287,10 @@ func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) er
 		return biz("请先填写基本信息")
 	}
 	if row.rhythmJSON == "" {
-		return biz("请先选完 12 张全年节奏牌")
+		return biz("请先抽完十二宫牌阵")
 	}
 	if row.domainJSON == "" {
-		return biz("请先抽完六大领域牌")
+		return biz("请先抽完四季牌阵")
 	}
 	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
 		view, err := a.buildYearlyReport(r.Context(), uid, year, r)

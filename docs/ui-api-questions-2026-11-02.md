@@ -9,7 +9,7 @@
 | **Q-B1** | **已确认〔2026-11-06 重启〕** — 今日/明日抽牌走 App 本地通知；优惠/活动走个推，`POST /push/register` 已补 |
 | **Q-B2** | **已确认** — 语言不上云；Header 传语言 |
 | **Q-B3** | **已确认** — `GET /monthly-reports`、`POST .../save` |
-| **Q-B4** | **已确认** — 定稿四步 12+6：`profile` / `rhythm` / `domains` / `generate` |
+| **Q-B4** | **已确认〔2026-11-18〕** — 定稿四步 12+4：`profile` / `rhythm`（十二宫） / `domains`（四季） / `generate` |
 | **Q-B5** | **已确认** — `GET/PUT /deck-preference` 含套装描述/标签；78 张预览客户端拼 |
 | **Q-B7** | **搁置** — 不接删号 UI；细则稍后确认 |
 | **Q-B11** | **已确认〔2026-11-07〕** — App 不要手机号：无 bind-phone、档案不返回 phone |
@@ -58,12 +58,12 @@
 | **代码 / OpenAPI** | `GET /monthly-reports`、`POST /monthly-reports/save`。 |
 | **挡住** | 无。 |
 
-### Q-B4 · 年度运势 — **已确认〔2026-11-06〕12+6**
+### Q-B4 · 年度运势 — **已确认〔2026-11-18〕12+4**
 
 | 项 | 内容 |
 |---|---|
-| **UI 表现** | 定稿四步：填基本信息 → 选 12 张看全年节奏 → 抽 6 张看六大领域（感情/事业/财运/健康/人际/成长）→ 生成报告。 |
-| **代码 / OpenAPI** | `GET/POST /yearly-reports/{year}` + `PUT .../profile` + `POST .../rhythm` + `POST .../domains` + `POST .../generate`。 |
+| **UI 表现** | Pixso 1034:13493 四步：填出生日期/时间/地点 → 抽十二宫 12 张（自我到潜意识）→ 抽四季 4 张（春夏秋冬）→ 生成报告。 |
+| **代码 / OpenAPI** | 路径仍为 `PUT .../profile` + `POST .../rhythm` + `POST .../domains` + `POST .../generate`。响应 `rhythm_cards`/`house_cards`、`domain_cards`/`season_cards`。 |
 | **挡住** | 无。 |
 
 ### Q-B5 · 我的塔罗牌 / 牌组偏好 — **已确认〔2026-11-06〕**
@@ -228,7 +228,7 @@
 
 ## 建议拍板顺序（给产品）
 
-1. **已确认：** Q-B1 推送重启、Q-B2 语言、Q-B3 月报、Q-B4 年运 12+6、Q-B5 牌组偏好、Q-B11 不要手机号、Q-B13 种子价、Q-B14 小组件、Q-C6 历史列表。  
+1. **已确认：** Q-B1 推送重启、Q-B2 语言、Q-B3 月报、Q-B4 年运 12+4、Q-B5 牌组偏好、Q-B11 不要手机号、Q-B13 种子价、Q-B14 小组件、Q-C6 历史列表。  
 2. **还没对齐：** 无（定稿 HTTP 字段已齐）。  
 3. **仍搁置 / 后置：** Q-B7 删号、Q-N1 登录多步 UI、Q-B6/B8 占位 CMS。  
 4. **对齐文档：** [`design/ui-gap-vs-api-2026-11-06.md`](./design/ui-gap-vs-api-2026-11-06.md)
@@ -247,6 +247,7 @@
 | 2026-11-06 | Q-C4 | 日历日详情按 `574:2` 补预览字段。还剩牌组介绍。 |
 | 2026-11-06 | Q-B5 | 牌组介绍写入 `decks.description` / `tags`，经 `/deck-preference` 与 `/copy/decks` 暴露。 |
 | 2026-11-07 | Q-B11 | App 不要手机号：删 bind-phone，档案不返回 phone。 |
+| 2026-11-18 | Q-B4 | 年运对齐 Pixso 1034:13493：十二宫 12 + 四季 4；资料补出生时间/地点。路径仍为 rhythm/domains。 |
 
 ---
 

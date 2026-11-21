@@ -162,6 +162,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{item{"Ledger", "/ledger", map[string]any{"title": "额度流水", "order": 10}}, adminModuleRecords, false},
 		{item{"Operator", "/operator", map[string]any{"title": "操作员", "order": 11}}, "", true},
 		{item{"Users", "/users", map[string]any{"title": "用户账号", "order": 12}}, adminModuleAccounts, false},
+		{item{"UserStats", "/user-stats", map[string]any{"title": "用户统计", "order": 12}}, adminModuleAccounts, false},
 		{item{"Calendar", "/calendar", map[string]any{"title": "日历", "order": 13}}, adminModuleRecords, false},
 		{item{"Messages", "/messages", map[string]any{"title": "追问消息", "order": 14}}, adminModuleRecords, false},
 		{item{"Audit", "/audit", map[string]any{"title": "审计日志", "order": 15}}, adminModuleAccounts, false},

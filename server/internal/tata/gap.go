@@ -35,11 +35,7 @@ func progressOf(status string) (label, next string) {
 }
 
 func (a *App) userCycle(r *http.Request, uid int64) string {
-	tz := "Asia/Shanghai"
-	if uid > 0 {
-		_ = a.Store.QueryRow(r.Context(), `SELECT timezone FROM app_users WHERE id=$1`, uid).Scan(&tz)
-	}
-	return cycleFor(time.Now(), tz)
+	return cycleFor(time.Now(), userTimezone(r.Context(), a.Store, uid))
 }
 
 func (a *App) claimed(r *http.Request, kind, value string) bool {
@@ -82,6 +78,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.applyWeChatProfile(r, id, prof)
+	a.ensureProfileDefaults(r.Context(), id)
 	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	settled := a.settleQuestionStart(r, id)
@@ -120,6 +117,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	a.ensureProfileDefaults(r.Context(), id)
 	a.tryApplyInvite(r.Context(), id, req.InviteCode)
 	access, _ := a.signAccess("app", id, "", "")
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "apple"})
@@ -816,7 +814,10 @@ func (a *App) adminListUsers(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, email, wechat_openid, apple_sub, phone, timezone, tarotist_trial_used, tease_off, cancelled_at, created_at FROM app_users ORDER BY id DESC LIMIT 200`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, email, wechat_openid, apple_sub, phone,
+		COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), tarotist_trial_used, tease_off, cancelled_at, created_at,
+		COALESCE(name,''), COALESCE(avatar_url,''), gender, birth_date, COALESCE(explore_preferences,'[]')
+		FROM app_users ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		return err
 	}
@@ -824,14 +825,21 @@ func (a *App) adminListUsers(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var email, openid, apple, phone, tz *string
+		var email, openid, apple, phone, gender, birth *string
+		var tz, name, avatar, prefs string
 		var trial, tease bool
 		var cancelled *time.Time
 		var created time.Time
-		if err := rows.Scan(&id, &email, &openid, &apple, &phone, &tz, &trial, &tease, &cancelled, &created); err != nil {
+		if err := rows.Scan(&id, &email, &openid, &apple, &phone, &tz, &trial, &tease, &cancelled, &created, &name, &avatar, &gender, &birth, &prefs); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": id, "email": email, "wechat_openid": openid, "apple_sub": apple, "phone": phone, "timezone": tz, "tarotist_trial_used": trial, "tease_off": tease, "cancelled_at": cancelled, "created_at": created})
+		list = append(list, map[string]any{
+			"id": id, "email": email, "wechat_openid": openid, "apple_sub": apple, "phone": phone,
+			"timezone": tz, "tarotist_trial_used": trial, "tease_off": tease,
+			"cancelled_at": cancelled, "created_at": created,
+			"name": name, "nickname": name, "avatar_url": profileAvatarURL(r, avatar),
+			"gender": gender, "birth_date": birth, "explore_preferences": parseExplorePreferences(prefs),
+		})
 	}
 	writeOK(w, list)
 	return nil

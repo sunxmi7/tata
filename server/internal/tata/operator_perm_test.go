@@ -23,6 +23,7 @@ func TestAdminModuleOf(t *testing.T) {
 		"/api/admin/v1/readings/3/retry":   adminModuleRecords,
 		"/api/admin/v1/ledger":             adminModuleRecords,
 		"/api/admin/v1/users":              adminModuleAccounts,
+		"/api/admin/v1/users/stats":        adminModuleAccounts,
 		"/api/admin/v1/operators/2":        adminModuleAccounts,
 		"/api/admin/v1/audit":              adminModuleAccounts,
 		"/api/admin/v1/account-merges":     adminModuleAccounts,

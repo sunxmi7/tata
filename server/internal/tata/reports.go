@@ -410,10 +410,7 @@ func (a *App) hasYearSubscription(ctx context.Context, uid int64) (bool, error) 
 }
 
 func (a *App) userLocation(ctx context.Context, uid int64) *time.Location {
-	tz := "Asia/Shanghai"
-	if uid > 0 {
-		_ = a.Store.QueryRow(ctx, `SELECT timezone FROM app_users WHERE id=$1`, uid).Scan(&tz)
-	}
+	tz := userTimezone(ctx, a.Store, uid)
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		loc, _ = time.LoadLocation("Asia/Shanghai")

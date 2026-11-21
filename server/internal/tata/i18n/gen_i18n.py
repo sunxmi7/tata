@@ -227,8 +227,24 @@ add("奖励发放与记录字段待产品确认。集合页不写未确认的奖
 add("暂时没有找到相关问题", "No matching articles", "関連する質問は見つかりませんでした", "관련 질문을 찾지 못했습니다")
 add("换个关键词，或向我们反馈", "Try another keyword, or send us feedback", "キーワードを変えるか、フィードバックしてください", "다른 키워드를 치거나 의견을 보내 주세요")
 add("填写基本信息", "Enter your details", "基本情報を入力", "기본 정보 입력")
-add("选12张牌，看全年节奏", "Draw 12 cards for the year", "12枚選んで一年のリズムを見る", "12장 뽑아 한 해 리듬 보기")
-add("抽6张牌，看六大领域", "Draw 6 cards for six areas", "6枚引いて六つの領域を見る", "6장 뽑아 여섯 영역 보기")
+add("抽取十二宫牌阵", "Draw the 12 houses", "12ハウスを引く", "12하우스 뽑기")
+add("抽取四季牌阵", "Draw the four seasons", "四季のカードを引く", "사계절 카드 뽑기")
+add("自我", "Self", "自己", "자아")
+add("财富", "Wealth", "富", "재물")
+add("沟通", "Communication", "コミュニケーション", "소통")
+add("家庭", "Home", "家庭", "가정")
+add("创造", "Creation", "創造", "창조")
+add("日常", "Daily life", "日常", "일상")
+add("伴侣", "Partnership", "パートナー", "伴侶")
+add("深层", "The depths", "深層", "심층")
+add("远行", "Travel", "遠行", "여행")
+add("事业", "Career", "仕事", "사업")
+add("社群", "Community", "コミュニティ", "커뮤니티")
+add("潜意识", "The unconscious", "潜在意識", "무의식")
+add("春", "Spring", "春", "봄")
+add("夏", "Summer", "夏", "여름")
+add("秋", "Autumn", "秋", "가을")
+add("冬", "Winter", "冬", "겨울")
 add("生成年度报告", "Generate yearly report", "年間レポートを生成", "연간 리포트 생성")
 add("年度主题", "Yearly theme", "年間テーマ", "연간 테마")
 add("领域启示", "Area insights", "領域の示唆", "영역 통찰")
@@ -362,9 +378,11 @@ ERRORS = {
     "核销上限不能低于已核销次数": ("Redemption limit cannot be below the used count", "利用上限は使用済み回数を下回れません", "사용 한도는 이미 사용한 횟수보다 작을 수 없습니다"),
     "过期时间必须晚于现在": ("Expiry must be in the future", "有効期限は現在より後である必要があります", "만료 시간은 현재보다 이후여야 합니다"),
     "兑换码生成失败": ("Failed to generate redeem codes", "交換コードの生成に失敗しました", "교환 코드 생성에 실패했습니다"),
-    "全年节奏牌已固定": ("Year rhythm cards are already fixed", "年間リズムのカードは確定済みです", "연간 리듬 카드가 이미 확정되었습니다"),
+    "十二宫牌已固定": ("The 12 house cards are already fixed", "12ハウスのカードは確定済みです", "12하우스 카드가 이미 확정되었습니다"),
+    "四季牌已固定": ("The season cards are already fixed", "四季のカードは確定済みです", "사계절 카드가 이미 확정되었습니다"),
     "公开 ID 生成失败": ("Failed to generate public ID", "公開IDの生成に失敗しました", "공개 ID 생성에 실패했습니다"),
-    "六大领域牌已固定": ("Six-area cards are already fixed", "六領域のカードは確定済みです", "여섯 영역 카드가 이미 확정되었습니다"),
+    "出生时间格式应为 HH:MM": ("Birth time must be HH:MM", "出生時刻は HH:MM 形式です", "출생 시간은 HH:MM 형식이어야 합니다"),
+    "出生地点过长": ("Birth place is too long", "出生地が長すぎます", "출생지가 너무 깁니다"),
     "内容不能超过 500 字": ("Content cannot exceed 500 characters", "内容は500字以内です", "내용은 500자를 넘을 수 없습니다"),
     "内部错误": ("Internal error", "内部エラー", "내부 오류"),
     "出生日期不正确": ("Birth date is invalid", "生年月日が正しくありません", "생년월일이 올바르지 않습니다"),
@@ -406,6 +424,7 @@ ERRORS = {
     "塔罗师不可用": ("This tarotist is unavailable", "このタロティストは利用できません", "이 타로티스트는 사용할 수 없습니다"),
     "塔罗师不存在": ("Tarotist not found", "タロティストがありません", "타로티스트가 없습니다"),
     "姓名过长": ("Name is too long", "氏名が長すぎます", "이름이 너무 깁니다"),
+    "昵称过长": ("Nickname is too long", "ニックネームが長すぎます", "닉네임이 너무 깁니다"),
     "密钥无法读取": ("API key cannot be read", "鍵を読み取れません", "키를 읽을 수 없습니다"),
     "对方账号已合并": ("The other account is already merged", "相手アカウントは既に統合済みです", "상대 계정은 이미 병합되었습니다"),
     "对方账号已注销，不能合并": ("The other account is cancelled and cannot be merged", "相手アカウントは退会済みで統合できません", "상대 계정은 탈퇴되어 병합할 수 없습니다"),
@@ -556,11 +575,13 @@ ERRORS = {
     "请先填写基本信息": ("Enter your details first", "先に基本情報を入力してください", "먼저 기본 정보를 입력하세요"),
     "请先填写问题": ("Enter a question first", "先に質問を入力してください", "먼저 질문을 입력하세요"),
     "请先完成切牌并点击下一步": ("Finish the cut, then tap next", "先にカットを終えて次へを押してください", "먼저 컷을 끝낸 뒤 다음을 누르세요"),
-    "请先抽完六大领域牌": ("Finish drawing the six area cards first", "先に六領域のカードを引き終えてください", "먼저 여섯 영역 카드를 모두 뽑으세요"),
+    "请先抽完十二宫牌阵": ("Finish drawing the 12 houses first", "先に12ハウスを引き終えてください", "먼저 12하우스를 모두 뽑으세요"),
+    "请先抽完四季牌阵": ("Finish drawing the four seasons first", "先に四季のカードを引き終えてください", "먼저 사계절 카드를 모두 뽑으세요"),
     "请先解锁年度运势": ("Unlock yearly fortune first", "先に年間運勢を解除してください", "먼저 연간 운세를 잠금 해제하세요"),
-    "请先选完 12 张全年节奏牌": ("Finish selecting the 12 year-rhythm cards first", "先に年間リズム12枚を選び終えてください", "먼저 연간 리듬 12장을 모두 고르세요"),
     "请先选择牌阵": ("Select a spread first", "先にスプレッドを選んでください", "먼저 스프레드를 선택하세요"),
     "请填写出生日期": ("Enter a birth date", "生年月日を入力してください", "생년월일을 입력하세요"),
+    "请填写出生时间": ("Enter a birth time", "出生時刻を入力してください", "출생 시간을 입력하세요"),
+    "请填写出生地点": ("Enter a birth place", "出生地を入力してください", "출생지를 입력하세요"),
     "请填写反馈内容": ("Enter feedback", "フィードバック内容を入力してください", "피드백 내용을 입력하세요"),
     "请填写年运段落": ("Enter yearly sections", "年運セクションを入力してください", "연운 구간을 입력하세요"),
     "请填写心愿内容": ("Enter a wish", "願いの内容を入力してください", "소원 내용을 입력하세요"),

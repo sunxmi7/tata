@@ -706,12 +706,7 @@ func (a *App) resumeQuotaAfterCredit(ctx context.Context, uid int64) []map[strin
 }
 
 func (a *App) resumeOne(ctx context.Context, uid, readingID int64, key, action, payload string) (map[string]any, error) {
-	cycle := cycleOf(time.Now())
-	var tz string
-	_ = a.Store.QueryRow(ctx, `SELECT timezone FROM app_users WHERE id=$1`, uid).Scan(&tz)
-	if tz != "" {
-		cycle = cycleFor(time.Now(), tz)
-	}
+	cycle := cycleFor(time.Now(), userTimezone(ctx, a.Store, uid))
 	tx, err := a.Store.Begin(ctx)
 	if err != nil {
 		return nil, err

@@ -313,15 +313,24 @@ func TestWeChatBindFillsEmptyProfile(t *testing.T) {
 	t.Cleanup(ts.Close)
 	token := register(t, ts, uniqueEmail("wx-bind-name"))
 	before := listOne(t, ts, token, "/api/app/v1/profile")
-	if name, _ := before["name"].(string); strings.TrimSpace(name) != "" {
-		t.Fatalf("expected empty name: %#v", before["name"])
+	emailNick, _ := before["name"].(string)
+	if !validGeneratedNickname(emailNick) {
+		t.Fatalf("email nickname: %#v", before["name"])
 	}
-	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{
-		"code": fmt.Sprintf("wx-bind-name-%d", time.Now().UnixNano()),
-	})
+	code := fmt.Sprintf("wx-bind-name-%d", time.Now().UnixNano())
+	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": code})
 	after := listOne(t, ts, token, "/api/app/v1/profile")
-	if after["name"] != "绑定来的昵称" {
-		t.Fatalf("bind name: %#v", after["name"])
+	if after["name"] != emailNick {
+		t.Fatalf("bind overwrote nickname: %#v", after["name"])
+	}
+
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET name='' WHERE wechat_openid=$1`, code); err != nil {
+		t.Fatal(err)
+	}
+	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": code})
+	filled := listOne(t, ts, token, "/api/app/v1/profile")
+	if filled["name"] != "绑定来的昵称" {
+		t.Fatalf("bind fill empty name: %#v", filled["name"])
 	}
 }
 

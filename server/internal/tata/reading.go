@@ -201,6 +201,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
+	a.ensureProfileDefaults(r.Context(), id)
 	a.consumeEmailCode(r.Context(), "login", email)
 	if req.AnonymousID != "" {
 		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, id, req.AnonymousID)
@@ -270,17 +271,23 @@ func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
 	}
 	var email, tz, name, bio, avatar, publicID, prefs string
 	var birth, gender, openid, apple *string
-	if err := a.Store.QueryRow(r.Context(), `SELECT COALESCE(email,''), birth_date, gender, wechat_openid, apple_sub, timezone, COALESCE(name,''), COALESCE(bio,''), COALESCE(avatar_url,''), COALESCE(public_id,''), COALESCE(explore_preferences,'[]') FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &tz, &name, &bio, &avatar, &publicID, &prefs); err != nil {
+	if err := a.Store.QueryRow(r.Context(), `SELECT COALESCE(email,''), birth_date, gender, wechat_openid, apple_sub, COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), COALESCE(name,''), COALESCE(bio,''), COALESCE(avatar_url,''), COALESCE(public_id,''), COALESCE(explore_preferences,'[]') FROM app_users WHERE id=$1`, uid).Scan(&email, &birth, &gender, &openid, &apple, &tz, &name, &bio, &avatar, &publicID, &prefs); err != nil {
 		return err
+	}
+	if tz == "" {
+		tz = "Asia/Shanghai"
 	}
 	publicID, err = a.ensurePublicID(r.Context(), uid, publicID)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(name) == "" {
+		name = a.assignRandomNickname(r.Context(), uid)
+	}
 	writeOK(w, map[string]any{
 		"id": uid, "email": emptyAsNil(email), "birth_date": birth, "gender": gender,
 		"wechat_openid": openid, "apple_sub": apple, "timezone": tz,
-		"name": name, "bio": bio, "avatar_url": emptyAsNil(absoluteAssetURL(r, avatar)),
+		"name": name, "nickname": name, "bio": bio, "avatar_url": profileAvatarURL(r, avatar),
 		"public_id":                  publicID,
 		"account_display":            accountDisplay(email, openid, apple),
 		"explore_preferences":        parseExplorePreferences(prefs),
@@ -302,6 +309,7 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 		Gender             string    `json:"gender"`
 		Timezone           string    `json:"timezone"`
 		Name               string    `json:"name"`
+		Nickname           string    `json:"nickname"`
 		Bio                string    `json:"bio"`
 		AvatarURL          string    `json:"avatar_url"`
 		ExplorePreferences *[]string `json:"explore_preferences"`
@@ -318,8 +326,12 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 			return biz("时区不正确")
 		}
 	}
-	if n := runeLen(strings.TrimSpace(req.Name)); n > 32 {
-		return biz("姓名过长")
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = strings.TrimSpace(req.Nickname)
+	}
+	if n := runeLen(name); n > 32 {
+		return biz("昵称过长")
 	}
 	if n := runeLen(strings.TrimSpace(req.Bio)); n > 200 {
 		return biz("简介过长")
@@ -334,7 +346,7 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 		name=COALESCE(NULLIF($4,''), name),
 		bio=COALESCE(NULLIF($5,''), bio),
 		avatar_url=COALESCE(NULLIF($6,''), avatar_url)
-		WHERE id=$7`, req.BirthDate, gender, req.Timezone, strings.TrimSpace(req.Name), strings.TrimSpace(req.Bio), strings.TrimSpace(req.AvatarURL), uid)
+		WHERE id=$7`, req.BirthDate, gender, req.Timezone, name, strings.TrimSpace(req.Bio), strings.TrimSpace(req.AvatarURL), uid)
 	if err != nil {
 		return err
 	}
@@ -744,7 +756,10 @@ func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, 
 
 func userTimezone(ctx context.Context, ex execer, uid int64) string {
 	tz := "Asia/Shanghai"
-	_ = ex.QueryRow(ctx, `SELECT timezone FROM app_users WHERE id=$1`, uid).Scan(&tz)
+	if uid <= 0 || ex == nil {
+		return tz
+	}
+	_ = ex.QueryRow(ctx, `SELECT COALESCE(NULLIF(timezone,''),'Asia/Shanghai') FROM app_users WHERE id=$1`, uid).Scan(&tz)
 	if tz == "" {
 		return "Asia/Shanghai"
 	}

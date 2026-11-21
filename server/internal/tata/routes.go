@@ -83,6 +83,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/v1/operators", a.h(a.adminCreateOperator))
 	mux.HandleFunc("PUT /api/admin/v1/operators/{id}", a.h(a.adminUpdateOperator))
 	mux.HandleFunc("GET /api/admin/v1/users", a.h(a.adminListUsers))
+	mux.HandleFunc("GET /api/admin/v1/users/stats", a.h(a.adminUserStats))
 	mux.HandleFunc("GET /api/admin/v1/audit", a.h(a.adminListAudit))
 	mux.HandleFunc("GET /api/admin/v1/account-merges", a.h(a.adminListAccountMerges))
 	mux.HandleFunc("GET /api/admin/v1/iap/orders", a.h(a.adminListIAPOrders))
@@ -262,7 +263,8 @@ func (a *App) appActor(r *http.Request) (userID int64, anon string, err error) {
 		return userID, anon, err
 	}
 	var merged *int64
-	scanErr := a.Store.QueryRow(r.Context(), `SELECT merged_into FROM app_users WHERE id=$1`, userID).Scan(&merged)
+	var cancelled *time.Time
+	scanErr := a.Store.QueryRow(r.Context(), `SELECT merged_into, cancelled_at FROM app_users WHERE id=$1`, userID).Scan(&merged, &cancelled)
 	if scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return 0, "", authFail{}
@@ -271,6 +273,9 @@ func (a *App) appActor(r *http.Request) (userID int64, anon string, err error) {
 	}
 	if merged != nil {
 		return 0, "", authFail{}
+	}
+	if cancelled != nil {
+		return 0, "", biz("账号已注销")
 	}
 	return userID, anon, nil
 }

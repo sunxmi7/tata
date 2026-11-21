@@ -296,11 +296,12 @@
 
 - [ ] `GET /api/app/v1/profile`
 - [ ] 改头像：先 `POST /api/app/v1/uploads`（folder 缺省 misc），再 `PUT /profile` 把返回的 url 写入 `avatar_url`。没有单独的上传头像接口
-- [ ] `PUT /api/app/v1/profile`
+- [ ] `PUT /api/app/v1/profile`：`name` 或 `nickname` 均可；GET 两个字段值相同
 
 ```json
 {
   "name": "塔塔用户",
+  "nickname": "塔塔用户",
   "gender": "不愿透露",
   "timezone": "Asia/Shanghai",
   "birth_date": "1990-01-01"
@@ -322,7 +323,7 @@
 ```
 
 - [ ] 身份已被其它账号占用时返回冲突包络，不要直接并账；确认走 `POST /api/app/v1/auth/merge-confirm`
-- [ ] 注销 `POST /api/app/v1/auth/cancel`：之后再用该邮箱登录应「该邮箱已注销，不能重复领取注册奖励」。测完再做。
+- [ ] 注销 `POST /api/app/v1/auth/cancel`：旧 token 再请求应「账号已注销」；再用该邮箱登录应「该邮箱已注销，不能重复注册」
 
 ---
 
@@ -399,19 +400,19 @@
 
 登录。路径 id 是**年份**，测 2026。
 
-顺序：读卖点 → 解锁 → 资料 → 12 张节奏 → 6 张领域 → 生成。
+顺序：读卖点 → 解锁 → 资料（出生日期/时间/地点）→ 十二宫 12 张 → 四季 4 张 → 生成。
 
 - [ ] `GET /api/app/v1/yearly-reports/2026`：未解锁 unlocked=false，step 指向卖点
 - [ ] `POST /api/app/v1/yearly-reports/2026/unlock`：无年卡时，已定价会提示走内购；未定价「年卡未开通，单独购买价格未配置」
 - [ ] 有年卡或解锁成功后再 `PUT /api/app/v1/yearly-reports/2026/profile`
 
 ```json
-{ "birth_date": "1990-01-01", "gender": "不愿透露" }
+{ "birth_date": "1990-01-01", "birth_time": "08:30", "birth_place": "北京", "gender": "不愿透露" }
 ```
 
-- [ ] 未解锁就填资料应失败；生日不能是未来
-- [ ] `POST /api/app/v1/yearly-reports/2026/rhythm` `{"mode":"normal"}`：12 张（一月到十二月）
-- [ ] `POST /api/app/v1/yearly-reports/2026/domains` `{"mode":"normal"}`：6 张，感情/事业/财运/健康/人际/成长
+- [ ] 未解锁就填资料应失败；生日不能是未来；缺出生时间或地点应失败
+- [ ] `POST /api/app/v1/yearly-reports/2026/rhythm` `{"mode":"normal"}`：12 张（自我到潜意识）
+- [ ] `POST /api/app/v1/yearly-reports/2026/domains` `{"mode":"normal"}`：4 张，春/夏/秋/冬
 - [ ] 步序不能跳：没填资料不能抽节奏，没抽节奏不能抽领域
 - [ ] `POST /api/app/v1/yearly-reports/2026/generate`：走 interpret 供应商；没绑模型会失败，不编造正文
 
@@ -469,7 +470,8 @@ JSON 示例（1×1 png）：
 - [ ] `GET /api/app/v1/help/categories`：三类；「会员与支付」articles_status=pending
 - [ ] `GET /api/app/v1/help/articles?category=reading`
 - [ ] `GET /api/app/v1/help/articles?q=抽牌`
-- [ ] `GET /api/app/v1/help/articles/how_to_start`：正文种子为「待确认」
+- [ ] `GET /api/app/v1/help/articles/how_to_start`：正文已写入，body_status=ready
+- [ ] `GET /api/app/v1/help/articles/language_theme`：账号与设置正文 ready
 
 ---
 

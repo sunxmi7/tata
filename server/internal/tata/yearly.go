@@ -9,36 +9,39 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-var yearlyRhythmPositions = []position{
-	{1, "一月", "这一年一月的节奏"},
-	{2, "二月", "这一年二月的节奏"},
-	{3, "三月", "这一年三月的节奏"},
-	{4, "四月", "这一年四月的节奏"},
-	{5, "五月", "这一年五月的节奏"},
-	{6, "六月", "这一年六月的节奏"},
-	{7, "七月", "这一年七月的节奏"},
-	{8, "八月", "这一年八月的节奏"},
-	{9, "九月", "这一年九月的节奏"},
-	{10, "十月", "这一年十月的节奏"},
-	{11, "十一月", "这一年十一月的节奏"},
-	{12, "十二月", "这一年十二月的节奏"},
+// Pixso 1034:13493 / 661：十二宫 12 张人生领域，不是月份。
+var yearlyHousePositions = []position{
+	{1, "自我", "这一年的自我与身份"},
+	{2, "财富", "这一年的财富与资源"},
+	{3, "沟通", "这一年的沟通与学习"},
+	{4, "家庭", "这一年的家庭与根基"},
+	{5, "创造", "这一年的创造与表达"},
+	{6, "日常", "这一年的日常与身体"},
+	{7, "伴侣", "这一年的伴侣与关系"},
+	{8, "深层", "这一年的深层与转化"},
+	{9, "远行", "这一年的远行与视野"},
+	{10, "事业", "这一年的事业与方向"},
+	{11, "社群", "这一年的社群与协作"},
+	{12, "潜意识", "这一年的潜意识与内在"},
 }
 
-var yearlyDomainPositions = []position{
-	{1, "感情", "这一年的感情与亲密关系"},
-	{2, "事业", "这一年的事业与方向"},
-	{3, "财运", "这一年的财务与资源"},
-	{4, "健康", "这一年的身体与状态"},
-	{5, "人际", "这一年的人际与协作"},
-	{6, "成长", "这一年的学习与成长"},
+// Pixso 661:207：四季 4 张春夏秋冬，不是六大领域。
+var yearlySeasonPositions = []position{
+	{1, "春", "这一年春天的节奏与变化"},
+	{2, "夏", "这一年夏天的节奏与变化"},
+	{3, "秋", "这一年秋天的节奏与变化"},
+	{4, "冬", "这一年冬天的节奏与变化"},
 }
 
 type yearlyRow struct {
 	unlocked     bool
 	source       string
 	birthDate    string
+	birthTime    string
+	birthPlace   string
 	gender       string
 	profileAt    sql.NullTime
 	rhythmJSON   string
@@ -55,13 +58,23 @@ func (a *App) appYearlyProfile(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var req struct {
-		BirthDate string `json:"birth_date"`
-		Gender    string `json:"gender"`
+		BirthDate  string `json:"birth_date"`
+		BirthTime  string `json:"birth_time"`
+		BirthPlace string `json:"birth_place"`
+		Gender     string `json:"gender"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
 	}
 	birth, err := parseYearlyBirthDate(req.BirthDate)
+	if err != nil {
+		return err
+	}
+	birthTime, err := parseYearlyBirthTime(req.BirthTime)
+	if err != nil {
+		return err
+	}
+	birthPlace, err := parseYearlyBirthPlace(req.BirthPlace)
 	if err != nil {
 		return err
 	}
@@ -74,8 +87,10 @@ func (a *App) appYearlyProfile(w http.ResponseWriter, r *http.Request) error {
 	}
 	if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET
 		birth_date=COALESCE(NULLIF($1,''), birth_date),
-		gender=COALESCE(NULLIF($2,''), gender)
-		WHERE id=$3`, birth, gender, uid); err != nil {
+		birth_time=COALESCE(NULLIF($2,''), birth_time),
+		birth_place=COALESCE(NULLIF($3,''), birth_place),
+		gender=COALESCE(NULLIF($4,''), gender)
+		WHERE id=$5`, birth, birthTime, birthPlace, gender, uid); err != nil {
 		return err
 	}
 	if gender == "" {
@@ -84,8 +99,8 @@ func (a *App) appYearlyProfile(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ensureYearlyRow(r.Context(), uid, year, ""); err != nil {
 		return err
 	}
-	if _, err := a.Store.Exec(r.Context(), `UPDATE yearly_reports SET birth_date=$1, gender=$2, profile_at=now()
-		WHERE user_id=$3 AND year=$4`, birth, gender, uid, year); err != nil {
+	if _, err := a.Store.Exec(r.Context(), `UPDATE yearly_reports SET birth_date=$1, birth_time=$2, birth_place=$3, gender=$4, profile_at=now()
+		WHERE user_id=$5 AND year=$6`, birth, birthTime, birthPlace, gender, uid, year); err != nil {
 		return err
 	}
 	view, err := a.buildYearlyReport(r.Context(), uid, year, r)
@@ -144,9 +159,9 @@ func (a *App) yearlyDraw(w http.ResponseWriter, r *http.Request, kind string) er
 	switch kind {
 	case "rhythm":
 		if row.rhythmJSON != "" {
-			return biz("全年节奏牌已固定")
+			return biz("十二宫牌已固定")
 		}
-		positions := yearlyRhythmPositions
+		positions := yearlyHousePositions
 		if mode == "pick" {
 			cards, err = drawCardsNumerology(positions, req.Numbers)
 		} else {
@@ -154,13 +169,13 @@ func (a *App) yearlyDraw(w http.ResponseWriter, r *http.Request, kind string) er
 		}
 	case "domains":
 		if row.rhythmJSON == "" {
-			return biz("请先选完 12 张全年节奏牌")
+			return biz("请先抽完十二宫牌阵")
 		}
 		if row.domainJSON != "" {
-			return biz("六大领域牌已固定")
+			return biz("四季牌已固定")
 		}
 		skip := cardIDSet(row.rhythmJSON)
-		positions := yearlyDomainPositions
+		positions := yearlySeasonPositions
 		if mode == "pick" {
 			cards, err = drawCardsNumerologySkipping(positions, req.Numbers, skip)
 		} else {
@@ -213,10 +228,10 @@ func (a *App) appYearlyGenerate(w http.ResponseWriter, r *http.Request) error {
 		return biz("请先填写基本信息")
 	}
 	if row.rhythmJSON == "" {
-		return biz("请先选完 12 张全年节奏牌")
+		return biz("请先抽完十二宫牌阵")
 	}
 	if row.domainJSON == "" {
-		return biz("请先抽完六大领域牌")
+		return biz("请先抽完四季牌阵")
 	}
 	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
 		view, err := a.buildYearlyReport(r.Context(), uid, year, r)
@@ -339,10 +354,10 @@ func (a *App) ensureYearlyRow(ctx context.Context, uid int64, year int, source s
 
 func (a *App) loadYearlyRow(ctx context.Context, uid int64, year int) (yearlyRow, error) {
 	var row yearlyRow
-	err := a.Store.QueryRow(ctx, `SELECT unlocked, unlock_source, COALESCE(birth_date,''), COALESCE(gender,''), profile_at,
+	err := a.Store.QueryRow(ctx, `SELECT unlocked, unlock_source, COALESCE(birth_date,''), COALESCE(birth_time,''), COALESCE(birth_place,''), COALESCE(gender,''), profile_at,
 		COALESCE(rhythm_cards,''), COALESCE(domain_cards,''), COALESCE(report,''), COALESCE(report_status,'pending'), fail_reason, generated_at
 		FROM yearly_reports WHERE user_id=$1 AND year=$2`, uid, year).Scan(
-		&row.unlocked, &row.source, &row.birthDate, &row.gender, &row.profileAt,
+		&row.unlocked, &row.source, &row.birthDate, &row.birthTime, &row.birthPlace, &row.gender, &row.profileAt,
 		&row.rhythmJSON, &row.domainJSON, &row.report, &row.reportStatus, &row.failReason, &row.generatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return yearlyRow{reportStatus: "pending"}, nil
@@ -355,53 +370,65 @@ func (a *App) attachYearlyFlow(ctx context.Context, r *http.Request, uid int64, 
 	if err != nil {
 		return err
 	}
-	var userBirth, userGender sql.NullString
-	_ = a.Store.QueryRow(ctx, `SELECT birth_date, gender FROM app_users WHERE id=$1`, uid).Scan(&userBirth, &userGender)
+	var userBirth, userTime, userPlace, userGender sql.NullString
+	_ = a.Store.QueryRow(ctx, `SELECT birth_date, birth_time, birth_place, gender FROM app_users WHERE id=$1`, uid).Scan(&userBirth, &userTime, &userPlace, &userGender)
 	birth := row.birthDate
 	if birth == "" {
 		birth = strings.TrimSpace(userBirth.String)
+	}
+	birthTime := row.birthTime
+	if birthTime == "" {
+		birthTime = strings.TrimSpace(userTime.String)
+	}
+	birthPlace := row.birthPlace
+	if birthPlace == "" {
+		birthPlace = strings.TrimSpace(userPlace.String)
 	}
 	gender := row.gender
 	if gender == "" {
 		gender = strings.TrimSpace(userGender.String)
 	}
 	profileDone := row.profileAt.Valid
-	rhythm := a.yearlyCardsView(ctx, r, row.rhythmJSON)
-	domains := a.yearlyCardsView(ctx, r, row.domainJSON)
+	houses := a.yearlyCardsView(ctx, r, row.rhythmJSON)
+	seasons := a.yearlyCardsView(ctx, r, row.domainJSON)
 	unlocked, _ := view["unlocked"].(bool)
-	step := yearlyStep(unlocked, profileDone, len(rhythm), len(domains), row.reportStatus)
+	step := yearlyStep(unlocked, profileDone, len(houses), len(seasons), row.reportStatus)
 	view["step"] = step
 	view["profile"] = map[string]any{
-		"birth_date": nullableConfig(birth),
-		"gender":     nullableConfig(gender),
-		"completed":  profileDone,
+		"birth_date":  nullableConfig(birth),
+		"birth_time":  nullableConfig(birthTime),
+		"birth_place": nullableConfig(birthPlace),
+		"gender":      nullableConfig(gender),
+		"completed":   profileDone,
 	}
-	view["rhythm_cards"] = rhythm
-	view["domain_cards"] = domains
+	view["rhythm_cards"] = houses
+	view["domain_cards"] = seasons
+	view["house_cards"] = houses
+	view["season_cards"] = seasons
 	view["report"] = nullableConfig(row.report)
 	view["report_status"] = row.reportStatus
 	view["generated_at"] = nullTime(row.generatedAt)
 	view["fail_reason"] = localizeString(ctx, nullString(row.failReason))
 	view["steps"] = []map[string]any{
 		{"key": "profile", "title": T(ctx, "填写基本信息"), "done": profileDone},
-		{"key": "rhythm", "title": T(ctx, "选12张牌，看全年节奏"), "done": len(rhythm) == 12, "required": 12, "drawn": len(rhythm)},
-		{"key": "domains", "title": T(ctx, "抽6张牌，看六大领域"), "done": len(domains) == 6, "required": 6, "drawn": len(domains)},
+		{"key": "rhythm", "title": T(ctx, "抽取十二宫牌阵"), "done": len(houses) == 12, "required": 12, "drawn": len(houses)},
+		{"key": "domains", "title": T(ctx, "抽取四季牌阵"), "done": len(seasons) == 4, "required": 4, "drawn": len(seasons)},
 		{"key": "generate", "title": T(ctx, "生成年度报告"), "done": row.reportStatus == "ready"},
 	}
 	return nil
 }
 
-func yearlyStep(unlocked, profile bool, rhythmN, domainN int, reportStatus string) string {
+func yearlyStep(unlocked, profile bool, houseN, seasonN int, reportStatus string) string {
 	if !unlocked {
 		return "locked"
 	}
 	if !profile {
 		return "profile"
 	}
-	if rhythmN < 12 {
+	if houseN < 12 {
 		return "rhythm"
 	}
-	if domainN < 6 {
+	if seasonN < 4 {
 		return "domains"
 	}
 	if reportStatus == "ready" {
@@ -469,11 +496,37 @@ func parseYearlyBirthDate(raw string) (string, error) {
 	return t.Format("2006-01-02"), nil
 }
 
-func buildYearlyPrompt(year int, birth, gender, rhythmJSON, domainJSON string) string {
+func parseYearlyBirthTime(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", biz("请填写出生时间")
+	}
+	if t, err := time.Parse("15:04", raw); err == nil {
+		return t.Format("15:04"), nil
+	}
+	if t, err := time.Parse("15:04:05", raw); err == nil {
+		return t.Format("15:04"), nil
+	}
+	return "", biz("出生时间格式应为 HH:MM")
+}
+
+func parseYearlyBirthPlace(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", biz("请填写出生地点")
+	}
+	n := utf8.RuneCountInString(raw)
+	if n > 80 {
+		return "", biz("出生地点过长")
+	}
+	return raw, nil
+}
+
+func buildYearlyPrompt(year int, birth, birthTime, birthPlace, gender, houseJSON, seasonJSON string) string {
 	var b strings.Builder
 	b.WriteString("你只解读，不得改牌、牌位或正逆位。\n")
-	b.WriteString("这是一份年度运势报告。先按 12 张牌解读全年节奏（一月到十二月），再按 6 张牌解读六大领域（感情、事业、财运、健康、人际、成长），最后给一段总评与行动建议。\n")
-	fmt.Fprintf(&b, "年份：%d\n出生日期：%s\n性别：%s\n", year, birth, gender)
-	fmt.Fprintf(&b, "全年节奏牌面：%s\n六大领域牌面：%s\n", rhythmJSON, domainJSON)
+	b.WriteString("这是一份年度运势报告。先按 12 张十二宫牌解读人生领域（自我、财富、沟通、家庭、创造、日常、伴侣、深层、远行、事业、社群、潜意识），再按 4 张四季牌解读春夏秋冬的节奏变化，最后给一段总评与行动建议。\n")
+	fmt.Fprintf(&b, "年份：%d\n出生日期：%s\n出生时间：%s\n出生地点：%s\n性别：%s\n", year, birth, birthTime, birthPlace, gender)
+	fmt.Fprintf(&b, "十二宫牌面：%s\n四季牌面：%s\n", houseJSON, seasonJSON)
 	return b.String()
 }

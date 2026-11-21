@@ -189,6 +189,9 @@ ALTER TABLE app_users ADD COLUMN IF NOT EXISTS wechat_openid TEXT;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS apple_sub TEXT;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
+UPDATE app_users SET timezone='Asia/Shanghai' WHERE timezone IS NULL OR timezone='';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS birth_time TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS birth_place TEXT NOT NULL DEFAULT '';
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tarotist_trial_used BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tease_off BOOLEAN NOT NULL DEFAULT FALSE;
@@ -628,6 +631,8 @@ CREATE TABLE IF NOT EXISTS yearly_reports (
   PRIMARY KEY (user_id, year)
 );
 ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS birth_time TEXT NOT NULL DEFAULT '';
+ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS birth_place TEXT NOT NULL DEFAULT '';
 ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
 ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS profile_at TIMESTAMPTZ;
 ALTER TABLE yearly_reports ADD COLUMN IF NOT EXISTS rhythm_cards TEXT NOT NULL DEFAULT '';
@@ -896,10 +901,12 @@ COMMENT ON COLUMN readings.cards IS 'JSON 牌面。灵数抽牌 numbers 映射 R
 COMMENT ON TABLE reading_messages IS '解读追问对话。对应 /readings/{id}/messages、followups。';
 
 COMMENT ON TABLE monthly_report_saves IS '月度报告「已保存」标记。对应 POST /monthly-reports/save。统计仍现查 readings。';
-COMMENT ON TABLE yearly_reports IS '年度运势。解锁后按定稿四步：资料 → 12 张全年节奏 → 6 张六大领域 → 生成报告。';
+COMMENT ON TABLE yearly_reports IS '年度运势。解锁后按 Pixso 1034:13493 四步：资料 → 十二宫 12 张 → 四季 4 张 → 生成报告。';
 COMMENT ON COLUMN yearly_reports.unlock_source IS 'year_subscription 年卡免费，purchase 单独买。';
-COMMENT ON COLUMN yearly_reports.rhythm_cards IS '12 张全年节奏牌 JSON。空表示未抽。';
-COMMENT ON COLUMN yearly_reports.domain_cards IS '6 张六大领域牌 JSON（感情/事业/财运/健康/人际/成长）。空表示未抽。不与节奏牌重复。';
+COMMENT ON COLUMN yearly_reports.birth_time IS '出生时间 HH:MM。与 birth_place 一并写入 app_users。';
+COMMENT ON COLUMN yearly_reports.birth_place IS '出生地点，最多 80 字。';
+COMMENT ON COLUMN yearly_reports.rhythm_cards IS '十二宫 12 张 JSON（自我到潜意识）。空表示未抽。接口字段 rhythm_cards / house_cards。';
+COMMENT ON COLUMN yearly_reports.domain_cards IS '四季 4 张 JSON（春夏秋冬）。空表示未抽。不与十二宫牌重复。接口字段 domain_cards / season_cards。';
 COMMENT ON COLUMN yearly_reports.report IS '模型生成的年度报告正文。未生成前为空，不编造。';
 COMMENT ON COLUMN yearly_reports.report_status IS 'pending / generating / ready / failed。';
 
@@ -956,7 +963,7 @@ COMMENT ON TABLE app_messages IS '站内信（优惠/活动）。audience=all �
 COMMENT ON TABLE app_message_reads IS '站内信已读。对应 POST /messages/{id}/read。';
 
 COMMENT ON TABLE help_categories IS '帮助中心分类。对应 GET /help/categories。';
-COMMENT ON TABLE help_articles IS '帮助文章。body_status=pending 时正文为「待确认」。管理端 PUT /copy/help 可改。';
+COMMENT ON TABLE help_articles IS '帮助文章。使用与占卜、账号与设置已写入 Pixso 681:7 正文。会员与支付仍 pending。管理端 PUT /copy/help 可改。';
 COMMENT ON COLUMN iap_skus.copy IS '价位附带运营文案。年卡用于专属活动权益；空则 benefits.campaign_perk.copy_status=pending。';
 COMMENT ON TABLE app_config IS '无独立表的运营配置。key 如 yearly.2026.theme、card.thumbnail_template（{id}/{name}）、card.thumbnail_default。单牌名/宜/图在 cards 表。缩略图都未配时 App 返回内置 /uploads/card-default.png。对应 GET/PUT /copy/{kind}。';
 COMMENT ON TABLE cards IS '单牌目录。种子 78 张 Rider-Waite（id 0-77，愚者=0）。管理端 GET/POST /cards、PUT /cards/{id}；App 读缩略图/宜/多语言名。抽牌仍按 deck() 0-77。';
@@ -1134,22 +1141,15 @@ func (s *Store) seedHelp(ctx context.Context) error {
 			return err
 		}
 	}
-	articles := []struct {
-		id, category, title string
-		order               int
-	}{
-		{"how_to_start", "reading", "如何开始一次塔罗占卜？", 1},
-		{"where_records", "reading", "在哪里查看占卜记录？", 2},
-		{"change_deck", "reading", "如何更换使用的牌组？", 3},
-		{"draw_failed", "reading", "抽牌或解读失败怎么办？", 4},
-		{"annual_entry", "reading", "年度运势在哪里开启？", 5},
-		{"language_theme", "account", "如何切换语言和主题？", 1},
-	}
-	for _, a := range articles {
+	for _, a := range helpArticleCopy {
 		if _, err := s.Exec(ctx, `INSERT INTO help_articles(article_id, category_id, title, body, body_status, sort_order)
-			VALUES ($1,$2,$3,'待确认','pending',$4)
+			VALUES ($1,$2,$3,$4,'ready',$5)
 			ON CONFLICT (article_id) DO NOTHING`,
-			a.id, a.category, a.title, a.order); err != nil {
+			a.ID, a.Category, a.Title, a.Body, a.Order); err != nil {
+			return err
+		}
+		if _, err := s.Exec(ctx, `UPDATE help_articles SET body=$1, body_status='ready'
+			WHERE article_id=$2 AND body_status='pending'`, a.Body, a.ID); err != nil {
 			return err
 		}
 	}

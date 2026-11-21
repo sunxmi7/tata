@@ -45,6 +45,11 @@ func TestUINewScreensAPIs(t *testing.T) {
 	if profile["gender"] != "其他" {
 		t.Fatalf("profile gender other: %#v", profile)
 	}
+	must(t, ts, inviter, http.MethodPut, "/api/app/v1/profile", map[string]any{"nickname": "塔塔昵称"})
+	profile = listOne(t, ts, inviter, "/api/app/v1/profile")
+	if profile["name"] != "塔塔昵称" || profile["nickname"] != "塔塔昵称" {
+		t.Fatalf("profile nickname alias: %#v", profile)
+	}
 	prefs, _ := profile["explore_preferences"].([]any)
 	if len(prefs) != 3 || prefs[0] != "感情与关系" {
 		t.Fatalf("explore prefs: %#v", profile["explore_preferences"])
@@ -61,10 +66,12 @@ func TestUINewScreensAPIs(t *testing.T) {
 	inviteeSession := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{
 		"email": inviteeEmail, "code": otp, "invite_code": code,
 	})
-	if inviteeSession["accessToken"] == nil {
+	inviteeToken, _ := inviteeSession["accessToken"].(string)
+	if inviteeToken == "" {
 		t.Fatalf("invitee login: %#v", inviteeSession)
 	}
-	must(t, ts, inviteeSession["accessToken"].(string), http.MethodPut, "/api/app/v1/profile", map[string]any{"name": "新朋友甲"})
+	inviteeNick, _ := listOne(t, ts, inviteeToken, "/api/app/v1/profile")["name"].(string)
+	must(t, ts, inviteeToken, http.MethodPut, "/api/app/v1/profile", map[string]any{"name": "新朋友甲"})
 
 	rewards := listOne(t, ts, inviter, "/api/app/v1/campaigns/rewards")
 	items, _ := rewards["items"].([]any)
@@ -75,8 +82,8 @@ func TestUINewScreensAPIs(t *testing.T) {
 	if row["kind"] != "friend_invite" || row["amount"] != float64(3) || row["amount_label"] != "+3 次" {
 		t.Fatalf("reward row: %#v", row)
 	}
-	if row["title"] != "好友 新朋友 通过你的邀请加入了塔塔" {
-		t.Fatalf("reward title: %#v", row["title"])
+	if row["title"] != fmt.Sprintf("好友 %s 通过你的邀请加入了塔塔", inviteeNick) {
+		t.Fatalf("reward title: %#v want %s", row["title"], inviteeNick)
 	}
 	invite = listOne(t, ts, inviter, "/api/app/v1/invites")
 	if invite["invited_count"] != float64(1) {
@@ -90,7 +97,7 @@ func TestUINewScreensAPIs(t *testing.T) {
 		t.Fatalf("inviter invite remaining %d", granted)
 	}
 
-	msg, _ := call(t, ts, inviteeSession["accessToken"].(string), http.MethodPost, "/api/app/v1/invites/accept", map[string]any{"code": code})
+	msg, _ := call(t, ts, inviteeToken, http.MethodPost, "/api/app/v1/invites/accept", map[string]any{"code": code})
 	if msg != "已经绑定过邀请人" {
 		t.Fatalf("double accept: %s", msg)
 	}

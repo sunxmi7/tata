@@ -131,6 +131,7 @@ onMounted(async () => {
           :columns="[
             { title: '分类', dataIndex: 'category_id', width: 140 },
             { title: '标题', dataIndex: 'title' },
+            { title: '状态', dataIndex: 'body_status', width: 90 },
             { title: '正文', dataIndex: 'body' },
             { title: '操作', dataIndex: 'action', width: 80 },
           ]"
@@ -141,6 +142,9 @@ onMounted(async () => {
           <template #bodyCell="{ column, record }">
             <template v-if="column.dataIndex === 'title'">
               <Input v-model:value="record.title" />
+            </template>
+            <template v-else-if="column.dataIndex === 'body_status'">
+              {{ record.body_status === 'ready' ? '已定稿' : '待确认' }}
             </template>
             <template v-else-if="column.dataIndex === 'body'">
               <Input.TextArea v-model:value="record.body" :rows="2" />

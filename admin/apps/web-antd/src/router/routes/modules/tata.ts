@@ -130,6 +130,12 @@ const routes: RouteRecordRaw[] = [
             meta: { icon: 'lucide:users', title: '用户账号', authority: can('accounts') },
           },
           {
+            name: 'TataUserStats',
+            path: '/tata/user-stats',
+            component: () => import('#/views/tata/user-stats/index.vue'),
+            meta: { icon: 'lucide:pie-chart', title: '用户统计', authority: can('accounts') },
+          },
+          {
             name: 'TataOperator',
             path: '/tata/operator',
             component: () => import('#/views/tata/operator/index.vue'),

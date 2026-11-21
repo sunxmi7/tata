@@ -545,7 +545,7 @@ func (a *App) executeYearly(uid int64, year int, row yearlyRow) {
 		return
 	}
 	run.jobID = a.insertAIJob(bg, "yearly", 0, uid, year, 0)
-	prompt := buildYearlyPrompt(year, row.birthDate, row.gender, row.rhythmJSON, row.domainJSON)
+	prompt := buildYearlyPrompt(year, row.birthDate, row.birthTime, row.birthPlace, row.gender, row.rhythmJSON, row.domainJSON)
 	lastWrite := time.Now().Add(-time.Second)
 	_, _, text, callErr := a.runEinoStream(bg, "interpret", prompt, func(chunk string) error {
 		partial := run.appendDelta(chunk)

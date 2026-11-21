@@ -17,8 +17,13 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	token, _ := registerUser(t, ts, store, "shell")
 
 	profile := listOne(t, ts, token, "/api/app/v1/profile")
-	if profile["name"] != "" || profile["bio"] != "" || profile["avatar_url"] != nil {
-		t.Fatalf("empty profile: %#v", profile)
+	name, _ := profile["name"].(string)
+	if !validGeneratedNickname(name) || profile["nickname"] != name {
+		t.Fatalf("random nickname: %#v", profile)
+	}
+	avatar, _ := profile["avatar_url"].(string)
+	if !strings.Contains(avatar, defaultAvatarName) || profile["bio"] != "" {
+		t.Fatalf("default avatar: %#v", profile)
 	}
 	if _, ok := profile["phone"]; ok {
 		t.Fatalf("profile should not expose phone: %#v", profile)
@@ -39,7 +44,7 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if profile["name"] != "塔塔" || profile["bio"] != "爱抽牌" || profile["avatar_url"] != "https://cdn.example/avatar.png" {
 		t.Fatalf("profile write: %#v", profile)
 	}
-	if msg, _ := call(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{"name": strings.Repeat("名", 33)}); !strings.Contains(msg, "姓名") {
+	if msg, _ := call(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{"name": strings.Repeat("名", 33)}); !strings.Contains(msg, "昵称") {
 		t.Fatalf("long name: %s", msg)
 	}
 

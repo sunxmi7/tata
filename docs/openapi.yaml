@@ -44,7 +44,7 @@ info:
     - 人工补发 `diamonds` 写入统一额度，不改 `iap_orders`，也不唤醒 paywall（`resumed_tasks` 恒为空）。
     - 注册奖励已下线。免费用户扣费顺序：今日免费（全局 1 次）→ 邀请奖励 → 人工补发 → 开通会员。会员只扣统一额度。
     - 恢复购买受 `iap_settings.restore_hook_enabled` 控制（种子默认 true）。`restore_required_first_pack` 只回传，当前 handler 不据此拦截。
-    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心正文固定为「待确认」。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
+    - App P1 占位：兑换记录行字段、活动详情、参与记录、奖励记录均未定稿。列表为空数组，不编造记录。帮助中心「使用与占卜」「账号与设置」已写入正式正文；「会员与支付」仍 pending。**Q-B1 已拍砍（2026-11-02）**：不注册 `POST /api/app/v1/push/register`；通知仅 `notification-preferences` + 客户端本地/OS 提醒。
     - 活动列表与帮助中心的「加载失败，请重试」是客户端在请求失败后的状态，重试同一 GET。服务端沿用现有 `code=1` 包络，不另开错误体。
 servers:
   - url: http://127.0.0.1:8080
@@ -53,7 +53,7 @@ tags:
   - name: 登录绑定
     description: App 登录、绑定、合并确认、注销。除绑定 / 合并 / 注销外不需要 Bearer。
   - name: 用户档案
-    description: 登录用户档案。改头像先 POST /uploads（folder=misc）再 PUT /profile 的 avatar_url。匿名令牌会得到「匿名用户没有档案」。
+    description: 登录用户档案。改头像先 POST /uploads（folder=misc）再 PUT /profile 的 avatar_url。昵称与姓名同一列，PUT 可传 name 或 nickname。匿名令牌会得到「匿名用户没有档案」。
   - name: 占卜解读
     description: 占卜记录与仪式流程（检测、牌阵、洗牌、切牌、抽牌、解读、追问、工作流）。
   - name: 额度钻石
@@ -69,7 +69,7 @@ tags:
   - name: 活动
     description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
   - name: 帮助
-    description: 帮助中心分类、搜索与问题详情。正文为「待确认」，不编写额度、退款或会员规则。
+    description: 帮助中心分类、搜索与问题详情。使用与占卜、账号与设置已写入正式正文；会员与支付仍 pending。
   - name: 反馈心愿
     description: 图片上传（头像/心愿/反馈共用 POST /uploads）、功能心愿单与意见反馈。
   - name: 通知设置
@@ -85,7 +85,7 @@ tags:
   - name: 管理端内购
     description: 订单、SKU、钻石余额与 IAP 开关。管理端只读。
   - name: 审计账号
-    description: 操作员、用户、审计与账号合并记录。
+    description: 操作员、用户列表、用户画像统计、审计与账号合并记录。
   - name: 系统
     description: 健康检查、演示补全、管理端跳转页。不是 /api 业务契约的主体。
 components:
@@ -1098,14 +1098,17 @@ components:
           description: IANA 时区，默认 Asia/Shanghai。影响业务日与今日免费重置。
         name:
           type: string
-          description: 姓名。未设置时为空字符串。
+          description: 昵称。微信登录优先微信昵称；邮箱/苹果登录生成 4–6 个汉字随机昵称。可自行修改。
+        nickname:
+          type: string
+          description: 与 name 相同。账号页展示昵称。
         bio:
           type: string
           description: 简介。未设置时为空字符串。
         avatar_url:
           type: string
           nullable: true
-          description: 头像 URL。来自 POST /uploads 返回的 data.url。未设置为 null。
+          description: 头像 URL。已上传或微信转存的地址；未设置时返回内置默认头像 /uploads/avatar-default.png。可 POST /uploads 后再 PUT 更换。
         public_id:
           type: string
           description: 6 位短公开 ID，首次读档案时生成并固化。
@@ -1138,7 +1141,10 @@ components:
           description: 空字符串表示不修改。非空必须是 time.LoadLocation 可识别的 IANA 时区。
         name:
           type: string
-          description: 空字符串表示不修改。非空最多 32 个字。
+          description: 空字符串表示不修改。非空最多 32 个字。账号中心「昵称」。
+        nickname:
+          type: string
+          description: 与 name 同一列。仅填 nickname 时写入 name；两个都传则以 name 为准。
         bio:
           type: string
           description: 空字符串表示不修改。非空最多 200 个字。
@@ -1353,6 +1359,30 @@ components:
         timezone:
           type: string
           nullable: true
+          description: 空值回落为 Asia/Shanghai。
+        name:
+          type: string
+          description: 昵称。与 nickname 同一列。
+        nickname:
+          type: string
+          description: 与 name 相同。
+        avatar_url:
+          type: string
+          nullable: true
+          description: 头像完整 URL。未设置时为内置默认头像 /uploads/avatar-default.png。
+        gender:
+          type: string
+          nullable: true
+          description: 女性 / 男性 / 其他 / 不愿透露。未填为 null。
+        birth_date:
+          type: string
+          nullable: true
+          description: 生日 YYYY-MM-DD。未填为 null。
+        explore_preferences:
+          type: array
+          items:
+            type: string
+          description: 探索偏好多选。未填为空数组。
         tarotist_trial_used:
           type: boolean
         tease_off:
@@ -1364,6 +1394,38 @@ components:
         created_at:
           type: string
           format: date-time
+    UserStats:
+      type: object
+      properties:
+        total_users:
+          type: integer
+          description: 未注销且未合并的用户数。
+        gender:
+          $ref: "#/components/schemas/UserStatGroup"
+        age:
+          $ref: "#/components/schemas/UserStatGroup"
+        explore:
+          $ref: "#/components/schemas/UserStatGroup"
+    UserStatGroup:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: 分母。性别/年龄为人数；探索为选择次数（未选择计 1）。
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserStatItem"
+    UserStatItem:
+      type: object
+      properties:
+        label:
+          type: string
+        count:
+          type: integer
+        percent:
+          type: number
+          description: 占该组 total 的百分比，一位小数。
     LedgerRow:
       type: object
       properties:
@@ -1690,6 +1752,14 @@ components:
               type: string
               nullable: true
               description: 生日 YYYY-MM-DD。未填为 null。
+            birth_time:
+              type: string
+              nullable: true
+              description: 出生时间 HH:MM。未填为 null。
+            birth_place:
+              type: string
+              nullable: true
+              description: 出生地点。未填为 null。
             gender:
               type: string
               nullable: true
@@ -1699,12 +1769,22 @@ components:
               description: 基本信息是否已填完。
         rhythm_cards:
           type: array
-          description: 12 张全年节奏牌。未抽为空数组。
+          description: 十二宫 12 张（自我到潜意识）。未抽为空数组。与 house_cards 同内容。
+          items:
+            $ref: "#/components/schemas/YearlyCard"
+        house_cards:
+          type: array
+          description: rhythm_cards 的别名。
           items:
             $ref: "#/components/schemas/YearlyCard"
         domain_cards:
           type: array
-          description: 6 张六大领域牌（感情/事业/财运/健康/人际/成长）。未抽为空数组。
+          description: 四季 4 张（春夏秋冬）。未抽为空数组。与 season_cards 同内容。
+          items:
+            $ref: "#/components/schemas/YearlyCard"
+        season_cards:
+          type: array
+          description: domain_cards 的别名。
           items:
             $ref: "#/components/schemas/YearlyCard"
         report:
@@ -1750,10 +1830,10 @@ components:
       properties:
         position:
           type: integer
-          description: 位置序号。节奏 1–12，领域 1–6。
+          description: 位置序号。十二宫 1–12，四季 1–4。
         position_name:
           type: string
-          description: 位置名，如月份或「感情」。
+          description: 位置名，十二宫为自我到潜意识，四季为春夏秋冬。
         card_id:
           type: integer
           description: 韦特牌序。
@@ -1769,11 +1849,17 @@ components:
     YearlyProfileBody:
       type: object
       additionalProperties: false
-      required: [birth_date]
+      required: [birth_date, birth_time, birth_place]
       properties:
         birth_date:
           type: string
           description: YYYY-MM-DD
+        birth_time:
+          type: string
+          description: HH:MM，如 08:30。也接受 HH:MM:SS，服务端存 HH:MM。
+        birth_place:
+          type: string
+          description: 出生地点，最多 80 字。
         gender:
           type: string
           enum: ['', 女性, 男性, 其他, 不愿透露, 女, 男]
@@ -3951,8 +4037,7 @@ components:
           properties:
             body:
               type: string
-              description: 占位正文，种子为「待确认」。不写额度、退款或会员规则。
-              example: 待确认
+              description: 问题正文。使用与占卜、账号与设置已写入正式问答。未定稿时为「待确认」。
             body_status:
               type: string
               enum: [pending, ready]
@@ -4394,8 +4479,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        登录用户把邮箱、微信、苹果写入 identity_claims（小写），再清空这些身份与密码并设置 cancelled_at。无手机号绑定。
-        会吊销 audience=app 的 refresh。当前 App 登录并不签发 refresh。已注销再调用返回「账号已注销」。
+        禁止再登录：把邮箱、微信、苹果写入 identity_claims（小写），清空这些身份与密码并设置 cancelled_at。当前 JWT 立刻失效，后续请求返回「账号已注销」。
+        不物理删除占卜、日历或会员记录。同一身份不能重新注册。无手机号绑定。会吊销 audience=app 的 refresh（当前 App 登录并不签发 refresh）。已注销再调用返回「账号已注销」。
       responses:
         "200":
           description: 成功 data=true。
@@ -4437,9 +4522,9 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        更新非空的 birth_date、gender、timezone、name、bio、avatar_url。
+        更新非空的 birth_date、gender、timezone、name、nickname、bio、avatar_url。
         个人档案屏还可传 explore_preferences（整表替换）。性别接受「女 / 男 / 其他」。
-        改头像：先 POST /api/app/v1/uploads（folder 缺省 misc），把返回的 data.url 写入 avatar_url。没有单独的上传头像 path。
+        账号中心头像走 POST /uploads（folder 缺省 misc）再 PUT avatar_url；昵称与姓名同一字段，PUT 可传 name 或 nickname。
         账号主展示见 GET 的 account_display（脱敏邮箱）与 public_id。无手机号。
       requestBody:
         required: true
@@ -6314,7 +6399,7 @@ paths:
       operationId: appHelpArticle
       summary: 帮助文章详情
       description: |
-        公开，不需要登录或匿名令牌。返回标题与正文。种子正文为「待确认」，body_status=pending。
+        公开，不需要登录或匿名令牌。返回标题与正文。使用与占卜、账号与设置 body_status=ready；会员与支付分类仍 pending。
         不编写额度、退款或会员规则。反馈入口走已有 POST /api/app/v1/feedback，不在本文返回规则。
         未知 id 的 message=问题不存在。
       parameters:
@@ -6410,7 +6495,7 @@ paths:
       tags: [占卜解读]
       operationId: appYearlyReport
       summary: 年度运势
-      description: 必须登录。路径 id 为年份。年卡有效则 unlocked=true。单独购买价格取已启用的 yearly_unlock SKU（种子 2880 分）。卖点四段取 app_config yearly.{year}.*，未填 content_status=pending。解锁后四步：profile → rhythm（12 张）→ domains（6 张六大领域）→ generate。
+      description: 必须登录。路径 id 为年份。年卡有效则 unlocked=true。单独购买价格取已启用的 yearly_unlock SKU（种子 2880 分）。卖点四段取 app_config yearly.{year}.*，未填 content_status=pending。解锁后四步：profile（出生日期/时间/地点）→ rhythm（十二宫 12）→ domains（四季 4）→ generate。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -6487,7 +6572,7 @@ paths:
       tags: [占卜解读]
       operationId: appYearlyProfile
       summary: 年运填写基本信息
-      description: 必须已解锁。birth_date 必填 YYYY-MM-DD。gender 可选：女性 / 男性 / 其他 / 不愿透露。同时写入档案。
+      description: 必须已解锁。birth_date（YYYY-MM-DD，不能是未来）、birth_time（HH:MM）、birth_place 必填。gender 可选：女性 / 男性 / 其他 / 不愿透露。同时写入档案。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -6502,6 +6587,8 @@ paths:
                 summary: 填写年运资料
                 value:
                   birth_date: "1990-01-01"
+                  birth_time: "08:30"
+                  birth_place: 北京
                   gender: 不愿透露
       responses:
         "200":
@@ -6523,8 +6610,8 @@ paths:
     post:
       tags: [占卜解读]
       operationId: appYearlyRhythm
-      summary: 年运选 12 张全年节奏牌
-      description: 必须已填基本信息。normal 随机 12 张；pick 传 12 个不重复 1–78。抽完不可重抽。
+      summary: 年运抽十二宫牌阵
+      description: 必须已填基本信息。normal 随机 12 张（自我到潜意识）；pick 传 12 个不重复 1–78。抽完不可重抽。响应 rhythm_cards 与 house_cards 同内容。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -6536,7 +6623,7 @@ paths:
               $ref: "#/components/schemas/YearlyDrawBody"
             examples:
               成功:
-                summary: 抽取节奏牌
+                summary: 抽取十二宫牌
                 value:
                   mode: normal
       responses:
@@ -6559,8 +6646,8 @@ paths:
     post:
       tags: [占卜解读]
       operationId: appYearlyDomains
-      summary: 年运抽 6 张六大领域牌
-      description: 感情、事业、财运、健康、人际、成长。从剩余牌抽取，不与 12 张节奏牌重复。
+      summary: 年运抽四季牌阵
+      description: 春、夏、秋、冬。从剩余牌抽取 4 张，不与十二宫牌重复。响应 domain_cards 与 season_cards 同内容。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -6572,7 +6659,7 @@ paths:
               $ref: "#/components/schemas/YearlyDrawBody"
             examples:
               成功:
-                summary: 抽取领域牌
+                summary: 抽取四季牌
                 value:
                   mode: normal
       responses:
@@ -6597,7 +6684,7 @@ paths:
       operationId: appYearlyGenerate
       summary: 生成年度报告
       description: |
-        必须已抽完 12+6。走 interpret 供应商生成，不编造。已生成则原样返回。
+        必须已抽完十二宫 12 + 四季 4。走 interpret 供应商生成，不编造。已生成则原样返回。
         JSON 等完整报告；打字机请用 `/generate/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -8084,7 +8171,7 @@ paths:
       summary: App 用户
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 最多 200 条，按 id 降序。不含密码。
+      description: 最多 200 条，按 id 降序。不含密码。含昵称、头像、性别、生日、探索偏好。已注销用户仍出现，cancelled_at 非空。
       responses:
         "200":
           description: data 为用户数组。
@@ -8099,6 +8186,32 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AppUserAdmin"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/users/stats:
+    get:
+      tags: [审计账号]
+      operationId: adminUserStats
+      summary: 用户画像占比
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      description: |
+        统计未注销、未合并的 App 用户。三张圆形图用同一批人。
+        性别与年龄按人数互斥分桶，未填为「未填写」。年龄按生日相对 Asia/Shanghai 当天计算。
+        探索偏好为多选：每选一项计 1，未选任何项计「未选择」1。
+        年龄区间：15以下、15-18、19-22、23-24、25-30、31-35、36-40、41-50、51以上。
+      responses:
+        "200":
+          description: data 含 total_users 与 gender/age/explore（各有 total 与 items[{label,count,percent}]）。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserStats"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/audit:

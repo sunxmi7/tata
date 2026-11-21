@@ -28,7 +28,7 @@
 | 参与活动 | `565:6104` | `GET /campaigns` `{id}` `participations` `rewards` | 已确认（详情占位） |
 | 月度报告 | `565:7013` | `GET /monthly-reports` `POST .../save` | 已确认 |
 | 年运解锁卖点 | `574:2376` / `574:2423` / `574:2469` | `GET /yearly-reports/{year}` `POST .../unlock`；年卡免费、单独解锁价取 SKU | 已确认 |
-| 年运四步（12+6） | `574:2469` | `PUT .../profile` → `POST .../rhythm`（12）→ `POST .../domains`（6：感情/事业/财运/健康/人际/成长）→ `POST .../generate` | 已确认 |
+| 年运四步（12+4） | `1034:13493` / `661:*` | `PUT .../profile`（出生日期/时间/地点）→ `POST .../rhythm`（十二宫 12）→ `POST .../domains`（四季 4：春夏秋冬）→ `POST .../generate` | 已确认 |
 | 账号 | `572:1877` | `GET/PUT /profile`：`account_display` 脱敏邮箱（无则微信/Apple），`public_id` 6 位；无手机号 | 已确认 |
 | 通知设置 | `572:2735` | `GET/PUT /notification-preferences`；`POST /push/register` | 已确认 |
 | 心愿单 / 帮助 / 反馈 | `572:40` / `572:544` / `572:805` | 对应 path 已齐；帮助正文空则 pending | 已确认 |
@@ -66,3 +66,4 @@
 | 2026-11-06 | 选阵「推荐牌阵」写入 `spreads.recommended`，经 `GET /spreads` 与管理端牌阵接口暴露。 |
 | 2026-11-06 | 选阵示意图写入 `spreads.thumbnail`，未配返回默认牌背。 |
 | 2026-11-16 | 新 UI：登录协议、个人档案偏好、邀请奖励、78 张牌、自定义牌组、年运分享、牌阵主题短句。 |
+| 2026-11-18 | 年运改为 12+4：十二宫 12 + 四季 4；资料 birth_date/birth_time/birth_place。路径仍为 rhythm/domains。 |
