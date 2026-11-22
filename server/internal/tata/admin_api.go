@@ -152,7 +152,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 	}
 	all := []spec{
 		{item{"Spread", "/spread", map[string]any{"title": "牌阵", "order": 1}}, adminModuleContent, false},
-		{item{"Card", "/cards", map[string]any{"title": "牌面", "order": 2}}, adminModuleContent, false},
+		{item{"Card", "/cards", map[string]any{"title": "牌目录", "order": 2}}, adminModuleContent, false},
 		{item{"Deck", "/deck", map[string]any{"title": "牌组", "order": 3}}, adminModuleContent, false},
 		{item{"Tarotist", "/tarotist", map[string]any{"title": "塔罗师", "order": 4}}, adminModuleContent, false},
 		{item{"Vendor", "/vendor", map[string]any{"title": "模型供应商", "order": 5}}, adminModuleAI, false},
@@ -167,6 +167,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{item{"UserStats", "/user-stats", map[string]any{"title": "用户统计", "order": 12}}, adminModuleAccounts, false},
 		{item{"Calendar", "/calendar", map[string]any{"title": "日历", "order": 13}}, adminModuleRecords, false},
 		{item{"Messages", "/messages", map[string]any{"title": "追问消息", "order": 14}}, adminModuleRecords, false},
+		{item{"Wishlists", "/wishlists", map[string]any{"title": "功能心愿单", "order": 14}}, adminModuleRecords, false},
 		{item{"Audit", "/audit", map[string]any{"title": "审计日志", "order": 15}}, adminModuleAccounts, false},
 		{item{"IAPOrders", "/iap-orders", map[string]any{"title": "IAP 订单", "order": 16}}, adminModulePay, false},
 		{item{"IAPSkus", "/iap-skus", map[string]any{"title": "价位", "order": 17}}, adminModulePay, false},

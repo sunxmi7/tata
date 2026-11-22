@@ -31,7 +31,7 @@ const routes: RouteRecordRaw[] = [
             name: 'TataCard',
             path: '/tata/cards',
             component: () => import('#/views/tata/cards/index.vue'),
-            meta: { icon: 'lucide:layout-grid', title: '牌面', authority: can('content') },
+            meta: { icon: 'lucide:layout-grid', title: '牌目录', authority: can('content') },
           },
           {
             name: 'TataDeck',
@@ -108,6 +108,12 @@ const routes: RouteRecordRaw[] = [
             path: '/tata/messages',
             component: () => import('#/views/tata/message/index.vue'),
             meta: { icon: 'lucide:messages-square', title: '追问消息', authority: can('records') },
+          },
+          {
+            name: 'TataWishlists',
+            path: '/tata/wishlists',
+            component: () => import('#/views/tata/wishlist/index.vue'),
+            meta: { icon: 'lucide:heart', title: '功能心愿单', authority: can('records') },
           },
           {
             name: 'TataLedger',

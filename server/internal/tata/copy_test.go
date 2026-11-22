@@ -18,6 +18,7 @@ func TestAdminCopyConfigurable(t *testing.T) {
 		_, _ = store.Exec(context.Background(), `UPDATE iap_skus SET copy='' WHERE code='sub_year'`)
 		_, _ = store.Exec(context.Background(), `DELETE FROM app_config WHERE key LIKE 'yearly.2026.%' OR key LIKE 'card.愚者.%' OR key LIKE 'card.魔术师.%' OR key='card.thumbnail_template' OR key='card.thumbnail_default'`)
 		_, _ = store.Exec(context.Background(), `UPDATE cards SET yi='', thumbnail='' WHERE name IN ('愚者','魔术师')`)
+		_, _ = store.Exec(context.Background(), `DELETE FROM deck_faces WHERE deck_code='rider-waite' AND card_id IN (0,1)`)
 		_ = store.seedCards(context.Background())
 		_, _ = store.Exec(context.Background(), `UPDATE help_articles SET body='待确认', body_status='pending' WHERE article_id='how_to_start'`)
 		_, _ = store.Exec(context.Background(), `UPDATE campaigns SET detail_body='详情页不在本次交付范围。奖励、条件与有效期以活动配置为准。', detail_status='pending', enabled=true WHERE campaign_id='friend_invite'`)
@@ -88,8 +89,13 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	if cards["thumbnail_template"] != nil {
 		t.Fatalf("template invented: %#v", cards["thumbnail_template"])
 	}
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{"card_name": "魔术师", "thumbnail": ""})
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{"card_name": "愚者", "yi": "换一件浅色外套", "thumbnail": ""})
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{"card_name": "愚者", "yi": "换一件浅色外套"})
+	if _, err := store.Exec(t.Context(), `DELETE FROM deck_faces WHERE deck_code='rider-waite' AND card_id IN (0,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `UPDATE cards SET thumbnail='' WHERE name IN ('愚者','魔术师')`); err != nil {
+		t.Fatal(err)
+	}
 	day := time.Now().In(time.FixedZone("CST", 8*3600)).Format("2006-01-02")
 	var rid int64
 	if err := store.QueryRow(t.Context(), `INSERT INTO readings(user_id, type, question, status, cards, interpretation, business_date)
@@ -104,8 +110,11 @@ func TestAdminCopyConfigurable(t *testing.T) {
 		t.Fatalf("daily default thumbnail: %#v", reading["card_thumbnail"])
 	}
 
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{
-		"card_name": "愚者", "thumbnail": "https://cdn.example.test/fool.png",
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/decks", map[string]any{
+		"code": "rider-waite",
+		"faces": []map[string]any{
+			{"card_id": 0, "image_url": "https://cdn.example.test/fool.png"},
+		},
 	})
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/cards", map[string]any{
 		"thumbnail_template": "https://cdn.example.test/rw/{id}.png",
@@ -117,11 +126,11 @@ func TestAdminCopyConfigurable(t *testing.T) {
 	}
 	fool := copyCardByName(cards["items"], "愚者")
 	magician := copyCardByName(cards["items"], "魔术师")
-	if fool["yi"] != "换一件浅色外套" || fool["thumbnail"] != "https://cdn.example.test/fool.png" || fool["card_thumbnail"] != "https://cdn.example.test/fool.png" {
+	if fool["yi"] != "换一件浅色外套" || fool["card_thumbnail"] != "https://cdn.example.test/fool.png" {
 		t.Fatalf("fool assets: %#v", fool)
 	}
-	if magician["thumbnail"] != nil || magician["card_thumbnail"] != "https://cdn.example.test/rw/1.png" {
-		t.Fatalf("magician template: %#v", magician)
+	if magician["card_thumbnail"] != "https://cdn.example.test/rw/1.png" {
+		t.Fatalf("magician template after clearing rider-waite face: %#v", magician)
 	}
 	reading = listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
 	if reading["card_thumbnail"] != "https://cdn.example.test/fool.png" || reading["yi"] != "换一件浅色外套" {
@@ -207,13 +216,21 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 	store, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `DELETE FROM deck_faces WHERE deck_code<>'rider-waite'`)
 		_, _ = store.Exec(context.Background(), `DELETE FROM decks WHERE code<>'rider-waite'`)
-		_, _ = store.Exec(context.Background(), `UPDATE decks SET name='莱德韦特', thumbnail='', description='', tags='', enabled=true, sort_order=0 WHERE code='rider-waite'`)
+		_, _ = store.Exec(context.Background(), `UPDATE decks SET name='莱德韦特', thumbnail='', back_url='', description='', tags='', enabled=true, sort_order=0 WHERE code='rider-waite'`)
+		_, _ = store.Exec(context.Background(), `DELETE FROM deck_faces WHERE deck_code='rider-waite'`)
 	})
+	if _, err := store.Exec(t.Context(), `DELETE FROM deck_faces WHERE deck_code<>'rider-waite'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.Exec(t.Context(), `DELETE FROM decks WHERE code<>'rider-waite'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE decks SET name='莱德韦特', thumbnail='', description='', tags='', enabled=true, sort_order=0 WHERE code='rider-waite'`); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE decks SET name='莱德韦特', thumbnail='', back_url='', description='', tags='', enabled=true, sort_order=0 WHERE code='rider-waite'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `DELETE FROM deck_faces WHERE deck_code='rider-waite'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,9 +269,14 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 	}
 
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/decks", map[string]any{
-		"code": "test-deck", "thumbnail": "https://cdn.example.test/deck.png",
+		"code": "test-deck", "cover_url": "https://cdn.example.test/deck-cover.png",
+		"back_url":    "https://cdn.example.test/deck-back.png",
 		"description": "简约神秘的原创牌面，适合日常占卜与深度提问。",
 		"tags":        []string{"简约大气", "神秘平衡", "通用百搭"},
+		"faces": []map[string]any{
+			{"card_id": 0, "image_url": "https://cdn.example.test/faces/0.png"},
+			{"card_id": 1, "image_url": "https://cdn.example.test/faces/1.png"},
+		},
 	})
 	pref = listOne(t, ts, token, "/api/app/v1/deck-preference")
 	found := false
@@ -262,8 +284,11 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 		row := raw.(map[string]any)
 		if row["code"] == "test-deck" {
 			found = true
-			if row["thumbnail"] != "https://cdn.example.test/deck.png" {
-				t.Fatalf("deck thumb: %#v", row)
+			if row["thumbnail"] != "https://cdn.example.test/deck-cover.png" || row["cover_url"] != "https://cdn.example.test/deck-cover.png" {
+				t.Fatalf("deck cover: %#v", row)
+			}
+			if row["back_url"] != "https://cdn.example.test/deck-back.png" {
+				t.Fatalf("deck back: %#v", row)
 			}
 			if row["description"] != "简约神秘的原创牌面，适合日常占卜与深度提问。" {
 				t.Fatalf("deck description: %#v", row)
@@ -280,6 +305,27 @@ func TestDeckCatalogConfigurable(t *testing.T) {
 	adminRow := copyDeckByCode(listOne(t, ts, admin.access, "/api/admin/v1/copy/decks")["items"], "test-deck")
 	if adminRow["description"] != "简约神秘的原创牌面，适合日常占卜与深度提问。" {
 		t.Fatalf("admin description: %#v", adminRow)
+	}
+	if adminRow["cover_url"] != "https://cdn.example.test/deck-cover.png" || adminRow["back_url"] != "https://cdn.example.test/deck-back.png" {
+		t.Fatalf("admin cover/back: %#v", adminRow)
+	}
+	if adminRow["face_count"].(float64) != 2 {
+		t.Fatalf("admin face_count: %#v", adminRow)
+	}
+	cardsView := listOne(t, ts, token, "/api/app/v1/cards?deck=test-deck")
+	deckMeta, _ := cardsView["deck"].(map[string]any)
+	if deckMeta["back_url"] != "https://cdn.example.test/deck-back.png" || deckMeta["uploaded_count"].(float64) != 2 {
+		t.Fatalf("app cards deck meta: %#v", deckMeta)
+	}
+	var foolThumb string
+	for _, raw := range cardsView["items"].([]any) {
+		row := raw.(map[string]any)
+		if row["card_name"] == "愚者" {
+			foolThumb, _ = row["card_thumbnail"].(string)
+		}
+	}
+	if foolThumb != "https://cdn.example.test/faces/0.png" {
+		t.Fatalf("deck face overlay: %s", foolThumb)
 	}
 
 	msg, _ = call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/decks", map[string]any{

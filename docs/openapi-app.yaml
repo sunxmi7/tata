@@ -2753,8 +2753,8 @@ paths:
         - $ref: '#/components/parameters/Authorization'
       description: |
         必须登录。available 来自已启用牌组；种子仅 rider-waite（莱德韦特）。
-        每项含 name / thumbnail / description / tags。介绍与标签未填时为空串和空数组，不编造。
-        预览图未配则用内置默认牌背。78 张牌预览走 GET /cards?deck=。
+        每项含 name / thumbnail（封面）/ cover_url / back_url / description / tags。介绍与标签未填时为空串和空数组，不编造。
+        封面未配则用内置默认牌背。每套独立 78 张卡面走 GET /cards?deck=（优先 deck_faces，否则回落全局 cards）。
       responses:
         '200':
           description: data 为 DeckPreference。
@@ -3965,7 +3965,14 @@ components:
                 description: 牌组显示名，例如「莱德韦特」。
               thumbnail:
                 type: string
-                description: 牌组预览图完整 URL。未配置时为当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。
+                description: 套装封面完整 URL（与 cover_url 同值）。未配置时为当前服务地址下的内置默认牌背。
+              cover_url:
+                type: string
+                description: 套装封面完整 URL。与 thumbnail 同值。
+              back_url:
+                type: string
+                nullable: true
+                description: 该套卡背图。未配置为 null。
               available:
                 type: boolean
                 description: 是否已上架可选。false 的不能 PUT。

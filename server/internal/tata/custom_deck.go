@@ -366,6 +366,14 @@ func (a *App) customFaceItems(r *http.Request, d customDeckRow) ([]map[string]an
 	if err != nil {
 		return nil, 0, err
 	}
+	officialFaces := map[int]string{}
+	if d.FaceSource != "" && d.FaceSource != customDeckUpload {
+		officialFaces, err = a.Store.loadDeckFaces(r.Context(), d.FaceSource)
+		if err != nil {
+			return nil, 0, err
+		}
+		applyDeckFacesToCfg(cfg, cards, officialFaces)
+	}
 	out := make([]map[string]any, 0, len(cards))
 	uploaded := 0
 	for _, c := range cards {
@@ -383,13 +391,17 @@ func (a *App) customFaceItems(r *http.Request, d customDeckRow) ([]map[string]an
 				item["image_url"] = nil
 				item["uploaded"] = false
 			}
+		} else if u := strings.TrimSpace(officialFaces[c.ID]); u != "" {
+			item["image_url"] = absoluteAssetURL(r, u)
+			item["uploaded"] = true
+			uploaded++
 		} else {
 			item["image_url"] = item["card_thumbnail"]
 			item["uploaded"] = false
 		}
 		out = append(out, item)
 	}
-	if d.FaceSource != customDeckUpload && d.FaceSource != "" {
+	if d.FaceSource != customDeckUpload && d.FaceSource != "" && uploaded == 0 {
 		uploaded = len(out)
 	}
 	return out, uploaded, nil
@@ -489,19 +501,37 @@ func (a *App) appListCards(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	facesMap, err := a.Store.loadDeckFaces(r.Context(), deckCode)
+	if err != nil {
+		return err
+	}
+	applyDeckFacesToCfg(cfg, rows, facesMap)
 	items := make([]map[string]any, 0, len(rows))
+	uploaded := 0
 	for _, c := range rows {
 		item := a.cardPublic(r, c, cfg)
 		item["name"] = T(r.Context(), c.Name)
 		item["card_name"] = item["name"]
 		item["index_label"] = fmt.Sprintf("%02d", c.ID)
+		if u := strings.TrimSpace(facesMap[c.ID]); u != "" {
+			abs := absoluteAssetURL(r, u)
+			item["image_url"] = abs
+			item["card_thumbnail"] = abs
+			item["thumbnail"] = u
+			item["uploaded"] = true
+			uploaded++
+		} else {
+			item["image_url"] = item["card_thumbnail"]
+			item["uploaded"] = false
+		}
 		items = append(items, item)
 	}
 	pub := d.public(r)
 	meta := map[string]any{
 		"code": deckCode, "name": pub["name"], "status": "saved", "in_use": false,
-		"face_source": deckCode, "uploaded_count": len(items), "card_count": 78,
-		"description": pub["description"], "tags": pub["tags"], "thumbnail": pub["thumbnail"],
+		"face_source": deckCode, "uploaded_count": uploaded, "card_count": 78,
+		"description": pub["description"], "tags": pub["tags"],
+		"thumbnail": pub["thumbnail"], "cover_url": pub["cover_url"], "back_url": pub["back_url"],
 	}
 	current, _, _, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {

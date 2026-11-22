@@ -91,10 +91,8 @@ func (s *Store) seedCards(ctx context.Context) error {
 	for _, def := range deck() {
 		sc := byName[def.Name]
 		arcana, suit, rank := classifyCard(def.ID, def.Name)
+		// 单牌图已迁到 deck_faces（莱德韦特）。cards.thumbnail 只保留人工覆盖，不再由种子写入。
 		thumb := firstNonEmpty(cfg[cardThumbnailKey(def.Name)])
-		if thumb == "" && strings.TrimSpace(sc.File) != "" {
-			thumb = "/uploads/cards/" + sc.File
-		}
 		yi := firstNonEmpty(cfg[cardYiKey(def.Name)])
 		en := firstNonEmpty(cfg["card."+def.Name+".name_en"], sc.EN)
 		ja := firstNonEmpty(cfg["card."+def.Name+".name_ja"], sc.JA)
@@ -110,13 +108,95 @@ func (s *Store) seedCards(ctx context.Context) error {
 				arcana = CASE WHEN cards.arcana = '' THEN EXCLUDED.arcana ELSE cards.arcana END,
 				suit = CASE WHEN cards.suit = '' THEN EXCLUDED.suit ELSE cards.suit END,
 				rank = CASE WHEN cards.rank = '' THEN EXCLUDED.rank ELSE cards.rank END,
-				yi = CASE WHEN cards.yi = '' THEN EXCLUDED.yi ELSE cards.yi END,
-				thumbnail = CASE WHEN cards.thumbnail = '' THEN EXCLUDED.thumbnail ELSE cards.thumbnail END`,
+				yi = CASE WHEN cards.yi = '' THEN EXCLUDED.yi ELSE cards.yi END`,
 			def.ID, def.Name, hant, en, ja, ko, arcana, suit, rank, yi, thumb); err != nil {
 			return err
 		}
 	}
-	return s.applyDailyCopy(ctx)
+	if err := s.applyDailyCopy(ctx); err != nil {
+		return err
+	}
+	return s.ensureRiderWaiteFaces(ctx)
+}
+
+// ensureRiderWaiteFaces fills rider-waite faces only when the set is still empty.
+// It will not re-insert cards an operator intentionally cleared.
+func (s *Store) ensureRiderWaiteFaces(ctx context.Context) error {
+	var n int
+	if err := s.QueryRow(ctx, `SELECT count(*) FROM deck_faces WHERE deck_code='rider-waite' AND image_url<>''`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if err := s.seedRiderWaiteFaces(ctx); err != nil {
+			return err
+		}
+	}
+	return s.migrateCardThumbnailsToRiderWaite(ctx)
+}
+
+func (s *Store) seedRiderWaiteFaces(ctx context.Context) error {
+	data := loadSeedContent()
+	byName := map[string]seedCard{}
+	for _, c := range data.Cards {
+		byName[c.Name] = c
+	}
+	for _, def := range deck() {
+		sc := byName[def.Name]
+		url := ""
+		if strings.TrimSpace(sc.File) != "" {
+			url = "/uploads/cards/" + strings.TrimSpace(sc.File)
+		}
+		if url == "" {
+			continue
+		}
+		if _, err := s.Exec(ctx, `INSERT INTO deck_faces(deck_code, card_id, image_url) VALUES ('rider-waite',$1,$2)
+			ON CONFLICT (deck_code, card_id) DO UPDATE SET
+				image_url = CASE WHEN deck_faces.image_url = '' THEN EXCLUDED.image_url ELSE deck_faces.image_url END`,
+			def.ID, url); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateCardThumbnailsToRiderWaite moves legacy cards.thumbnail into deck_faces(rider-waite).
+func (s *Store) migrateCardThumbnailsToRiderWaite(ctx context.Context) error {
+	rows, err := s.Query(ctx, `SELECT id, thumbnail FROM cards WHERE thumbnail <> ''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type row struct {
+		id   int
+		thumb string
+	}
+	list := []row{}
+	for rows.Next() {
+		var item row
+		if err := rows.Scan(&item.id, &item.thumb); err != nil {
+			return err
+		}
+		list = append(list, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range list {
+		thumb := strings.TrimSpace(item.thumb)
+		if thumb == "" {
+			continue
+		}
+		if _, err := s.Exec(ctx, `INSERT INTO deck_faces(deck_code, card_id, image_url) VALUES ('rider-waite',$1,$2)
+			ON CONFLICT (deck_code, card_id) DO UPDATE SET
+				image_url = CASE WHEN deck_faces.image_url = '' THEN EXCLUDED.image_url ELSE deck_faces.image_url END`,
+			item.id, thumb); err != nil {
+			return err
+		}
+		if _, err := s.Exec(ctx, `UPDATE cards SET thumbnail='', updated_at=now() WHERE id=$1 AND thumbnail=$2`, item.id, item.thumb); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) applyDailyCopy(ctx context.Context) error {
@@ -192,13 +272,17 @@ func cardUniqueErr(err error) bool {
 }
 
 func (a *App) cardConfig(ctx context.Context) map[string]string {
+	return a.cardConfigForDeck(ctx, "rider-waite")
+}
+
+func (a *App) rawCardConfig(ctx context.Context) (map[string]string, []cardRow) {
 	cfg, err := a.Store.configMap(ctx, "card.")
 	if err != nil {
 		cfg = map[string]string{}
 	}
 	rows, err := a.Store.listCards(ctx)
 	if err != nil {
-		return cfg
+		return cfg, nil
 	}
 	for _, c := range rows {
 		cfg[cardYiKey(c.Name)] = strings.TrimSpace(c.Yi)
@@ -220,7 +304,42 @@ func (a *App) cardConfig(ctx context.Context) map[string]string {
 		cfg[cardCopyKey(c.Name, "reversed_message")] = strings.TrimSpace(c.ReversedMessage)
 		cfg[cardCopyKey(c.Name, "reversed_yi")] = strings.TrimSpace(c.ReversedYi)
 	}
+	return cfg, rows
+}
+
+func (a *App) cardConfigForDeck(ctx context.Context, deckCode string) map[string]string {
+	cfg, cards := a.rawCardConfig(ctx)
+	deckCode = strings.TrimSpace(deckCode)
+	if deckCode == "" {
+		deckCode = "rider-waite"
+	}
+	if customID, ok := parseCustomDeckCode(deckCode); ok {
+		faces, err := a.Store.loadCustomDeckFaces(ctx, customID)
+		if err == nil {
+			applyDeckFacesToCfg(cfg, cards, faces)
+		}
+		return cfg
+	}
+	if deckCode != "rider-waite" {
+		if faces, err := a.Store.loadDeckFaces(ctx, "rider-waite"); err == nil {
+			applyDeckFacesToCfg(cfg, cards, faces)
+		}
+	}
+	if faces, err := a.Store.loadDeckFaces(ctx, deckCode); err == nil {
+		applyDeckFacesToCfg(cfg, cards, faces)
+	}
 	return cfg
+}
+
+func (a *App) cardConfigForUser(ctx context.Context, uid int64) map[string]string {
+	if uid <= 0 {
+		return a.cardConfig(ctx)
+	}
+	code, _, _, err := a.resolveUserDeck(ctx, uid, nil)
+	if err != nil || strings.TrimSpace(code) == "" {
+		return a.cardConfig(ctx)
+	}
+	return a.cardConfigForDeck(ctx, code)
 }
 
 func (a *App) cardPublic(r *http.Request, c cardRow, cfg map[string]string) map[string]any {
@@ -228,8 +347,9 @@ func (a *App) cardPublic(r *http.Request, c cardRow, cfg map[string]string) map[
 	for k, v := range cfg {
 		merged[k] = v
 	}
-	if strings.TrimSpace(c.Thumbnail) != "" {
-		merged[cardThumbnailKey(c.Name)] = c.Thumbnail
+	key := cardThumbnailKey(c.Name)
+	if strings.TrimSpace(merged[key]) == "" && strings.TrimSpace(c.Thumbnail) != "" {
+		merged[key] = c.Thumbnail
 	}
 	return map[string]any{
 		"id":               c.ID,
@@ -256,10 +376,7 @@ func (a *App) cardPublic(r *http.Request, c cardRow, cfg map[string]string) map[
 }
 
 func (a *App) writeCardsPayload(w http.ResponseWriter, r *http.Request) error {
-	cfg, err := a.Store.configMap(r.Context(), "card.")
-	if err != nil {
-		return err
-	}
+	cfg := a.cardConfig(r.Context())
 	rows, err := a.Store.listCards(r.Context())
 	if err != nil {
 		return err

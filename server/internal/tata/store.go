@@ -209,9 +209,6 @@ ALTER TABLE readings ADD COLUMN IF NOT EXISTS business_date TEXT NOT NULL DEFAUL
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS skip_detect BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS reward_consumed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS numerology_map TEXT NOT NULL DEFAULT '';
-ALTER TABLE readings ADD COLUMN IF NOT EXISTS draw_mode TEXT NOT NULL DEFAULT '';
-ALTER TABLE readings DROP CONSTRAINT IF EXISTS readings_draw_mode_chk;
-ALTER TABLE readings ADD CONSTRAINT readings_draw_mode_chk CHECK (draw_mode IN ('', 'normal', 'numerology'));
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS voice TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS banned TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS ask_style TEXT NOT NULL DEFAULT '';
@@ -756,6 +753,14 @@ CREATE TABLE IF NOT EXISTS decks (
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '';
 ALTER TABLE decks ADD COLUMN IF NOT EXISTS unlock_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE decks ADD COLUMN IF NOT EXISTS back_url TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS deck_faces (
+  deck_code TEXT NOT NULL REFERENCES decks(code) ON DELETE CASCADE,
+  card_id INT NOT NULL,
+  image_url TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (deck_code, card_id),
+  CONSTRAINT deck_faces_card_chk CHECK (card_id >= 0 AND card_id < 78)
+);
 CREATE TABLE IF NOT EXISTS deck_products (
   code TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -1118,13 +1123,16 @@ COMMENT ON COLUMN cards.upright_message IS '今日一牌正位寄语。来源 Pi
 COMMENT ON COLUMN cards.upright_yi IS '今日一牌正位今日宜，四条用 / 连接。';
 COMMENT ON COLUMN cards.reversed_message IS '今日一牌逆位寄语。来源 Pixso 1034:624。';
 COMMENT ON COLUMN cards.reversed_yi IS '今日一牌逆位今日宜，四条用 / 连接。';
-COMMENT ON COLUMN cards.thumbnail IS '单牌图 URL。空则走模板/默认图/内置牌背。';
+COMMENT ON COLUMN cards.thumbnail IS '遗留单牌图覆盖。官方套图在 deck_faces；空则走牌组 faces / 模板 / 默认图 / 内置牌背。';
 COMMENT ON TABLE decks IS '牌组风格。莱德韦特默认可切换。星辰之境等四套 unlock_required。售价在 iap_skus 的 deck_* 行。';
 COMMENT ON TABLE user_deck_unlocks IS '牌组解锁。deck_code=* 表示年度畅享，覆盖当前和以后需解锁的牌组。不写额度流水。';
 COMMENT ON COLUMN decks.unlock_required IS '为 true 时，未解锁用户不能把它设为当前牌组。';
 COMMENT ON COLUMN decks.description IS '套装一句介绍。对应定稿 693:39。空为未填。';
 COMMENT ON COLUMN decks.tags IS '套装标签 JSON 数组。空为未填。';
-COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist。';
+COMMENT ON COLUMN decks.thumbnail IS '套装封面/列表图。App 仍用 thumbnail 字段名。';
+COMMENT ON COLUMN decks.back_url IS '该套牌卡背图。空则客户端可用默认牌背。';
+COMMENT ON TABLE deck_faces IS '官方牌组每张牌面。card_id 对应韦特 0–77。未配则回落到 cards.thumbnail / 模板。';
+COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist、GET /admin/v1/wishlists。';
 COMMENT ON TABLE feedback IS '反馈意见。category=使用问题/内容建议/其他。对应 POST /feedback。';
 
 COMMENT ON TABLE account_merge_requests IS '历史合并请求。新的绑定冲突不再写入，确认接口已下线。';

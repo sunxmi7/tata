@@ -1,7 +1,9 @@
 package tata
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -58,12 +60,17 @@ func TestPresetQuestionsAndCardThumbs(t *testing.T) {
 		t.Fatalf("cards %d", len(items))
 	}
 	fool := copyCardByName(items, "愚者")
-	if fool["thumbnail"] != "/uploads/cards/rider_waite_tarot_big_the_fool_00.jpg" {
-		t.Fatalf("fool thumb: %#v", fool["thumbnail"])
+	if fool["card_thumbnail"] == nil || !strings.Contains(fmt.Sprint(fool["card_thumbnail"]), "rider_waite_tarot_big_the_fool_00.jpg") {
+		t.Fatalf("fool thumb from rider-waite faces: %#v", fool)
 	}
 	empress := copyCardByName(items, "女皇")
-	if empress["thumbnail"] != "/uploads/cards/rider_waite_tarot_big_the_empress_03.jpg" {
-		t.Fatalf("empress mapped from 皇后: %#v", empress["thumbnail"])
+	if empress["card_thumbnail"] == nil || !strings.Contains(fmt.Sprint(empress["card_thumbnail"]), "rider_waite_tarot_big_the_empress_03.jpg") {
+		t.Fatalf("empress from rider-waite faces: %#v", empress)
+	}
+	decks := listOne(t, ts, admin.access, "/api/admin/v1/copy/decks")
+	rw := copyDeckByCode(decks["items"], "rider-waite")
+	if rw["face_count"].(float64) < 78 {
+		t.Fatalf("rider-waite faces: %#v", rw)
 	}
 }
 

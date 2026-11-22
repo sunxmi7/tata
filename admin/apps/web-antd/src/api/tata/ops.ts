@@ -105,6 +105,14 @@ export interface MessageRow {
   created_at: string;
 }
 
+export interface WishlistRow {
+  id: number;
+  user_id: number;
+  content: string;
+  image_url: string;
+  created_at: string;
+}
+
 export interface CalendarRow {
   id: number;
   user_id: number | null;
@@ -178,6 +186,9 @@ export function listAudit() {
 }
 export function listMessages() {
   return requestClient.get<MessageRow[]>('/messages');
+}
+export function listWishlists() {
+  return requestClient.get<WishlistRow[]>('/wishlists');
 }
 export function listCalendar() {
   return requestClient.get<CalendarRow[]>('/calendar');

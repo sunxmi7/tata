@@ -105,6 +105,11 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if wish["message"] != "心愿已提交" || wish["id"] == nil {
 		t.Fatalf("wishlist: %#v", wish)
 	}
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	wishes := list(t, ts, admin.access, "/api/admin/v1/wishlists")
+	if len(wishes) == 0 || wishes[0]["content"] != "希望能换牌背" || wishes[0]["image_url"] != "https://cdn.example/wish.png" {
+		t.Fatalf("admin wishlists: %#v", wishes)
+	}
 
 	if msg, _ := call(t, ts, token, http.MethodPost, "/api/app/v1/feedback", map[string]any{"category": "吐槽", "content": "x"}); !strings.Contains(msg, "分类") {
 		t.Fatalf("feedback category: %s", msg)

@@ -95,10 +95,6 @@ func (s *Store) seedContentV1(ctx context.Context) error {
 		}
 	}
 	for _, c := range data.Cards {
-		thumb := "/uploads/cards/" + c.File
-		if err := s.putConfigIfEmpty(ctx, cardThumbnailKey(c.Name), thumb); err != nil {
-			return err
-		}
 		if c.EN != "" {
 			if err := s.putConfigIfEmpty(ctx, "card."+c.Name+".name_en", c.EN); err != nil {
 				return err

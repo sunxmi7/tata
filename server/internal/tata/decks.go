@@ -11,11 +11,17 @@ type deckRow struct {
 	Code           string
 	Name           string
 	Thumbnail      string
+	BackURL        string
 	Enabled        bool
 	Sort           int
 	Description    string
 	Tags           string
 	UnlockRequired bool
+}
+
+type deckFaceIn struct {
+	CardID   int    `json:"card_id"`
+	ImageURL string `json:"image_url"`
 }
 
 func deckPreviewURL(thumb string) string {
@@ -94,7 +100,7 @@ func normalizeDeckTagList(tags []string) []string {
 }
 
 func (s *Store) listDecks(ctx context.Context, onlyEnabled bool) ([]deckRow, error) {
-	q := `SELECT code, name, thumbnail, enabled, sort_order, description, tags, unlock_required FROM decks`
+	q := `SELECT code, name, thumbnail, back_url, enabled, sort_order, description, tags, unlock_required FROM decks`
 	if onlyEnabled {
 		q += ` WHERE enabled=true`
 	}
@@ -107,12 +113,114 @@ func (s *Store) listDecks(ctx context.Context, onlyEnabled bool) ([]deckRow, err
 	out := []deckRow{}
 	for rows.Next() {
 		var d deckRow
-		if err := rows.Scan(&d.Code, &d.Name, &d.Thumbnail, &d.Enabled, &d.Sort, &d.Description, &d.Tags, &d.UnlockRequired); err != nil {
+		if err := rows.Scan(&d.Code, &d.Name, &d.Thumbnail, &d.BackURL, &d.Enabled, &d.Sort, &d.Description, &d.Tags, &d.UnlockRequired); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) loadDeckFaces(ctx context.Context, code string) (map[int]string, error) {
+	out := map[int]string{}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return out, nil
+	}
+	rows, err := s.Query(ctx, `SELECT card_id, image_url FROM deck_faces WHERE deck_code=$1 AND image_url<>''`, code)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		var url string
+		if err := rows.Scan(&id, &url); err != nil {
+			return nil, err
+		}
+		out[id] = strings.TrimSpace(url)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) loadCustomDeckFaces(ctx context.Context, deckID int64) (map[int]string, error) {
+	out := map[int]string{}
+	rows, err := s.Query(ctx, `SELECT card_id, image_url FROM custom_deck_faces WHERE deck_id=$1 AND image_url<>''`, deckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		var url string
+		if err := rows.Scan(&id, &url); err != nil {
+			return nil, err
+		}
+		out[id] = strings.TrimSpace(url)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) deckFaceCounts(ctx context.Context) (map[string]int, error) {
+	out := map[string]int{}
+	rows, err := s.Query(ctx, `SELECT deck_code, count(*) FROM deck_faces WHERE image_url<>'' GROUP BY deck_code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		var n int
+		if err := rows.Scan(&code, &n); err != nil {
+			return nil, err
+		}
+		out[code] = n
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) replaceDeckFaces(ctx context.Context, code string, faces []deckFaceIn) error {
+	if faces == nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	for _, f := range faces {
+		if f.CardID < 0 || f.CardID > 77 {
+			return biz("牌序号不正确")
+		}
+		if seen[f.CardID] {
+			return biz("牌序号不正确")
+		}
+		seen[f.CardID] = true
+		if err := optionalAssetURL(strings.TrimSpace(f.ImageURL)); err != nil {
+			return err
+		}
+	}
+	if _, err := s.Exec(ctx, `DELETE FROM deck_faces WHERE deck_code=$1`, code); err != nil {
+		return err
+	}
+	for _, f := range faces {
+		url := strings.TrimSpace(f.ImageURL)
+		if url == "" {
+			continue
+		}
+		if _, err := s.Exec(ctx, `INSERT INTO deck_faces(deck_code, card_id, image_url) VALUES ($1,$2,$3)`,
+			code, f.CardID, url); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyDeckFacesToCfg(cfg map[string]string, cards []cardRow, faces map[int]string) {
+	if len(faces) == 0 {
+		return
+	}
+	for _, c := range cards {
+		if u := strings.TrimSpace(faces[c.ID]); u != "" {
+			cfg[cardThumbnailKey(c.Name)] = u
+		}
+	}
 }
 
 func (d deckRow) public(r *http.Request) map[string]any {
@@ -124,15 +232,23 @@ func (d deckRow) public(r *http.Request) map[string]any {
 		}
 	}
 	return map[string]any{
-		"code": d.Code, "name": name, "thumbnail": absoluteAssetURL(r, deckPreviewURL(d.Thumbnail)), "available": d.Enabled,
-		"description": desc, "tags": parseDeckTags(d.Tags), "unlock_required": d.UnlockRequired,
+		"code": d.Code, "name": name, "thumbnail": absoluteAssetURL(r, deckPreviewURL(d.Thumbnail)),
+		"cover_url": absoluteAssetURL(r, deckPreviewURL(d.Thumbnail)),
+		"back_url":  emptyAsNil(absoluteAssetURL(r, strings.TrimSpace(d.BackURL))),
+		"available": d.Enabled, "description": desc, "tags": parseDeckTags(d.Tags), "unlock_required": d.UnlockRequired,
 	}
 }
 
-func (d deckRow) admin() map[string]any {
+func (d deckRow) admin(faceCount int, faces []map[string]any) map[string]any {
+	cover := strings.TrimSpace(d.Thumbnail)
+	back := strings.TrimSpace(d.BackURL)
 	return map[string]any{
-		"code": d.Code, "name": d.Name, "thumbnail": nullableConfig(d.Thumbnail),
-		"preview": deckPreviewURL(d.Thumbnail), "enabled": d.Enabled, "sort_order": d.Sort,
+		"code": d.Code, "name": d.Name,
+		"thumbnail": nullableConfig(cover), "cover_url": nullableConfig(cover),
+		"preview": deckPreviewURL(cover), "back_url": nullableConfig(back),
+		"back_preview": emptyAsNil(back),
+		"face_count": faceCount, "card_count": 78, "faces": faces,
+		"enabled": d.Enabled, "sort_order": d.Sort,
 		"description": d.Description, "tags": parseDeckTags(d.Tags),
 	}
 }
@@ -205,4 +321,47 @@ func (a *App) resolveUserDeck(ctx context.Context, uid int64, r *http.Request) (
 		}
 	}
 	return code, publicDeckList(r, available), custom, nil
+}
+
+func (a *App) adminDeckItems(r *http.Request) ([]map[string]any, error) {
+	// Backfill rider-waite only when that set still has no faces (old DBs / first boot).
+	_ = a.Store.ensureRiderWaiteFaces(r.Context())
+	rows, err := a.Store.listDecks(r.Context(), false)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := a.Store.deckFaceCounts(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	cards, err := a.Store.listCards(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	list := make([]map[string]any, 0, len(rows))
+	for _, d := range rows {
+		facesMap, err := a.Store.loadDeckFaces(r.Context(), d.Code)
+		if err != nil {
+			return nil, err
+		}
+		faces := make([]map[string]any, 0, len(cards))
+		previews := make([]string, 0, 6)
+		for _, c := range cards {
+			url := strings.TrimSpace(facesMap[c.ID])
+			abs := absoluteAssetURL(r, url)
+			faces = append(faces, map[string]any{
+				"card_id": c.ID, "card_name": c.Name, "image_url": nullableConfig(abs),
+			})
+			if abs != "" && len(previews) < 6 {
+				previews = append(previews, abs)
+			}
+		}
+		item := d.admin(counts[d.Code], faces)
+		item["cover_url"] = nullableConfig(absoluteAssetURL(r, strings.TrimSpace(d.Thumbnail)))
+		item["thumbnail"] = item["cover_url"]
+		item["back_url"] = nullableConfig(absoluteAssetURL(r, strings.TrimSpace(d.BackURL)))
+		item["face_previews"] = previews
+		list = append(list, item)
+	}
+	return list, nil
 }

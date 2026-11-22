@@ -8,7 +8,6 @@ import { useVbenModal } from '@vben/common-ui';
 import { message } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
-import { fileListFromURL, fileListToURL, imageUploadProps } from '#/api/core/upload';
 import { createCard, updateCard } from '#/api/tata';
 
 const emit = defineEmits(['success']);
@@ -77,17 +76,6 @@ const [Form, formApi] = useVbenForm({
       label: '正位今日宜覆盖',
     },
     {
-      component: 'Upload',
-      componentProps: imageUploadProps('cards'),
-      fieldName: 'thumbnail',
-      label: '单牌图',
-      renderComponentContent: () => {
-        return {
-          default: () => '上传图片',
-        };
-      },
-    },
-    {
       component: 'Switch',
       defaultValue: true,
       fieldName: 'enabled',
@@ -115,7 +103,6 @@ const [Modal, modalApi] = useVbenModal<null | TataCard>({
       upright_yi: data.upright_yi,
       reversed_message: data.reversed_message,
       reversed_yi: data.reversed_yi,
-      thumbnail: fileListToURL(data.thumbnail),
       enabled: data.enabled,
     };
     modalApi.lock();
@@ -155,7 +142,6 @@ const [Modal, modalApi] = useVbenModal<null | TataCard>({
       upright_yi: data.upright_yi ?? '',
       reversed_message: data.reversed_message ?? '',
       reversed_yi: data.reversed_yi ?? '',
-      thumbnail: fileListFromURL(typeof data.thumbnail === 'string' ? data.thumbnail : ''),
       enabled: data.enabled,
     });
   },

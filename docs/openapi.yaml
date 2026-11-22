@@ -77,7 +77,7 @@ tags:
   - name: 管理端登录
     description: 管理端登录、刷新、菜单与权限码。
   - name: 管理端内容
-    description: 牌阵、塔罗师、提示窗、图片上传、占卜记录、消息、日历、工作流模拟。
+    description: 牌阵、塔罗师、提示窗、图片上传、占卜记录、消息、功能心愿单、日历、工作流模拟。
   - name: 供应商
     description: 模型供应商与任务绑定。
   - name: 额度补发
@@ -2029,7 +2029,14 @@ components:
                 description: 牌组显示名，例如「莱德韦特」。
               thumbnail:
                 type: string
-                description: 牌组预览图完整 URL。未配置时为当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。
+                description: 套装封面完整 URL（与 cover_url 同值）。未配置时为当前服务地址下的内置默认牌背。
+              cover_url:
+                type: string
+                description: 套装封面完整 URL。与 thumbnail 同值。
+              back_url:
+                type: string
+                nullable: true
+                description: 该套卡背图。未配置为 null。
               available:
                 type: boolean
                 description: 是否已上架可选。false 的不能 PUT。
@@ -3452,6 +3459,23 @@ components:
           type: string
           example: 心愿已提交
           description: 成功提示。
+    WishlistItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        content:
+          type: string
+        image_url:
+          type: string
+          description: 附图 URL；无图时为空字符串。
+        created_at:
+          type: string
+          format: date-time
     FeedbackBody:
       type: object
       additionalProperties: false
@@ -7682,7 +7706,7 @@ paths:
       tags: [管理端内容]
       operationId: adminPutCopy
       summary: 保存运营文案
-      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格表（name/thumbnail/description/tags，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表；legal 写 app_config 协议正文。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
+      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格（name/cover_url|thumbnail/back_url/description/tags）与可选 faces[{card_id,image_url}]（写入 deck_faces，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表；legal 写 app_config 协议正文。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind
@@ -8573,6 +8597,30 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/Message"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/wishlists:
+    get:
+      tags: [管理端内容]
+      operationId: adminListWishlists
+      summary: 功能心愿单
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      description: 全库最近 200 条，按 id 降序。需要 records 模块读权限。
+      responses:
+        "200":
+          description: data 为心愿数组。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WishlistItem"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/calendar:

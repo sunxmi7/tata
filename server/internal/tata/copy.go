@@ -123,6 +123,11 @@ func (a *App) loadYearlySections(ctx context.Context, year int) ([]map[string]an
 
 func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ...map[string]any) {
 	cfg := a.cardConfig(ctx)
+	if r != nil {
+		if uid, _, err := a.appActor(r); err == nil && uid > 0 {
+			cfg = a.cardConfigForUser(ctx, uid)
+		}
+	}
 	for _, item := range items {
 		if item == nil {
 			continue
@@ -141,6 +146,11 @@ func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ..
 func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[string]any, target, business string) {
 	name := firstCardName(item["cards"])
 	cfg := a.cardConfig(ctx)
+	if r != nil {
+		if uid, _, err := a.appActor(r); err == nil && uid > 0 {
+			cfg = a.cardConfigForUser(ctx, uid)
+		}
+	}
 	yi := item["yi"]
 	var message any
 	thumb := item["card_thumbnail"]
@@ -226,13 +236,9 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 		writeOK(w, map[string]any{"kind": kind, "items": list})
 		return nil
 	case "decks":
-		rows, err := a.Store.listDecks(r.Context(), false)
+		list, err := a.adminDeckItems(r)
 		if err != nil {
 			return err
-		}
-		list := make([]map[string]any, 0, len(rows))
-		for _, d := range rows {
-			list = append(list, d.admin())
 		}
 		writeOK(w, map[string]any{"kind": kind, "items": list})
 		return nil
@@ -399,13 +405,16 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		a.Store.audit(r.Context(), act.id, "update", "copy", kind, req.CampaignID)
 	case "decks":
 		var req struct {
-			Code        string    `json:"code"`
-			Name        string    `json:"name"`
-			Thumbnail   *string   `json:"thumbnail"`
-			Description *string   `json:"description"`
-			Tags        *[]string `json:"tags"`
-			Enabled     *bool     `json:"enabled"`
-			SortOrder   *int      `json:"sort_order"`
+			Code        string       `json:"code"`
+			Name        string       `json:"name"`
+			Thumbnail   *string      `json:"thumbnail"`
+			CoverURL    *string      `json:"cover_url"`
+			BackURL     *string      `json:"back_url"`
+			Description *string      `json:"description"`
+			Tags        *[]string    `json:"tags"`
+			Enabled     *bool        `json:"enabled"`
+			SortOrder   *int         `json:"sort_order"`
+			Faces       []deckFaceIn `json:"faces"`
 		}
 		if err := decode(r, &req); err != nil {
 			return err
@@ -414,11 +423,11 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		if !validContentID(code) {
 			return biz("牌面编码不正确")
 		}
-		var curName, curThumb, curDesc, curTags string
+		var curName, curThumb, curBack, curDesc, curTags string
 		var curEnabled bool
 		var curSort int
-		err := a.Store.QueryRow(r.Context(), `SELECT name, thumbnail, enabled, sort_order, description, tags FROM decks WHERE code=$1`, code).
-			Scan(&curName, &curThumb, &curEnabled, &curSort, &curDesc, &curTags)
+		err := a.Store.QueryRow(r.Context(), `SELECT name, thumbnail, back_url, enabled, sort_order, description, tags FROM decks WHERE code=$1`, code).
+			Scan(&curName, &curThumb, &curBack, &curEnabled, &curSort, &curDesc, &curTags)
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -431,8 +440,20 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 			return biz("请填写牌面名称")
 		}
 		thumb := curThumb
-		if req.Thumbnail != nil {
+		if req.CoverURL != nil {
+			thumb = strings.TrimSpace(*req.CoverURL)
+		} else if req.Thumbnail != nil {
 			thumb = strings.TrimSpace(*req.Thumbnail)
+		}
+		if err := optionalAssetURL(thumb); err != nil {
+			return err
+		}
+		back := curBack
+		if req.BackURL != nil {
+			back = strings.TrimSpace(*req.BackURL)
+		}
+		if err := optionalAssetURL(back); err != nil {
+			return err
 		}
 		desc := curDesc
 		if req.Description != nil {
@@ -471,13 +492,18 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		if exists {
-			if _, err := a.Store.Exec(r.Context(), `UPDATE decks SET name=$1, thumbnail=$2, enabled=$3, sort_order=$4, description=$5, tags=$6, updated_at=now() WHERE code=$7`,
-				name, thumb, enabled, sortOrder, desc, tagJSON, code); err != nil {
+			if _, err := a.Store.Exec(r.Context(), `UPDATE decks SET name=$1, thumbnail=$2, back_url=$3, enabled=$4, sort_order=$5, description=$6, tags=$7, updated_at=now() WHERE code=$8`,
+				name, thumb, back, enabled, sortOrder, desc, tagJSON, code); err != nil {
 				return err
 			}
 		} else {
-			if _, err := a.Store.Exec(r.Context(), `INSERT INTO decks(code, name, thumbnail, enabled, sort_order, description, tags) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-				code, name, thumb, enabled, sortOrder, desc, tagJSON); err != nil {
+			if _, err := a.Store.Exec(r.Context(), `INSERT INTO decks(code, name, thumbnail, back_url, enabled, sort_order, description, tags) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				code, name, thumb, back, enabled, sortOrder, desc, tagJSON); err != nil {
+				return err
+			}
+		}
+		if req.Faces != nil {
+			if err := a.Store.replaceDeckFaces(r.Context(), code, req.Faces); err != nil {
 				return err
 			}
 		}
