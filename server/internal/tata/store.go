@@ -699,7 +699,6 @@ ALTER TABLE quota_settings ADD COLUMN IF NOT EXISTS tokens_per_quota INT;
 ALTER TABLE quota_settings DROP CONSTRAINT IF EXISTS quota_settings_tokens_chk;
 ALTER TABLE quota_settings ADD CONSTRAINT quota_settings_tokens_chk
   CHECK (tokens_per_quota IS NULL OR tokens_per_quota > 0);
-ALTER TABLE registration_gifts ADD COLUMN IF NOT EXISTS reward_blocked BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS user_devices (
   user_id BIGINT NOT NULL,
   device_id TEXT NOT NULL,
@@ -715,8 +714,10 @@ CREATE TABLE IF NOT EXISTS registration_gifts (
   expires_at TIMESTAMPTZ,
   total INT NOT NULL DEFAULT 0,
   remaining INT NOT NULL DEFAULT 0,
-  used_at TIMESTAMPTZ
+  used_at TIMESTAMPTZ,
+  reward_blocked BOOLEAN NOT NULL DEFAULT FALSE
 );
+ALTER TABLE registration_gifts ADD COLUMN IF NOT EXISTS reward_blocked BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE quota_use DROP CONSTRAINT IF EXISTS quota_use_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS quota_use_reading_uidx ON quota_use(reading_id);
 CREATE INDEX IF NOT EXISTS quota_use_user_cycle_idx ON quota_use(user_id, cycle);
