@@ -163,7 +163,7 @@ func TestUINewScreensAPIs(t *testing.T) {
 		t.Fatalf("yearly share: %#v", share)
 	}
 
-	spreads := list(t, ts, inviter, "/api/app/v1/spreads")
+	spreads := appSpreadItems(t, ts, inviter)
 	if len(spreads) == 0 {
 		t.Fatal("spreads empty")
 	}

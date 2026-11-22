@@ -1,9 +1,12 @@
 package tata
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -106,7 +109,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/messages", a.h(a.adminListMessages))
 	mux.HandleFunc("GET /api/admin/v1/calendar", a.h(a.adminListCalendar))
 	mux.HandleFunc("GET /api/admin/v1/wishlists", a.h(a.adminListWishlists))
-	mux.HandleFunc("POST /api/app/v1/auth/anonymous", a.appAnonymous)
+	mux.HandleFunc("GET /api/admin/v1/feedback", a.h(a.adminListFeedback))
 	mux.HandleFunc("POST /api/app/v1/auth/email/code", a.h(a.appSendEmailCode))
 	mux.HandleFunc("POST /api/app/v1/auth/login", a.appLogin)
 	mux.HandleFunc("POST /api/app/v1/auth/wechat", a.appWechat)
@@ -341,11 +344,70 @@ func validBase(raw string) error {
 	return biz("供应商地址只允许 HTTPS；本机演示可使用 http://127.0.0.1 或 http://localhost")
 }
 
-func (a *App) ownReading(ctx context.Context, id, userID int64, anon string) error {
+// divinationActor accepts a logged-in token, or a device id when the caller has not logged in.
+// The device id is how a later onboarding check finds this handset.
+func (a *App) divinationActor(r *http.Request) (userID int64, deviceID string, err error) {
+	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		userID, _, err = a.appActor(r)
+		if err != nil {
+			return 0, "", err
+		}
+		if userID > 0 {
+			return userID, "", nil
+		}
+	}
+	deviceID = strings.TrimSpace(r.URL.Query().Get("device_id"))
+	if deviceID == "" {
+		deviceID = peekDeviceID(r)
+	}
+	if !validDeviceID(deviceID) {
+		return 0, "", biz("缺少设备标识")
+	}
+	return 0, deviceID, nil
+}
+
+func (a *App) beginReading(r *http.Request) (userID, id int64, deviceID string, err error) {
+	userID, deviceID, err = a.divinationActor(r)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	id, err = pathID(r)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	if err = a.ownReading(r.Context(), id, userID, deviceID); err != nil {
+		return 0, 0, "", err
+	}
+	return userID, id, deviceID, nil
+}
+
+func peekDeviceID(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var probe struct {
+		DeviceID string `json:"device_id"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return ""
+	}
+	return strings.TrimSpace(probe.DeviceID)
+}
+
+func (a *App) ownReading(ctx context.Context, id, userID int64, guest string) error {
 	var owner *int64
 	var anonID *string
+	var deviceID string
 	var deleted *time.Time
-	err := a.Store.QueryRow(ctx, `SELECT user_id, anonymous_id, deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &anonID, &deleted)
+	err := a.Store.QueryRow(ctx, `SELECT user_id, anonymous_id, COALESCE(device_id,''), deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &anonID, &deviceID, &deleted)
 	if err != nil {
 		return bizCode("reading_not_found", "记录不存在")
 	}
@@ -358,8 +420,12 @@ func (a *App) ownReading(ctx context.Context, id, userID int64, anon string) err
 		}
 		return nil
 	}
-	if anonID == nil || *anonID != anon {
-		return bizCode("reading_forbidden", "记录不属于当前用户")
+	guest = strings.TrimSpace(guest)
+	if guest != "" && strings.EqualFold(deviceID, guest) {
+		return nil
 	}
-	return nil
+	if anonID != nil && guest != "" && *anonID == guest {
+		return nil
+	}
+	return bizCode("reading_forbidden", "记录不属于当前用户")
 }

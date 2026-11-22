@@ -13,7 +13,7 @@ func TestPriceLedgersStaySeparate(t *testing.T) {
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	token, uid := registerUser(t, ts, store, "ledger")
 
-	spreads := list(t, ts, token, "/api/app/v1/spreads")
+	spreads := appSpreadItems(t, ts, token)
 	found := map[string]map[string]any{}
 	for _, s := range spreads {
 		found[s["name"].(string)] = s

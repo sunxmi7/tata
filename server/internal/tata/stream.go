@@ -244,15 +244,8 @@ func asInt64(v any) int64 {
 }
 
 func (a *App) appDetectStream(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)

@@ -1,7 +1,6 @@
 package tata
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
@@ -168,6 +167,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{item{"Calendar", "/calendar", map[string]any{"title": "日历", "order": 13}}, adminModuleRecords, false},
 		{item{"Messages", "/messages", map[string]any{"title": "追问消息", "order": 14}}, adminModuleRecords, false},
 		{item{"Wishlists", "/wishlists", map[string]any{"title": "功能心愿单", "order": 14}}, adminModuleRecords, false},
+		{item{"Feedback", "/feedback", map[string]any{"title": "反馈意见", "order": 14}}, adminModuleRecords, false},
 		{item{"Audit", "/audit", map[string]any{"title": "审计日志", "order": 15}}, adminModuleAccounts, false},
 		{item{"IAPOrders", "/iap-orders", map[string]any{"title": "IAP 订单", "order": 16}}, adminModulePay, false},
 		{item{"IAPSkus", "/iap-skus", map[string]any{"title": "价位", "order": 17}}, adminModulePay, false},
@@ -307,9 +307,6 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.exclusiveSpreadRecommended(r.Context(), id, rec); err != nil {
-		return err
-	}
 	a.Store.audit(r.Context(), act.id, "create", "spread", fmtID(id), req.Name)
 	writeOK(w, map[string]any{"id": id})
 	return nil
@@ -387,20 +384,9 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	if tag.RowsAffected() == 0 {
 		return biz("牌阵不存在")
 	}
-	if err := a.exclusiveSpreadRecommended(r.Context(), id, rec); err != nil {
-		return err
-	}
 	a.Store.audit(r.Context(), act.id, "update", "spread", fmtID(id), req.Name)
 	writeOK(w, true)
 	return nil
-}
-
-func (a *App) exclusiveSpreadRecommended(ctx context.Context, id int64, on bool) error {
-	if !on {
-		return nil
-	}
-	_, err := a.Store.Exec(ctx, `UPDATE spreads SET recommended=false WHERE recommended=true AND id<>$1`, id)
-	return err
 }
 
 func (a *App) adminDeleteSpread(w http.ResponseWriter, r *http.Request) error {

@@ -379,39 +379,39 @@ func TestSpreadRecommended(t *testing.T) {
 		_, _ = store.Exec(context.Background(), `UPDATE spreads SET recommended=true, enabled=true, thumbnail='' WHERE name='时间流'`)
 	})
 
-	appList := list(t, ts, token, "/api/app/v1/spreads")
-	if len(appList) == 0 || appList[0]["name"] != "时间流" || appList[0]["recommended"] != true {
-		t.Fatalf("seed recommended: %#v", appList)
+	groups := listOne(t, ts, token, "/api/app/v1/spreads")["groups"].([]any)
+	if len(groups) != 3 || groups[0].(map[string]any)["title"] != "一、快速指引（1-3张）" || groups[1].(map[string]any)["title"] != "二、进阶分析（4-7张）" || groups[2].(map[string]any)["title"] != "三、深度全景（10张）" {
+		t.Fatalf("spread groups: %#v", groups)
 	}
-	if appList[0]["thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
-		t.Fatalf("seed thumb: %#v", appList[0]["thumbnail"])
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "推荐哪几套", "type": "normal"})
+	firstRec := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", asID(reading["id"])), map[string]any{})
+	if !recommendHas(t, firstRec, "时间流") {
+		t.Fatalf("seed recommend: %#v", firstRec["recommended_spreads"])
 	}
 
 	created := create(t, ts, admin.access, "/api/admin/v1/spreads", map[string]any{
 		"name": "多维解读", "description": "多个角度", "card_count": 1,
 		"positions":   []map[string]any{{"index": 1, "name": "核心", "meaning": ""}},
+		"depth_group": "quick",
 		"recommended": true,
 	})
 	newID := asID(created["id"])
-
-	appList = list(t, ts, token, "/api/app/v1/spreads")
-	if appList[0]["name"] != "多维解读" || appList[0]["recommended"] != true {
-		t.Fatalf("new recommended first: %#v", appList)
+	again := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", asID(reading["id"])), map[string]any{})
+	if !recommendHas(t, again, "时间流") || !recommendHas(t, again, "多维解读") {
+		t.Fatalf("both recommended: %#v", again["recommended_spreads"])
 	}
-	foundTime := false
+	appList := appSpreadItems(t, ts, token)
+	var createdRow map[string]any
 	for _, s := range appList {
-		if s["name"] == "时间流" {
-			foundTime = true
-			if s["recommended"] != false {
-				t.Fatalf("old still recommended: %#v", s)
-			}
+		if s["name"] == "多维解读" {
+			createdRow = s
 		}
 	}
-	if !foundTime {
-		t.Fatalf("time flow missing: %#v", appList)
+	if createdRow == nil || createdRow["recommended"] != true || createdRow["depth_group"] != "quick" {
+		t.Fatalf("new recommended in quick: %#v", createdRow)
 	}
-	if appList[0]["thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
-		t.Fatalf("new default thumb: %#v", appList[0]["thumbnail"])
+	if createdRow["thumbnail"] != absAsset(ts, defaultCardThumbnailPath) {
+		t.Fatalf("new default thumb: %#v", createdRow["thumbnail"])
 	}
 
 	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", newID), map[string]any{
@@ -419,9 +419,14 @@ func TestSpreadRecommended(t *testing.T) {
 		"positions": []map[string]any{{"index": 1, "name": "核心", "meaning": ""}},
 		"thumbnail": "https://cdn.example.test/spread.png",
 	})
-	appList = list(t, ts, token, "/api/app/v1/spreads")
-	if appList[0]["thumbnail"] != "https://cdn.example.test/spread.png" {
-		t.Fatalf("app thumb: %#v", appList[0])
+	appList = appSpreadItems(t, ts, token)
+	for _, s := range appList {
+		if s["name"] == "多维解读" {
+			createdRow = s
+		}
+	}
+	if createdRow["thumbnail"] != "https://cdn.example.test/spread.png" {
+		t.Fatalf("app thumb: %#v", createdRow)
 	}
 	adminRow := map[string]any{}
 	for _, s := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
@@ -440,12 +445,23 @@ func TestSpreadRecommended(t *testing.T) {
 		"enabled":     false,
 		"recommended": true,
 	})
-	appList = list(t, ts, token, "/api/app/v1/spreads")
+	appList = appSpreadItems(t, ts, token)
 	for _, s := range appList {
-		if s["recommended"] == true {
-			t.Fatalf("disabled recommended still listed: %#v", appList)
+		if s["name"] == "多维解读" {
+			t.Fatalf("disabled recommended still listed: %#v", s)
 		}
 	}
+}
+
+func recommendHas(t *testing.T, payload map[string]any, name string) bool {
+	t.Helper()
+	items, _ := payload["recommended_spreads"].([]any)
+	for _, raw := range items {
+		if raw.(map[string]any)["name"] == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAdminExploreThemeFields(t *testing.T) {
@@ -742,7 +758,7 @@ func timeFlowSpreadID(t *testing.T, ts *httptest.Server, token string) float64 {
 
 func timeFlowSpread(t *testing.T, ts *httptest.Server, token string) (float64, []any) {
 	t.Helper()
-	spreads := list(t, ts, token, "/api/app/v1/spreads")
+	spreads := list(t, ts, login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"}).access, "/api/admin/v1/spreads")
 	for _, s := range spreads {
 		if s["name"] == "时间流" {
 			return s["id"].(float64), s["positions"].([]any)

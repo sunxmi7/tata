@@ -53,30 +53,45 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if len(themes) != 11 {
 		t.Fatalf("explore themes: %#v", topics)
 	}
-	spreadCount := 0
-	titles := map[string]int{}
+	titles := map[string]string{}
 	for _, raw := range themes {
 		theme := raw.(map[string]any)
 		title, _ := theme["title"].(string)
-		items, _ := theme["spreads"].([]any)
-		titles[title] = len(items)
-		spreadCount += len(items)
-		if theme["theme_key"] == "" || theme["subtitle"] == "" || len(items) == 0 {
+		key, _ := theme["theme_key"].(string)
+		if key == "" || theme["subtitle"] == "" || title == "" {
 			t.Fatalf("theme fields: %#v", theme)
 		}
-		first := items[0].(map[string]any)
-		if first["id"] == nil || first["name"] == "" || first["short_sentence"] == "" || first["card_count"] == nil {
-			t.Fatalf("spread fields: %#v", first)
+		if _, ok := theme["spreads"]; ok {
+			t.Fatalf("theme index must not include spreads: %#v", theme)
 		}
+		titles[title] = key
 	}
-	if titles["Yes or No"] != 1 || titles["关系走向"] != 2 || titles["内心需求"] != 2 || titles["购物抉择"] != 2 || spreadCount != 21 {
-		t.Fatalf("explore catalog: %#v count=%d", titles, spreadCount)
+	if titles["Yes or No"] != "yes_or_no" || titles["关系走向"] != "relationship" || titles["二选一"] != "either_or" {
+		t.Fatalf("explore catalog: %#v", titles)
 	}
-	first := themes[0].(map[string]any)["spreads"].([]any)[0].(map[string]any)
+	yes := listOne(t, ts, token, "/api/app/v1/explore/topics?theme_key=yes_or_no")
+	yesSpreads, _ := yes["spreads"].([]any)
+	if yes["theme_key"] != "yes_or_no" || yes["title"] != "Yes or No" || len(yesSpreads) != 1 {
+		t.Fatalf("yes or no spreads: %#v", yes)
+	}
+	first := yesSpreads[0].(map[string]any)
+	if first["name"] != "单张是非牌阵" || first["id"] == nil || first["short_sentence"] == "" || first["card_count"] == nil {
+		t.Fatalf("spread fields: %#v", first)
+	}
 	questions, _ := first["quick_questions"].([]any)
 	positions, _ := first["positions"].([]any)
 	if len(questions) == 0 || len(positions) == 0 {
 		t.Fatalf("explore positions: %#v", first)
+	}
+	for _, key := range []string{"either_or", "relationship", "inner", "shopping"} {
+		one := listOne(t, ts, token, "/api/app/v1/explore/topics?theme_key="+key)
+		items, _ := one["spreads"].([]any)
+		if one["theme_key"] != key || len(items) != 2 {
+			t.Fatalf("theme %s spreads: %#v", key, one)
+		}
+	}
+	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/explore/topics?theme_key=missing", nil); msg != "探索主题不存在" {
+		t.Fatalf("missing theme: %s", msg)
 	}
 
 	ledger := listOne(t, ts, token, "/api/app/v1/wallet/ledger")
@@ -125,6 +140,10 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	})
 	if fb["message"] != "反馈已提交" {
 		t.Fatalf("feedback: %#v", fb)
+	}
+	feedbacks := list(t, ts, admin.access, "/api/admin/v1/feedback")
+	if len(feedbacks) == 0 || feedbacks[0]["category"] != "其他" || feedbacks[0]["content"] != "界面很好" || feedbacks[0]["email"] != "ok@tata.local" {
+		t.Fatalf("admin feedback: %#v", feedbacks)
 	}
 }
 

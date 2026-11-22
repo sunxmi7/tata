@@ -277,15 +277,8 @@ func (a *App) appCancel(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appEditQuestion(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var kind string
@@ -331,15 +324,8 @@ func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
 	if wantsSSE(r) {
 		return a.appDetectStream(w, r)
 	}
-	uid, anon, err := a.appActor(r)
+	uid, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)
@@ -357,15 +343,8 @@ func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appRecommend(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var question string
@@ -382,36 +361,44 @@ func (a *App) appRecommend(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) attachRecommendation(ctx context.Context, out map[string]any) error {
-	out["recommended_spread"] = nil
+	out["recommended_spreads"] = []map[string]any{}
 	out["match_status"] = "NO_MATCH"
 	out["mapping_status"] = "unconfigured"
-	var id int64
-	var name string
-	var count int
-	err := a.Store.QueryRow(ctx, `SELECT id, name, card_count FROM spreads
-		WHERE enabled=true AND theme_key='' AND recommended=true ORDER BY id LIMIT 1`).Scan(&id, &name, &count)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	rows, err := a.Store.Query(ctx, `SELECT id, name, card_count, depth_group FROM spreads
+		WHERE enabled=true AND theme_key='' AND recommended=true ORDER BY sort_order, id`)
 	if err != nil {
 		return err
 	}
-	out["recommended_spread"] = map[string]any{"id": id, "name": name, "card_count": count}
-	out["match_status"] = "RECOMMENDED"
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var name, depth string
+		var count int
+		if err := rows.Scan(&id, &name, &count, &depth); err != nil {
+			return err
+		}
+		list = append(list, map[string]any{
+			"id": id, "name": name, "card_count": count,
+			"depth_group": depth, "depth_label": depthLabel(depth),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	out["recommended_spreads"] = list
+	if len(list) > 0 {
+		out["match_status"] = "RECOMMENDED"
+	}
 	return nil
 }
 
 func (a *App) rememberRecommendation(ctx context.Context, readingID int64, payload map[string]any) {
-	spread, _ := payload["recommended_spread"].(map[string]any)
-	if spread == nil {
+	list, _ := payload["recommended_spreads"].([]map[string]any)
+	if len(list) == 0 {
 		return
 	}
-	id, ok := spread["id"].(int64)
-	if !ok {
-		if n, ok := spread["id"].(float64); ok {
-			id = int64(n)
-		}
-	}
+	id, _ := list[0]["id"].(int64)
 	if id <= 0 {
 		return
 	}
@@ -466,15 +453,8 @@ func (a *App) appCut(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) moveRitual(w http.ResponseWriter, r *http.Request, from, to, wrong string) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET status=$1, updated_at=now() WHERE id=$2 AND status=$3`, to, id, from)
@@ -920,15 +900,8 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 }
 
 func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var selected sql.NullInt64
@@ -989,15 +962,8 @@ func numerologyInputRows(cardCount int) int {
 }
 
 func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var req struct {
@@ -1095,15 +1061,8 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 }
 
 func (a *App) appMessages(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	messages, err := a.loadConversation(r, id)
@@ -1962,6 +1921,32 @@ func (a *App) adminListWishlists(w http.ResponseWriter, r *http.Request) error {
 		}
 		list = append(list, map[string]any{
 			"id": id, "user_id": userID, "content": content, "image_url": imageURL, "created_at": created,
+		})
+	}
+	writeOK(w, list)
+	return nil
+}
+
+func (a *App) adminListFeedback(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, false); err != nil {
+		return err
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT id, user_id, category, content, image_url, email, created_at FROM feedback ORDER BY id DESC LIMIT 200`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, userID int64
+		var category, content, imageURL, email string
+		var created time.Time
+		if err := rows.Scan(&id, &userID, &category, &content, &imageURL, &email, &created); err != nil {
+			return err
+		}
+		list = append(list, map[string]any{
+			"id": id, "user_id": userID, "category": category, "content": content,
+			"image_url": imageURL, "email": email, "created_at": created,
 		})
 	}
 	writeOK(w, list)

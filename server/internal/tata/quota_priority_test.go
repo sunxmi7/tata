@@ -393,10 +393,8 @@ func TestAITrialThenFormalQuota(t *testing.T) {
 func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
-	anon := create(t, ts, "", "/api/app/v1/auth/anonymous", map[string]any{})
-	anonToken := anon["accessToken"].(string)
-	anonID := anon["anonymous_id"].(string)
-	pending := create(t, ts, anonToken, "/api/app/v1/readings", map[string]any{"question": "匿名先问", "type": "normal"})
+	deviceID := fmt.Sprintf("device-quota-%d", time.Now().UnixNano())
+	pending := create(t, ts, "", "/api/app/v1/readings", map[string]any{"question": "匿名先问", "type": "normal", "device_id": deviceID})
 	if pending["quota_outcome"] != quotaAnon || pending["reward_consumed"] == true || pending["quota_consumed"] == true {
 		t.Fatalf("anonymous precharge: %#v", pending)
 	}
@@ -405,7 +403,7 @@ func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 	}
 	email := fmt.Sprintf("anon-login-%d@tata.local", time.Now().UnixNano())
 	code := sendEmailCode(t, ts, "", email, "login")
-	registered := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{"email": email, "code": code, "anonymous_id": anonID})
+	registered := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{"email": email, "code": code, "device_id": deviceID})
 	if registered["accessToken"] == nil {
 		t.Fatalf("login: %#v", registered)
 	}

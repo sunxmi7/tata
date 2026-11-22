@@ -61,12 +61,30 @@ func TestOnboardingGuideFollowsDeviceTrialFollowsAccount(t *testing.T) {
 func TestAnonymousReadingFollowsDevice(t *testing.T) {
 	store, ts := newMergeServer(t)
 	deviceID := fmt.Sprintf("device-anon-%d", time.Now().UnixNano())
-	anon := create(t, ts, "", "/api/app/v1/auth/anonymous", map[string]any{"device_id": deviceID})
-	anonToken, _ := anon["accessToken"].(string)
-	reading := create(t, ts, anonToken, "/api/app/v1/readings", map[string]any{
+	if msg, raw := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/anonymous", map[string]any{"device_id": deviceID}); msg == "" && !strings.Contains(string(raw), "404") {
+		t.Fatalf("anonymous login still open: %s %s", msg, raw)
+	}
+	if msg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/readings", map[string]any{"question": "没有设备", "type": "normal"}); msg != "缺少设备标识" {
+		t.Fatalf("reading without device: %s", msg)
+	}
+	reading := create(t, ts, "", "/api/app/v1/readings", map[string]any{
 		"question": "登录前的问题", "type": "normal", "device_id": deviceID,
 	})
 	rid := asID(reading["id"])
+	got := listOne(t, ts, "", fmt.Sprintf("/api/app/v1/readings/%d?device_id=%s", rid, deviceID))
+	if got["question"] != "登录前的问题" {
+		t.Fatalf("device reading: %#v", got)
+	}
+	spreadID := ensureTimeFlow(t, store)
+	must(t, ts, "", http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread?device_id=%s", rid, deviceID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	must(t, ts, "", http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle?device_id=%s", rid, deviceID), map[string]any{})
+	if msg, _ := call(t, ts, "", http.MethodGet, fmt.Sprintf("/api/app/v1/readings/%d?device_id=%s", rid, deviceID+"-other"), nil); msg != "记录不属于当前用户" {
+		t.Fatalf("other device: %s", msg)
+	}
+	guide := listOne(t, ts, "", "/api/app/v1/onboarding?device_id="+deviceID)
+	if guide["show_guide"] != true {
+		t.Fatalf("device guide: %#v", guide)
+	}
 	email := uniqueEmail("devbind")
 	otp := sendEmailCode(t, ts, "", email, "login")
 	session := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{
@@ -187,8 +205,13 @@ func TestRecommendUsesConfiguredSpread(t *testing.T) {
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "这份工作还要不要继续", "type": "normal"})
 	rid := asID(reading["id"])
 	payload := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", rid), map[string]any{})
-	spread, _ := payload["recommended_spread"].(map[string]any)
-	if payload["match_status"] != "RECOMMENDED" || spread["name"] != "时间流" || payload["mapping_status"] != "unconfigured" {
+	found := false
+	for _, raw := range payload["recommended_spreads"].([]any) {
+		if raw.(map[string]any)["name"] == "时间流" {
+			found = true
+		}
+	}
+	if !found || payload["match_status"] != "RECOMMENDED" || payload["mapping_status"] != "unconfigured" {
 		t.Fatalf("recommend: %#v", payload)
 	}
 }

@@ -113,6 +113,16 @@ export interface WishlistRow {
   created_at: string;
 }
 
+export interface FeedbackRow {
+  id: number;
+  user_id: number;
+  category: string;
+  content: string;
+  image_url: string;
+  email: string;
+  created_at: string;
+}
+
 export interface CalendarRow {
   id: number;
   user_id: number | null;
@@ -189,6 +199,9 @@ export function listMessages() {
 }
 export function listWishlists() {
   return requestClient.get<WishlistRow[]>('/wishlists');
+}
+export function listFeedback() {
+  return requestClient.get<FeedbackRow[]>('/feedback');
 }
 export function listCalendar() {
   return requestClient.get<CalendarRow[]>('/calendar');

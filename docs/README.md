@@ -17,7 +17,7 @@
 - **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
 - **错误码（有界）**：错误包络 `error_code` 供客户端按码分支，不随语言变化。`message` 按 `Accept-Language` / `X-Language` 读 `server/internal/tata/i18n/*.json`，缺省简体中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
 
-App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 **153** 条，与 `routes.go` 仍 1:1。管理端可查 `GET /api/admin/v1/wishlists`（功能心愿单）。
+App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 **154** 条，与 `routes.go` 仍 1:1。管理端可查 `GET /api/admin/v1/wishlists`（功能心愿单）、`GET /api/admin/v1/feedback`（反馈意见）。
 
 管理端兑换码：`GET/POST /api/admin/v1/redeem-codes`、`PUT /redeem-codes/{id}`。付费模块可写才能生成或停用。空码自动生成 `XXXX-XXXX`，App 仍走 `POST /api/app/v1/redeem` 核销。
 

@@ -1007,7 +1007,7 @@ COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wech
 
 COMMENT ON TABLE spreads IS '牌阵。普通占卜与探索共用。theme_key 为空是普通占卜和推荐角标；非空是探索主题下的牌阵。对应 GET /spreads 与 GET /explore/topics。';
 COMMENT ON COLUMN spreads.positions IS 'JSON 牌位：index/name/meaning。';
-COMMENT ON COLUMN spreads.recommended IS '已上架普通牌阵里对外推荐的那一张，全表最多一张。映射表未冻结前，每个明确问题就推荐这一张，用户可以改选。没有这一张时不兜底。';
+COMMENT ON COLUMN spreads.recommended IS '已上架普通牌阵里标成推荐的牌阵，可以有多张。映射表未冻结前，推荐接口返回这些牌阵，用户可以改选。一张都没有时不兜底。';
 COMMENT ON COLUMN spreads.name_en IS '牌阵英文名。更多牌阵文字稿里的英文名称。空则未填。';
 COMMENT ON COLUMN spreads.thumbnail IS '选阵屏牌阵示意图。空则 App 选阵仍用内置牌背占位；管理端列表不把牌背当成示意图。';
 COMMENT ON COLUMN spreads.theme_key IS '探索主题键，如 yes_or_no。空则不是探索牌阵。同一主题下可有多套。';
@@ -1133,7 +1133,7 @@ COMMENT ON COLUMN decks.thumbnail IS '套装封面/列表图。App 仍用 thumbn
 COMMENT ON COLUMN decks.back_url IS '该套牌卡背图。空则客户端可用默认牌背。';
 COMMENT ON TABLE deck_faces IS '官方牌组每张牌面。card_id 对应韦特 0–77。未配则回落到 cards.thumbnail / 模板。';
 COMMENT ON TABLE wishlists IS '功能心愿单。对应 POST /wishlist、GET /admin/v1/wishlists。';
-COMMENT ON TABLE feedback IS '反馈意见。category=使用问题/内容建议/其他。对应 POST /feedback。';
+COMMENT ON TABLE feedback IS '反馈意见。category=使用问题/内容建议/其他。对应 POST /feedback、GET /admin/v1/feedback。';
 
 COMMENT ON TABLE account_merge_requests IS '历史合并请求。新的绑定冲突不再写入，确认接口已下线。';
 COMMENT ON TABLE retained_identities IS '并账后保留的登录身份。';

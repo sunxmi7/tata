@@ -116,6 +116,12 @@ const routes: RouteRecordRaw[] = [
             meta: { icon: 'lucide:heart', title: '功能心愿单', authority: can('records') },
           },
           {
+            name: 'TataFeedback',
+            path: '/tata/feedback',
+            component: () => import('#/views/tata/feedback/index.vue'),
+            meta: { icon: 'lucide:message-circle-warning', title: '反馈意见', authority: can('records') },
+          },
+          {
             name: 'TataLedger',
             path: '/tata/ledger',
             component: () => import('#/views/tata/ledger/index.vue'),

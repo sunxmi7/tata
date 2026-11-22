@@ -101,7 +101,7 @@ func TestAcceptance(t *testing.T) {
 		t.Fatalf("admin token reached app: %d", resp2.StatusCode)
 	}
 
-	spreads := list(t, ts, appToken, "/api/app/v1/spreads")
+	spreads := list(t, ts, admin.access, "/api/admin/v1/spreads")
 	var spreadID float64
 	for _, s := range spreads {
 		if s["name"] == "时间流" {
@@ -180,7 +180,7 @@ func TestAcceptance(t *testing.T) {
 		"name": "时间流", "description": "停用", "card_count": 3,
 		"positions": positions, "enabled": false, "charged": false,
 	})
-	for _, s := range list(t, ts, appToken, "/api/app/v1/spreads") {
+	for _, s := range appSpreadItems(t, ts, appToken) {
 		if s["id"] == spreadID {
 			t.Fatal("disabled spread still listed")
 		}
@@ -270,6 +270,21 @@ func must(t *testing.T, ts *httptest.Server, token, method, path string, body an
 	if msg, _ := call(t, ts, token, method, path, body); msg != "" {
 		t.Fatalf("%s %s: %s", method, path, msg)
 	}
+}
+
+func appSpreadItems(t *testing.T, ts *httptest.Server, token string) []map[string]any {
+	t.Helper()
+	body := listOne(t, ts, token, "/api/app/v1/spreads")
+	groups, _ := body["groups"].([]any)
+	out := []map[string]any{}
+	for _, raw := range groups {
+		group, _ := raw.(map[string]any)
+		items, _ := group["spreads"].([]any)
+		for _, item := range items {
+			out = append(out, item.(map[string]any))
+		}
+	}
+	return out
 }
 
 func list(t *testing.T, ts *httptest.Server, token, path string) []map[string]any {

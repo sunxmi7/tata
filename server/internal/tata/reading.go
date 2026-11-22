@@ -148,37 +148,6 @@ func (a *App) adminLedger(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) appAnonymous(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceID string `json:"device_id"`
-	}
-	_ = decode(r, &req)
-	anon, err := randomID()
-	if err != nil {
-		writeErr(w, r, http.StatusOK, "内部错误")
-		return
-	}
-	deviceID := strings.TrimSpace(req.DeviceID)
-	if deviceID == "" {
-		deviceID = "anon:" + anon
-	}
-	if len([]rune(deviceID)) > 128 {
-		writeErr(w, r, http.StatusOK, "设备标识过长")
-		return
-	}
-	if _, err := a.Store.Exec(r.Context(), `INSERT INTO anon_devices(anonymous_id, device_id) VALUES ($1,$2)
-		ON CONFLICT (anonymous_id) DO UPDATE SET device_id=EXCLUDED.device_id`, anon, deviceID); err != nil {
-		writeErr(w, r, http.StatusOK, "内部错误")
-		return
-	}
-	access, err := a.signAccess("app", 0, anon, "")
-	if err != nil {
-		writeErr(w, r, http.StatusOK, "内部错误")
-		return
-	}
-	writeOK(w, map[string]any{"accessToken": access, "anonymous_id": anon, "device_id": deviceID})
-}
-
 func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email        string `json:"email"`
@@ -427,12 +396,12 @@ func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
 func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 	rows, err := a.Store.Query(r.Context(), `SELECT id, name, name_en, description, card_count, positions, charged, recommended, thumbnail,
 		theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost
-		FROM spreads WHERE enabled=true AND theme_key='' ORDER BY recommended DESC, sort_order, id`)
+		FROM spreads WHERE enabled=true AND theme_key='' AND depth_group<>'' ORDER BY sort_order, id`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	list := []map[string]any{}
+	grouped := map[string][]map[string]any{}
 	for rows.Next() {
 		var id int64
 		var name, nameEN, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
@@ -442,7 +411,7 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 		if err := rows.Scan(&id, &name, &nameEN, &desc, &count, &pos, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{
+		grouped[depth] = append(grouped[depth], map[string]any{
 			"id": id, "name": T(r.Context(), name), "name_en": nameEN, "description": T(r.Context(), desc), "card_count": count,
 			"positions": localizeJSONFields(r.Context(), json.RawMessage(pos), "name", "meaning"),
 			"charged":   charged, "recommended": recommended, "thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
@@ -452,7 +421,21 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 			"quota_cost": quotaCostValue(quota), "price_ledger": quotaLedger(quota),
 		})
 	}
-	writeOK(w, list)
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	groups := make([]map[string]any, 0, 3)
+	for _, depth := range []string{"quick", "advanced", "panorama"} {
+		spreads := grouped[depth]
+		if spreads == nil {
+			spreads = []map[string]any{}
+		}
+		groups = append(groups, map[string]any{
+			"depth_group": depth, "depth_label": depthLabel(depth), "title": depthTitle(depth),
+			"spreads": spreads,
+		})
+	}
+	writeOK(w, map[string]any{"groups": groups})
 	return nil
 }
 
@@ -582,7 +565,7 @@ func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, device, err := a.divinationActor(r)
 	if err != nil {
 		return err
 	}
@@ -635,7 +618,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 			return biz("塔罗师不可用")
 		}
 	}
-	scope := "anon:" + anon
+	scope := "device:" + strings.ToLower(device)
 	if uid > 0 {
 		scope = "user:" + strconv.FormatInt(uid, 10)
 	}
@@ -645,7 +628,11 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		writeJSON(w, http.StatusOK, json.RawMessage(replay))
 		return nil
 	}
-	view, err := a.createNormal(r.Context(), uid, anon, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", strings.TrimSpace(req.DeviceID), drawMode)
+	boundDevice := strings.TrimSpace(req.DeviceID)
+	if uid == 0 {
+		boundDevice = device
+	}
+	view, err := a.createNormal(r.Context(), uid, "", req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", boundDevice, drawMode)
 	if err != nil {
 		_, _ = a.Store.Exec(r.Context(), `DELETE FROM idempotency WHERE scope=$1 AND key=$2`, scope, r.Header.Get("Idempotency-Key"))
 		return err
@@ -711,8 +698,12 @@ func storeNumerologyMap(ctx context.Context, ex execer, id int64) error {
 func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind string, tarotistID *int64, skip bool, deviceID, drawMode string) (map[string]any, error) {
 	first := false
 	if uid == 0 {
+		deviceID = strings.TrimSpace(deviceID)
+		if !validDeviceID(deviceID) {
+			return nil, biz("缺少设备标识")
+		}
 		var n int
-		if err := a.Store.QueryRow(ctx, `SELECT count(*) FROM readings WHERE anonymous_id=$1`, anon).Scan(&n); err != nil {
+		if err := a.Store.QueryRow(ctx, `SELECT count(*) FROM readings WHERE user_id IS NULL AND lower(device_id)=lower($1)`, deviceID).Scan(&n); err != nil {
 			return nil, err
 		}
 		first = n == 0
@@ -918,15 +909,8 @@ func nullStr(s string) any {
 }
 
 func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var req struct {
@@ -987,7 +971,7 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 		return biz("开通会员后可使用超过三张牌的牌阵")
 	}
 	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), draw_mode=$2, status='SPREAD_SELECTED',
-		spread_selection=CASE WHEN recommended_spread_id=$1 THEN 'system_recommendation' ELSE 'manual_selection' END,
+		spread_selection=CASE WHEN (SELECT recommended FROM spreads WHERE id=$1) THEN 'system_recommendation' ELSE 'manual_selection' END,
 		updated_at=now() WHERE id=$3 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, resolved, id)
 	if err != nil {
 		return err
@@ -1031,15 +1015,8 @@ func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || stop {
 		return err
 	}
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var req struct {
@@ -1153,15 +1130,8 @@ func (a *App) readingNumerologyMap(ctx context.Context, id int64) ([]numerologyS
 }
 
 func (a *App) appRedraw(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	var req struct {
@@ -1272,7 +1242,7 @@ func (a *App) acceptClientCards(ctx context.Context, id, spreadID int64, cards [
 		}
 	}
 	tag, err := a.Store.Exec(ctx, `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), cards=$2, status='CARDS_FIXED',
-		spread_selection=CASE WHEN recommended_spread_id=$1 THEN 'system_recommendation' ELSE 'manual_selection' END,
+		spread_selection=CASE WHEN (SELECT recommended FROM spreads WHERE id=$1) THEN 'system_recommendation' ELSE 'manual_selection' END,
 		updated_at=now()
 		WHERE id=$3 AND status IN ('QUESTION_CREATED','SPREAD_SELECTED','SHUFFLING','CUTTING') AND deleted_at IS NULL`,
 		spreadID, mustJSON(cards), id)
@@ -1346,7 +1316,7 @@ func (a *App) takeClientCards(r *http.Request, id int64) error {
 }
 
 func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, device, err := a.divinationActor(r)
 	if err != nil {
 		return err
 	}
@@ -1374,7 +1344,7 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 	if uid > 0 {
 		add("user_id=$%d", uid)
 	} else {
-		add("anonymous_id=$%d", anon)
+		add("user_id IS NULL AND lower(device_id)=lower($%d)", device)
 	}
 	if typ != "" {
 		add("type=$%d", typ)
@@ -1427,15 +1397,8 @@ func parseLimit(s string, def, max int) int {
 }
 
 func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	_, id, _, err := a.beginReading(r)
 	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)

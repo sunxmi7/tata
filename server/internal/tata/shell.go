@@ -33,8 +33,16 @@ var feedbackCategories = map[string]bool{
 }
 
 func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, card_count, short_sentence, theme_key, theme_title, theme_subtitle, positions, quick_questions
-		FROM spreads WHERE enabled=true AND theme_key<>'' ORDER BY sort_order, id`)
+	themeKey := strings.TrimSpace(r.URL.Query().Get("theme_key"))
+	q := `SELECT id, name, description, card_count, short_sentence, theme_key, theme_title, theme_subtitle, positions, quick_questions
+		FROM spreads WHERE enabled=true AND theme_key<>''`
+	args := []any{}
+	if themeKey != "" {
+		q += ` AND theme_key=$1`
+		args = append(args, themeKey)
+	}
+	q += ` ORDER BY sort_order, id`
+	rows, err := a.Store.Query(r.Context(), q, args...)
 	if err != nil {
 		return err
 	}
@@ -67,12 +75,22 @@ func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	if themeKey != "" {
+		item := themes[themeKey]
+		if item == nil || len(item.Spreads) == 0 {
+			return biz("探索主题不存在")
+		}
+		writeOK(w, map[string]any{
+			"theme_key": item.Key, "title": T(r.Context(), item.Title), "subtitle": T(r.Context(), item.Subtitle),
+			"spreads": item.Spreads,
+		})
+		return nil
+	}
 	out := make([]map[string]any, 0, len(order))
 	for _, key := range order {
 		item := themes[key]
 		out = append(out, map[string]any{
 			"theme_key": item.Key, "title": T(r.Context(), item.Title), "subtitle": T(r.Context(), item.Subtitle),
-			"spreads": item.Spreads,
 		})
 	}
 	writeOK(w, map[string]any{"themes": out})

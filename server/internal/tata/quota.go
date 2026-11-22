@@ -1317,6 +1317,9 @@ func (a *App) chargeAtSpread(w http.ResponseWriter, r *http.Request, readingID i
 // gatePlay charges before interpretation. Shuffle and draw stay open until a
 // play charge exists or a paywall is already waiting.
 func (a *App) gatePlay(w http.ResponseWriter, r *http.Request, action string) (bool, error) {
+	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+		return false, nil
+	}
 	uid, _, err := a.appActor(r)
 	if err != nil {
 		return false, err

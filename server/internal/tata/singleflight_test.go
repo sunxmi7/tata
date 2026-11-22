@@ -25,7 +25,7 @@ func TestRetryDoesNotDoubleChargeOrRedraw(t *testing.T) {
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/interpret", map[string]any{"vendor_id": vendor["id"], "model": "demo"})
 	token := register(t, ts, fmt.Sprintf("sf%d@tata.local", time.Now().UnixNano()))
 	var spreadID float64
-	for _, s := range list(t, ts, token, "/api/app/v1/spreads") {
+	for _, s := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
 		if s["name"] == "时间流" && s["enabled"] != false {
 			spreadID = s["id"].(float64)
 		}

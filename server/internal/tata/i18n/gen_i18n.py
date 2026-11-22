@@ -513,6 +513,7 @@ ERRORS = {
     "牌组介绍过长": ("Deck description is too long", "デッキ紹介が長すぎます", "덱 소개가 너무 깁니다"),
     "牌阵不可用": ("This spread is unavailable", "このスプレッドは利用できません", "이 스프레드는 사용할 수 없습니다"),
     "牌阵不存在": ("Spread not found", "スプレッドがありません", "스프레드가 없습니다"),
+    "探索主题不存在": ("Explore theme not found", "探索テーマがありません", "탐색 주제가 없습니다"),
     "牌阵名称、牌数和牌位不一致": ("Spread name, card count, and positions do not match", "スプレッド名、枚数、ポジションが一致しません", "스프레드 이름, 장 수, 포지션이 일치하지 않습니다"),
     "牌阵已被占卜使用，不能修改牌数或牌位": ("This spread is in use; card count and positions cannot change", "使用中のスプレッドは枚数とポジションを変更できません", "사용 중인 스프레드는 장 수와 포지션을 바꿀 수 없습니다"),
     "牌阵已被引用，只能停用": ("This spread is in use and can only be disabled", "参照中のスプレッドは無効化のみ可能です", "참조 중인 스프레드는 비활성화만 가능합니다"),

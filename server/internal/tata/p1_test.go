@@ -18,12 +18,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/campaigns", nil); msg != "" {
 		t.Fatalf("campaigns no token: %s", msg)
 	}
-	anon := create(t, ts, "", "/api/app/v1/auth/anonymous", map[string]any{})
-	anonToken, _ := anon["accessToken"].(string)
-	if anonToken == "" {
-		t.Fatal("anonymous token missing")
-	}
-	if msg, _ := call(t, ts, anonToken, http.MethodGet, "/api/app/v1/redeem/records", nil); msg != "登录后才能查看兑换记录" {
+	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/redeem/records", nil); msg != "401" {
 		t.Fatalf("anon redeem records: %s", msg)
 	}
 
@@ -82,7 +77,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		_, _ = store.Exec(context.Background(), `UPDATE campaigns SET status='ongoing', enabled=true WHERE campaign_id IN ('friend_invite','membership_benefit')`)
 	})
 
-	list := listOne(t, ts, anonToken, "/api/app/v1/campaigns")
+	list := listOne(t, ts, "", "/api/app/v1/campaigns")
 	cards, _ := list["items"].([]any)
 	if len(cards) < 2 || list["empty_title"] != "暂时没有可参与的活动" || list["footnote"] != "活动规则与奖励以活动详情页为准" {
 		t.Fatalf("campaign list: %#v", list)
@@ -113,7 +108,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("live card after one ended: %#v", second)
 	}
 
-	detail := listOne(t, ts, anonToken, "/api/app/v1/campaigns/friend_invite")
+	detail := listOne(t, ts, "", "/api/app/v1/campaigns/friend_invite")
 	if detail["title"] != "好友邀请" || detail["body_status"] != "pending" || detail["detail_delivered"] != false {
 		t.Fatalf("invite detail: %#v", detail)
 	}
@@ -144,7 +139,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("disabled campaign: %s", msg)
 	}
 
-	if msg, _ := call(t, ts, anonToken, http.MethodGet, "/api/app/v1/campaigns/participations", nil); msg != "登录后才能查看参与记录" {
+	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/campaigns/participations", nil); msg != "401" {
 		t.Fatalf("anon participations: %s", msg)
 	}
 	part := listOne(t, ts, token, "/api/app/v1/campaigns/participations")
@@ -164,7 +159,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("reward promise: %#v", rewards)
 	}
 
-	cats := listOne(t, ts, anonToken, "/api/app/v1/help/categories")
+	cats := listOne(t, ts, "", "/api/app/v1/help/categories")
 	categories, _ := cats["categories"].([]any)
 	if len(categories) != 2 {
 		t.Fatalf("categories: %#v", cats)
@@ -219,7 +214,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("bad category: %s", msg)
 	}
 
-	article := listOne(t, ts, anonToken, "/api/app/v1/help/articles/how_to_start")
+	article := listOne(t, ts, "", "/api/app/v1/help/articles/how_to_start")
 	if article["title"] != "如何开始一次塔罗占卜？" || article["body_status"] != "ready" {
 		t.Fatalf("article: %#v", article)
 	}
@@ -229,7 +224,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	if article["category_title"] != "使用与占卜" {
 		t.Fatalf("article category: %#v", article)
 	}
-	lang := listOne(t, ts, anonToken, "/api/app/v1/help/articles/language_theme")
+	lang := listOne(t, ts, "", "/api/app/v1/help/articles/language_theme")
 	if lang["body_status"] != "ready" || !strings.Contains(fmt.Sprint(lang["body"]), "浅色或深色") {
 		t.Fatalf("language article: %#v", lang)
 	}

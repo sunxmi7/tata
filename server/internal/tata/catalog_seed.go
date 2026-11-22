@@ -29,6 +29,19 @@ func depthLabel(group string) string {
 	}
 }
 
+func depthTitle(group string) string {
+	switch group {
+	case "quick":
+		return "一、快速指引（1-3张）"
+	case "advanced":
+		return "二、进阶分析（4-7张）"
+	case "panorama":
+		return "三、深度全景（10张）"
+	default:
+		return ""
+	}
+}
+
 func quotaCostValue(n sql.NullInt64) any {
 	if !n.Valid {
 		return nil
