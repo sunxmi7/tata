@@ -40,7 +40,7 @@ func TestSharedQuotaPriority(t *testing.T) {
 		t.Fatalf("deferred create: %#v", third)
 	}
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(third["id"])), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(third["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle", asID(third["id"])), map[string]any{})
 	if msg != "" {
 		t.Fatalf("shuffle should stay open: %s", msg)
@@ -58,7 +58,7 @@ func TestSharedQuotaPriority(t *testing.T) {
 		t.Fatalf("member create defers: %#v", memberPlay)
 	}
 	memberID := asID(memberPlay["id"])
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", memberID), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", memberID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if playEntitlement(t, store, memberID) != entQuota {
 		t.Fatalf("member quota %s", playEntitlement(t, store, memberID))
 	}
@@ -67,7 +67,7 @@ func TestSharedQuotaPriority(t *testing.T) {
 	}
 	setQuota(t, store, uid, 2)
 	poor := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "额度不足", "type": "normal"})
-	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(poor["id"])), map[string]any{"spread_id": spreadID})
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(poor["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if !strings.Contains(msg, "额度不足") || strings.Contains(msg, "算力") {
 		t.Fatalf("paywall prompt: %s", msg)
 	}
@@ -87,7 +87,7 @@ func TestDiamondCostUnconfigured(t *testing.T) {
 	setQuota(t, store, uid, 9)
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "未配置不能猜额度", "type": "normal"})
 	spreadID := ensureTimeFlow(t, store)
-	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if !strings.Contains(msg, "未配置") || strings.Contains(msg, "算力") {
 		t.Fatalf("prompt: %s", msg)
 	}
@@ -113,7 +113,7 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 
 	cancelled := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "取消的任务", "type": "normal"})
 	cancelID := asID(cancelled["id"])
-	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", cancelID), map[string]any{"spread_id": spreadID})
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", cancelID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if !strings.Contains(msg, "额度不足") {
 		t.Fatalf("cancel setup: %s", msg)
 	}
@@ -128,7 +128,7 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 
 	kept := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "待续跑", "type": "normal"})
 	keptID := asID(kept["id"])
-	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", keptID), map[string]any{"spread_id": spreadID})
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", keptID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if !strings.Contains(msg, "额度不足") || strings.Contains(msg, "算力") {
 		t.Fatalf("spread paywall: %s", msg)
 	}
@@ -224,14 +224,17 @@ func TestNumerologyDrawCanUseGift(t *testing.T) {
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "灵数也能用赠送", "type": "normal"})
 	id := asID(reading["id"])
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID})
-	if n := chargeCount(t, store, id); n != 0 {
-		t.Fatalf("charged before numerology draw: %d", n)
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "numerology"})
+	if n := chargeCount(t, store, id); n != 1 {
+		t.Fatalf("numerology spread charge %d", n)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE readings SET numerology_map='[{"number":1,"card_id":1}]', status='CARDS_FIXED', cards='[{"name":"愚者"}]' WHERE id=$1`, id); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET status='CARDS_FIXED', cards='[{"name":"愚者"}]' WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", id), map[string]any{})
+	if n := chargeCount(t, store, id); n != 1 {
+		t.Fatalf("numerology charged again %d", n)
+	}
 	if playEntitlement(t, store, id) != entReward {
 		t.Fatalf("numerology entitlement %s", playEntitlement(t, store, id))
 	}
@@ -544,7 +547,7 @@ func TestDailyQuotaCountsConfigurable(t *testing.T) {
 	}
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "不再扣每日免费", "type": "normal"})
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	var ent string
 	err := store.QueryRow(t.Context(), `SELECT entitlement FROM quota_charges WHERE reading_id=$1 AND charge_key='play'`, asID(reading["id"])).Scan(&ent)
 	if err == nil && ent == entDaily {
@@ -738,7 +741,7 @@ func chargeFreePlay(t *testing.T, ts *httptest.Server, store *Store, token, ques
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": question, "type": "normal"})
 	id := asID(reading["id"])
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle", id), map[string]any{})
 	if msg != "" {
 		t.Fatalf("shuffle %s: %s %s", question, msg, raw)
@@ -873,7 +876,7 @@ func TestLedgerDrawsNameTheLot(t *testing.T) {
 	}
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "跨批次扣额度", "type": "normal"})
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	rows := list(t, ts, admin.access, "/api/admin/v1/ledger")
 	var found map[string]any
 	for _, row := range rows {
@@ -1036,7 +1039,7 @@ func TestGiftBeforeInviteAndShortPool(t *testing.T) {
 	setQuota(t, store, shortID, 2)
 	reading := create(t, ts, shortToken, "/api/app/v1/readings", map[string]any{"question": "额度不够不碰赠送", "type": "normal"})
 	spreadID := ensureTimeFlow(t, store)
-	msg, _ := call(t, ts, shortToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
+	msg, _ := call(t, ts, shortToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if !strings.Contains(msg, "额度不足") {
 		t.Fatalf("short pool: %s %#v", msg, reading)
 	}
@@ -1056,7 +1059,7 @@ func TestGiftBeforeInviteAndShortPool(t *testing.T) {
 	setMember(t, store, openID, "month")
 	setQuota(t, store, openID, 0)
 	seedGift(t, store, openID, 1)
-	must(t, ts, openToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(held["id"])), map[string]any{"spread_id": spreadID})
+	must(t, ts, openToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(held["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	msg, _ = call(t, ts, openToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle", asID(held["id"])), map[string]any{})
 	if msg != "" {
 		t.Fatalf("zero pool gift: %s", msg)
@@ -1089,7 +1092,7 @@ func TestSpreadCostOverridesGlobalQuota(t *testing.T) {
 		_, _ = store.Exec(context.Background(), `UPDATE spreads SET quota_cost=NULL WHERE id=$1`, spreadID)
 	})
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "按这套牌阵算", "type": "normal"})
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	var amount int
 	if err := store.QueryRow(t.Context(), `SELECT amount FROM quota_charges WHERE reading_id=$1 AND charge_key=$2`, asID(reading["id"]), chargeKeyPlay).Scan(&amount); err != nil {
 		t.Fatal(err)

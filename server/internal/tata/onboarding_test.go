@@ -29,7 +29,7 @@ func TestOnboardingGuideFollowsDeviceTrialFollowsAccount(t *testing.T) {
 		t.Fatalf("device bind: %s", storedDevice)
 	}
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	var used bool
 	if err := store.QueryRow(t.Context(), `SELECT reading_trial_used FROM app_users WHERE id=$1`, uid).Scan(&used); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestOnboardChargesOnSuccessAndAbandonExpires(t *testing.T) {
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "第一次解读", "type": "normal", "device_id": deviceID})
 	rid := asID(reading["id"])
 	spreadID := ensureTimeFlow(t, store)
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	var used bool
 	var charges int
 	if err := store.QueryRow(t.Context(), `SELECT reading_trial_used FROM app_users WHERE id=$1`, uid).Scan(&used); err != nil {

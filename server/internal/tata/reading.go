@@ -23,7 +23,7 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	q := `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at FROM readings WHERE 1=1`
+	q := `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE 1=1`
 	args := []any{}
 	add := func(cond string, v any) {
 		args = append(args, v)
@@ -593,6 +593,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		SkipDetect bool   `json:"skip_detect"`
 		TarotistID *int64 `json:"tarotist_id"`
 		DeviceID   string `json:"device_id"`
+		DrawMode   string `json:"draw_mode"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
@@ -608,6 +609,15 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 	}
 	if req.Type == "explore" {
 		req.SkipDetect = true
+	}
+	drawMode := strings.TrimSpace(req.DrawMode)
+	if drawMode != "" {
+		if _, err := parseDrawMode(drawMode); err != nil {
+			return err
+		}
+		if req.Type != "normal" {
+			return biz("抽牌方式不正确")
+		}
 	}
 	if len([]rune(req.Question)) > 200 {
 		return biz("问题超过 200 个码点，正式计数口径尚未确认")
@@ -635,7 +645,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		writeJSON(w, http.StatusOK, json.RawMessage(replay))
 		return nil
 	}
-	view, err := a.createNormal(r.Context(), uid, anon, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", strings.TrimSpace(req.DeviceID))
+	view, err := a.createNormal(r.Context(), uid, anon, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", strings.TrimSpace(req.DeviceID), drawMode)
 	if err != nil {
 		_, _ = a.Store.Exec(r.Context(), `DELETE FROM idempotency WHERE scope=$1 AND key=$2`, scope, r.Header.Get("Idempotency-Key"))
 		return err
@@ -672,7 +682,33 @@ func (a *App) beginIdem(r *http.Request, scope, key string) (string, bool, error
 	return "", false, biz("重复请求处理中")
 }
 
-func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind string, tarotistID *int64, skip bool, deviceID string) (map[string]any, error) {
+func parseDrawMode(raw string) (string, error) {
+	switch strings.TrimSpace(raw) {
+	case "normal", "numerology":
+		return strings.TrimSpace(raw), nil
+	default:
+		return "", biz("抽牌方式不正确")
+	}
+}
+
+func storeNumerologyMap(ctx context.Context, ex execer, id int64) error {
+	var raw string
+	if err := ex.QueryRow(ctx, `SELECT numerology_map FROM readings WHERE id=$1`, id).Scan(&raw); err != nil {
+		return err
+	}
+	text := strings.TrimSpace(raw)
+	if text != "" && text != "[]" && text != "null" {
+		return nil
+	}
+	slots, err := newNumerologyMap()
+	if err != nil {
+		return err
+	}
+	_, err = ex.Exec(ctx, `UPDATE readings SET numerology_map=$1 WHERE id=$2 AND numerology_map IN ('', '[]', 'null')`, mustJSON(slots), id)
+	return err
+}
+
+func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind string, tarotistID *int64, skip bool, deviceID, drawMode string) (map[string]any, error) {
 	first := false
 	if uid == 0 {
 		var n int
@@ -695,8 +731,8 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 		}
 	}
 	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,$7,$8) RETURNING id`,
-		nullID(uid), nullStr(anon), kind, question, tarotistID, first, onboard, boundDevice).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,$7,$8,$9) RETURNING id`,
+		nullID(uid), nullStr(anon), kind, question, tarotistID, first, onboard, boundDevice, drawMode).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -709,6 +745,11 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	}
 	if _, err := tx.Exec(ctx, `UPDATE readings SET business_date=$1, skip_detect=$2 WHERE id=$3`, cycle, skip, id); err != nil {
 		return nil, err
+	}
+	if drawMode == "numerology" {
+		if err := storeNumerologyMap(ctx, tx, id); err != nil {
+			return nil, err
+		}
 	}
 	consumed := false
 	exhausted := false
@@ -889,10 +930,44 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var req struct {
-		SpreadID int64 `json:"spread_id"`
+		SpreadID int64   `json:"spread_id"`
+		DrawMode *string `json:"draw_mode"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
+	}
+	var kind, storedMode string
+	if err := a.Store.QueryRow(r.Context(), `SELECT type, draw_mode FROM readings WHERE id=$1`, id).Scan(&kind, &storedMode); err != nil {
+		return err
+	}
+	resolved := storedMode
+	if req.DrawMode != nil {
+		mode, err := parseDrawMode(*req.DrawMode)
+		if err != nil {
+			return err
+		}
+		if kind != "normal" {
+			return biz("抽牌方式不正确")
+		}
+		resolved = mode
+	}
+	if resolved != storedMode {
+		already, _, err := playAlready(r.Context(), a.Store, id)
+		if err != nil {
+			return err
+		}
+		if already {
+			return biz("抽牌方式已锁定")
+		}
+	}
+	if kind == "normal" && resolved == "" && uid > 0 {
+		open, err := openOnboardReading(r.Context(), a.Store, id, uid)
+		if err != nil {
+			return err
+		}
+		if !open {
+			return biz("请先选择抽牌方式")
+		}
 	}
 	var enabled bool
 	var cardCount int
@@ -911,14 +986,19 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 	} else if cardCount > 3 {
 		return biz("开通会员后可使用超过三张牌的牌阵")
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), status='SPREAD_SELECTED',
+	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), draw_mode=$2, status='SPREAD_SELECTED',
 		spread_selection=CASE WHEN recommended_spread_id=$1 THEN 'system_recommendation' ELSE 'manual_selection' END,
-		updated_at=now() WHERE id=$2 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, id)
+		updated_at=now() WHERE id=$3 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, resolved, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return biz("当前状态不能选择牌阵")
+	}
+	if resolved == "numerology" {
+		if err := storeNumerologyMap(r.Context(), a.Store, id); err != nil {
+			return err
+		}
 	}
 	if uid > 0 {
 		open, oerr := openOnboardReading(r.Context(), a.Store, id, uid)
@@ -971,6 +1051,18 @@ func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
 	}
 	if req.Mode != "normal" && req.Mode != "numerology" {
 		return biz("抽牌方式不正确")
+	}
+	var kind, storedMode string
+	if err := a.Store.QueryRow(r.Context(), `SELECT type, draw_mode FROM readings WHERE id=$1`, id).Scan(&kind, &storedMode); err != nil {
+		return err
+	}
+	if kind == "normal" {
+		if storedMode == "" {
+			return biz("请先选择抽牌方式")
+		}
+		if req.Mode != storedMode {
+			return biz("抽牌方式不正确")
+		}
 	}
 	var spreadID *int64
 	var status string
@@ -1078,9 +1170,15 @@ func (a *App) appRedraw(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil || req.Number <= 0 {
 		return biz("请输入要补抽的灵数")
 	}
-	var status, cardsRaw, mapRaw string
-	if err := a.Store.QueryRow(r.Context(), `SELECT status, COALESCE(cards,''), numerology_map FROM readings WHERE id=$1`, id).Scan(&status, &cardsRaw, &mapRaw); err != nil {
+	var status, cardsRaw, mapRaw, drawMode string
+	if err := a.Store.QueryRow(r.Context(), `SELECT status, COALESCE(cards,''), numerology_map, draw_mode FROM readings WHERE id=$1`, id).Scan(&status, &cardsRaw, &mapRaw, &drawMode); err != nil {
 		return err
+	}
+	if drawMode != "numerology" {
+		if drawMode == "" {
+			return biz("请先选择抽牌方式")
+		}
+		return biz("请先用灵数抽牌")
 	}
 	if strings.TrimSpace(mapRaw) == "" {
 		return biz("请先用灵数抽牌")
@@ -1125,6 +1223,68 @@ func (a *App) appRedraw(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (a *App) acceptClientCards(ctx context.Context, id, spreadID int64, cards []drawnCard) error {
+	if spreadID <= 0 {
+		return biz("请先选择牌阵")
+	}
+	var drawMode string
+	if err := a.Store.QueryRow(ctx, `SELECT draw_mode FROM readings WHERE id=$1`, id).Scan(&drawMode); err != nil {
+		return err
+	}
+	if drawMode == "numerology" {
+		return biz("抽牌方式不正确")
+	}
+	if len(cards) == 0 {
+		return biz("请交上抽好的牌")
+	}
+	var enabled bool
+	var cardCount int
+	var posRaw string
+	err := a.Store.QueryRow(ctx, `SELECT enabled, card_count, positions FROM spreads WHERE id=$1`, spreadID).Scan(&enabled, &cardCount, &posRaw)
+	if err != nil || !enabled {
+		return biz("牌阵不可用")
+	}
+	if len(cards) != cardCount {
+		return biz("牌数须等于牌阵张数")
+	}
+	var positions []position
+	if err := json.Unmarshal([]byte(posRaw), &positions); err != nil {
+		return err
+	}
+	seen := map[int]bool{}
+	for i := range cards {
+		card, ok := cardByName(strings.TrimSpace(cards[i].Name))
+		if !ok {
+			return biz("牌面不正确")
+		}
+		if seen[card.ID] {
+			return biz("牌面不能重复")
+		}
+		seen[card.ID] = true
+		if cards[i].Orientation != "upright" && cards[i].Orientation != "reversed" {
+			return biz("正逆位不正确")
+		}
+		cards[i].CardID = card.ID
+		cards[i].Name = card.Name
+		cards[i].Position = i + 1
+		if cards[i].PositionName == "" && i < len(positions) {
+			cards[i].PositionName = positions[i].Name
+		}
+	}
+	tag, err := a.Store.Exec(ctx, `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), cards=$2, status='CARDS_FIXED',
+		spread_selection=CASE WHEN recommended_spread_id=$1 THEN 'system_recommendation' ELSE 'manual_selection' END,
+		updated_at=now()
+		WHERE id=$3 AND status IN ('QUESTION_CREATED','SPREAD_SELECTED','SHUFFLING','CUTTING') AND deleted_at IS NULL`,
+		spreadID, mustJSON(cards), id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return biz("牌面已固定或状态已变化")
+	}
+	return nil
+}
+
 func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if wantsSSE(r) {
 		return a.appInterpretStream(w, r)
@@ -1138,6 +1298,9 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	if err := a.takeClientCards(r, id); err != nil {
 		return err
 	}
 	var kind, question string
@@ -1154,13 +1317,32 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || stop {
 		return err
 	}
-	item, err := a.generate(r.Context(), id, false)
+	if _, err := a.generate(r.Context(), id, false); err != nil {
+		return err
+	}
+	view, err := a.conversationReply(r, id)
 	if err != nil {
 		return err
 	}
-	a.applyCardThumbnails(r.Context(), r, item)
-	writeOK(w, item)
+	writeOK(w, view)
 	return nil
+}
+
+func (a *App) takeClientCards(r *http.Request, id int64) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+	var req struct {
+		SpreadID int64       `json:"spread_id"`
+		Cards    []drawnCard `json:"cards"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if req.SpreadID == 0 && len(req.Cards) == 0 {
+		return nil
+	}
+	return a.acceptClientCards(r.Context(), id, req.SpreadID, req.Cards)
 }
 
 func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
@@ -1201,7 +1383,7 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 		add("id<$%d", beforeID)
 	}
 	args = append(args, limit+1)
-	cols := `id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at`
+	cols := `id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode`
 	query := "SELECT " + cols + " FROM readings WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args))
 	rows, err := a.Store.Query(r.Context(), query, args...)
 	if err != nil {
@@ -1209,6 +1391,9 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer rows.Close()
 	items := scanReadings(rows)
+	if err := a.markPendingRedraws(r.Context(), items); err != nil {
+		return err
+	}
 	a.applyCardThumbnails(r.Context(), r, items...)
 	for _, item := range items {
 		a.localizeReading(r.Context(), item)
@@ -1255,6 +1440,9 @@ func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
 	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
+		return err
+	}
+	if err := a.attachPendingRedraw(r.Context(), id, item); err != nil {
 		return err
 	}
 	writeOK(w, item)

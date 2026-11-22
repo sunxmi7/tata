@@ -121,7 +121,7 @@ func TestAcceptance(t *testing.T) {
 	resetDiamondCost(t, store)
 	setDiamondCost(t, store, 1)
 	setQuota(t, store, uid, 5)
-	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
+	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	drawn := create(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
 	cardsBefore, _ := json.Marshal(drawn["cards"])
 	if !strings.Contains(string(cardsBefore), "过去") || !strings.Contains(string(cardsBefore), "正义") && !strings.Contains(string(cardsBefore), "力量") {

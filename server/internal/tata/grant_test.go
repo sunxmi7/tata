@@ -202,7 +202,7 @@ func TestAdminGrantLeavesIAPOrderAndPaywall(t *testing.T) {
 	setDiamonds(t, store, uid, 1, 0)
 	blocked := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "补发不应续跑", "type": "normal"})
 	spreadID := ensureTimeFlow(t, store)
-	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(blocked["id"])), map[string]any{"spread_id": spreadID})
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(blocked["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	if !strings.Contains(msg, "额度不足") || blocked["generated"] != false {
 		t.Fatalf("expected paywall: %s %#v", msg, blocked)
 	}

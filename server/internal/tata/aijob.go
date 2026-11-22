@@ -591,7 +591,11 @@ func (a *App) streamInterpretJob(w http.ResponseWriter, r *http.Request, id int6
 		if wrap != nil {
 			item = wrap(item)
 		}
-		send("done", map[string]any{"reading": item})
+		messages, err := a.loadConversation(r, id)
+		if err != nil {
+			return err
+		}
+		send("done", map[string]any{"reading": item, "reading_id": id, "messages": messages, "has_more": false})
 		return nil
 	})
 	return nil

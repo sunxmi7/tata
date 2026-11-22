@@ -60,6 +60,9 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
+	if err := a.takeClientCards(r, id); err != nil {
+		return err
+	}
 	var kind, question string
 	if err := a.Store.QueryRow(r.Context(), `SELECT type, question FROM readings WHERE id=$1`, id).Scan(&kind, &question); err != nil {
 		return err
@@ -182,7 +185,13 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 		body["quota_outcome"] = decision.Status
 		body["entitlement"] = decision.Entitlement
 		body["charged"] = decision.Status == quotaCharged && decision.Entitlement != entTrial
-		send("done", map[string]any{"followup": body})
+		if err := a.attachRedrawOffer(r.Context(), id, turn, body); err != nil {
+			return err
+		}
+		if err := a.attachConversation(r, id, body); err != nil {
+			return err
+		}
+		send("done", map[string]any{"followup": body, "reading_id": id, "messages": body["messages"], "has_more": false})
 		return nil
 	})
 	return nil

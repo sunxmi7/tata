@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -572,7 +573,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 			a.clearPendingIdem(r, scope, idemKey)
 			return biz("问题超过 200 个码点，正式计数口径尚未确认")
 		}
-		view, err := a.createNormal(r.Context(), uid, anon, strings.TrimSpace(req.Text), "normal", nil, false, "")
+		view, err := a.createNormal(r.Context(), uid, anon, strings.TrimSpace(req.Text), "normal", nil, false, "", "")
 		if err != nil {
 			a.clearPendingIdem(r, scope, idemKey)
 			return err
@@ -678,6 +679,14 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	body["quota_outcome"] = decision.Status
 	body["entitlement"] = decision.Entitlement
 	body["charged"] = decision.Status == quotaCharged && decision.Entitlement != entTrial
+	if err := a.attachRedrawOffer(r.Context(), id, turn, body); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
+	if err := a.attachConversation(r, id, body); err != nil {
+		a.clearPendingIdem(r, scope, idemKey)
+		return err
+	}
 	a.finishIdem(r, scope, idemKey, body)
 	writeOK(w, body)
 	return nil
@@ -845,6 +854,246 @@ func (a *App) personaPrompt(ctx context.Context, tarotistID *int64, uid int64) s
 	return b.String()
 }
 
+func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Question string `json:"question"`
+	}
+	if err := decode(r, &req); err != nil || strings.TrimSpace(req.Question) == "" {
+		return biz("问题不能为空")
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT body, category FROM preset_questions WHERE enabled=true
+		ORDER BY CASE pool WHEN 'featured' THEN 0 ELSE 1 END, sort_order, question_id LIMIT 3`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type preset struct{ body, category string }
+	presets := []preset{}
+	for rows.Next() {
+		var item preset
+		if err := rows.Scan(&item.body, &item.category); err != nil {
+			return err
+		}
+		item.body = strings.TrimSpace(item.body)
+		if item.body != "" {
+			presets = append(presets, item)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	messages := []map[string]any{{
+		"kind": "interpretation", "from": "server", "style": "detect",
+		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？",
+		"text": "可以改用下面的问法，也可以继续用你输入的问题。",
+	}}
+	if len(presets) > 0 {
+		messages = append(messages, map[string]any{
+			"kind": "suggestion", "from": "server", "style": "chip", "text": presets[0].body,
+		})
+	}
+	options := make([]map[string]any, 0, len(presets))
+	for i, item := range presets {
+		selected := false
+		option := map[string]any{"text": item.body, "hint": item.category, "selected": selected}
+		options = append(options, option)
+		if i == 1 || (i == 0 && len(presets) == 1) {
+			messages = append(messages, map[string]any{
+				"kind": "suggestion", "from": "server", "style": "option",
+				"text": item.body, "hint": item.category, "selected": false,
+			})
+		}
+	}
+	if len(presets) > 0 {
+		messages = append(messages, map[string]any{
+			"kind": "suggestion", "from": "server", "style": "followup",
+			"title": "继续解读", "text": presets[0].body,
+		})
+		messages = append(messages, map[string]any{
+			"kind": "suggestion", "from": "server", "style": "recommend",
+			"title":   fmt.Sprintf("为你推荐 %d 个更清晰的问题", len(options)),
+			"options": options,
+		})
+	}
+	writeOK(w, map[string]any{"messages": messages, "has_more": false})
+	return nil
+}
+
+func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	var selected sql.NullInt64
+	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id FROM readings WHERE id=$1`, id).Scan(&selected); err != nil {
+		return err
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, card_count, recommended FROM spreads
+		WHERE enabled=true AND theme_key='' ORDER BY recommended DESC, id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	spreads := []map[string]any{}
+	for rows.Next() {
+		var sid int64
+		var name string
+		var count int
+		var recommended bool
+		if err := rows.Scan(&sid, &name, &count, &recommended); err != nil {
+			return err
+		}
+		spreads = append(spreads, map[string]any{
+			"id": sid, "name": name, "card_count": count,
+			"recommended": recommended, "selected": selected.Valid && selected.Int64 == sid,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(spreads) == 0 {
+		return biz("牌阵不可用")
+	}
+	writeOK(w, map[string]any{
+		"reading_id": id,
+		"has_more":   false,
+		"messages": []map[string]any{{
+			"kind": "cards", "from": "server", "style": "choose",
+			"title": "先确认牌阵和张数", "spreads": spreads,
+		}},
+	})
+	return nil
+}
+
+func numerologyGuide(cardCount int) map[string]any {
+	return map[string]any{
+		"kind": "interpretation", "from": "server", "style": "guide",
+		"title": "输入专属数字", "placeholder": "例如：12、58、62", "card_count": cardCount,
+		"input_rows": numerologyInputRows(cardCount),
+		"rules":      []string{"按牌位的顺序输入，数字之间用顿号隔开。", "输入范围：1-78的整数，数字不可重复。"},
+	}
+}
+
+func numerologyInputRows(cardCount int) int {
+	if cardCount <= 6 {
+		return 1
+	}
+	return (cardCount + 5) / 6
+}
+
+func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	var req struct {
+		Numbers []int `json:"numbers"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	var posRaw, drawMode string
+	var cardCount int
+	err = a.Store.QueryRow(r.Context(), `SELECT s.card_count, s.positions, r.draw_mode FROM readings r JOIN spreads s ON s.id=r.spread_id WHERE r.id=$1`, id).Scan(&cardCount, &posRaw, &drawMode)
+	if err == nil && drawMode != "numerology" {
+		if drawMode == "" {
+			return biz("请先选择抽牌方式")
+		}
+		return biz("抽牌方式不正确")
+	}
+	if err != nil {
+		return biz("请先选择牌阵")
+	}
+	var positions []position
+	if err := json.Unmarshal([]byte(posRaw), &positions); err != nil {
+		return err
+	}
+	messages := []map[string]any{}
+	if len(req.Numbers) == 0 {
+		messages = append(messages, numerologyGuide(cardCount))
+		writeOK(w, map[string]any{"reading_id": id, "messages": messages, "has_more": false})
+		return nil
+	}
+	slots := make([]map[string]any, cardCount)
+	counts := map[int]int{}
+	for _, n := range req.Numbers {
+		if n >= 1 && n <= 78 {
+			counts[n]++
+		}
+	}
+	seen := map[int]int{}
+	validCount := 0
+	for i := 0; i < cardCount; i++ {
+		name := ""
+		if i < len(positions) {
+			name = positions[i].Name
+		}
+		number := ""
+		mark := "待选择"
+		invalid := false
+		if i < len(req.Numbers) && req.Numbers[i] != 0 {
+			n := req.Numbers[i]
+			number = strconv.Itoa(n)
+			switch {
+			case n < 1 || n > 78:
+				mark = "超出范围"
+				invalid = true
+			case seen[n] > 0:
+				mark = "重复数字"
+				invalid = true
+			default:
+				mark = "已选择"
+				seen[n] = i + 1
+				validCount++
+			}
+		}
+		slots[i] = map[string]any{
+			"position": i + 1, "position_name": name,
+			"number": number, "mark": mark, "invalid": invalid,
+		}
+	}
+	messages = append(messages, map[string]any{"kind": "cards", "from": "server", "style": "pick", "card_count": cardCount, "slots": slots})
+	numbers := make([]string, 0, len(req.Numbers))
+	for _, n := range req.Numbers {
+		if n != 0 {
+			numbers = append(numbers, strconv.Itoa(n))
+		}
+	}
+	if validCount < cardCount {
+		messages = append(messages, map[string]any{
+			"kind": "interpretation", "from": "server", "style": "error",
+			"text":    fmt.Sprintf("请再输入 %d 个数字", cardCount-validCount),
+			"numbers": numbers,
+		})
+	}
+	for n, count := range counts {
+		if count > 1 {
+			messages = append(messages, map[string]any{
+				"kind": "interpretation", "from": "server", "style": "error",
+				"text":    fmt.Sprintf("数字 %d 已被使用，请更换一个数字。", n),
+				"numbers": numbers,
+			})
+			break
+		}
+	}
+	writeOK(w, map[string]any{"reading_id": id, "messages": messages, "has_more": false})
+	return nil
+}
+
 func (a *App) appMessages(w http.ResponseWriter, r *http.Request) error {
 	uid, anon, err := a.appActor(r)
 	if err != nil {
@@ -857,24 +1106,618 @@ func (a *App) appMessages(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, turn_id, seq, role, content, created_at FROM reading_messages WHERE reading_id=$1 ORDER BY turn_id, seq`, id)
+	messages, err := a.loadConversation(r, id)
+	if err != nil {
+		return err
+	}
+	limit, offset := 0, 0
+	if s := r.URL.Query().Get("limit"); s != "" {
+		limit, _ = strconv.Atoi(s)
+	}
+	if s := r.URL.Query().Get("offset"); s != "" {
+		offset, _ = strconv.Atoi(s)
+	}
+	page, hasMore := pageMessages(messages, limit, offset)
+	writeOK(w, map[string]any{"reading_id": id, "messages": page, "has_more": hasMore})
+	return nil
+}
+
+func (a *App) conversationReply(r *http.Request, id int64) (map[string]any, error) {
+	messages, err := a.loadConversation(r, id)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"reading_id": id, "messages": messages, "has_more": false}, nil
+}
+
+func (a *App) attachConversation(r *http.Request, id int64, body map[string]any) error {
+	view, err := a.conversationReply(r, id)
+	if err != nil {
+		return err
+	}
+	for k, v := range view {
+		body[k] = v
+	}
+	return nil
+}
+
+func pageMessages(all []map[string]any, limit, offset int) ([]map[string]any, bool) {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(all) {
+		offset = len(all)
+	}
+	rest := all[offset:]
+	if limit <= 0 || limit >= len(rest) {
+		return rest, false
+	}
+	return rest[:limit], true
+}
+
+func (a *App) loadConversation(r *http.Request, id int64) ([]map[string]any, error) {
+	var question, cardsRaw, interpretation string
+	var spreadCount int
+	if err := a.Store.QueryRow(r.Context(), `SELECT question, COALESCE(cards,''), COALESCE(interpretation,''),
+		COALESCE((SELECT card_count FROM spreads WHERE id=readings.spread_id), 0)
+		FROM readings WHERE id=$1`, id).Scan(&question, &cardsRaw, &interpretation, &spreadCount); err != nil {
+		return nil, err
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT turn_id, seq, role, kind, style, content FROM reading_messages WHERE reading_id=$1 ORDER BY turn_id, seq`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type storedMessage struct {
+		turn           int64
+		seq            int
+		role, kind     string
+		style, content string
+	}
+	stored := []storedMessage{}
+	hasClarifier := false
+	for rows.Next() {
+		var item storedMessage
+		if err := rows.Scan(&item.turn, &item.seq, &item.role, &item.kind, &item.style, &item.content); err != nil {
+			return nil, err
+		}
+		if item.style == "single" {
+			hasClarifier = true
+		}
+		stored = append(stored, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	messages := []map[string]any{}
+	if text := strings.TrimSpace(question); text != "" {
+		messages = append(messages, labeledQuestion(text))
+	}
+	cards := a.conversationCards(r, cardsRaw)
+	if hasClarifier && spreadCount > 0 && len(cards) > spreadCount {
+		cards = cards[:spreadCount]
+	}
+	if len(cards) > 0 {
+		messages = append(messages, spreadCards(cards))
+	}
+	if text := strings.TrimSpace(interpretation); text != "" {
+		messages = append(messages, interpretationBody(text))
+	}
+	for _, item := range stored {
+		if msg := a.storedConversationMessage(r, item.turn, item.seq, item.role, item.kind, item.style, item.content); msg != nil {
+			messages = append(messages, msg)
+		}
+	}
+	return messages, nil
+}
+
+func labeledQuestion(text string) map[string]any {
+	return map[string]any{"kind": "question", "from": "user", "style": "labeled", "label": "你的问题", "text": text}
+}
+
+func userBubble(turn int64, text string) map[string]any {
+	return map[string]any{"kind": "question", "from": "user", "style": "bubble", "turn_id": turn, "text": text}
+}
+
+func interpretationBody(text string) map[string]any {
+	return map[string]any{"kind": "interpretation", "from": "server", "style": "body", "text": text}
+}
+
+func followupBody(turn int64, seq int, text string) map[string]any {
+	item := interpretationBody(text)
+	item["turn_id"] = turn
+	item["seq"] = seq
+	return item
+}
+
+func spreadCards(cards []map[string]any) map[string]any {
+	return map[string]any{"kind": "cards", "from": "server", "style": "spread", "title": "牌面预览", "cards": cards}
+}
+
+func singleCard(turn int64, cards []map[string]any) map[string]any {
+	return map[string]any{"kind": "cards", "from": "server", "style": "single", "title": "牌面", "turn_id": turn, "cards": cards}
+}
+
+func redrawActions() []map[string]any {
+	return []map[string]any{
+		{"action": "draw", "label": "去抽牌"},
+		{"action": "skip", "label": "跳过"},
+	}
+}
+
+func (a *App) storedConversationMessage(r *http.Request, turn int64, seq int, role, kind, style, content string) map[string]any {
+	switch style {
+	case "redraw":
+		return redrawOfferView(content, turn)
+	case "single":
+		var card drawnCard
+		if err := json.Unmarshal([]byte(content), &card); err != nil {
+			return nil
+		}
+		return singleCard(turn, a.conversationCardItems(r, []drawnCard{card}))
+	case "chip", "option", "followup", "recommend", "detect", "guide", "error", "pick", "choose":
+		return structuredConversationMessage(turn, style, content)
+	case "bubble":
+		text := strings.TrimSpace(content)
+		if text == "" || role != "user" {
+			return nil
+		}
+		return userBubble(turn, text)
+	case "body":
+		text := strings.TrimSpace(content)
+		if text == "" {
+			return nil
+		}
+		return followupBody(turn, seq, text)
+	}
+	text := strings.TrimSpace(content)
+	if text == "" || strings.HasPrefix(text, "{") {
+		return nil
+	}
+	switch role {
+	case "user":
+		return userBubble(turn, text)
+	case "assistant":
+		return followupBody(turn, seq, text)
+	default:
+		return nil
+	}
+}
+
+func structuredConversationMessage(turn int64, style, content string) map[string]any {
+	switch style {
+	case "chip":
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || strings.TrimSpace(body.Text) == "" {
+			return nil
+		}
+		return map[string]any{"kind": "suggestion", "from": "server", "style": "chip", "turn_id": turn, "text": strings.TrimSpace(body.Text)}
+	case "option":
+		var body struct {
+			Text     string `json:"text"`
+			Hint     string `json:"hint"`
+			Selected bool   `json:"selected"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || strings.TrimSpace(body.Text) == "" {
+			return nil
+		}
+		return map[string]any{
+			"kind": "suggestion", "from": "server", "style": "option", "turn_id": turn,
+			"text": strings.TrimSpace(body.Text), "hint": body.Hint, "selected": body.Selected,
+		}
+	case "followup":
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || strings.TrimSpace(body.Text) == "" {
+			return nil
+		}
+		return map[string]any{
+			"kind": "suggestion", "from": "server", "style": "followup", "turn_id": turn,
+			"title": "继续解读", "text": strings.TrimSpace(body.Text),
+		}
+	case "recommend":
+		var body struct {
+			Title   string `json:"title"`
+			Options []struct {
+				Text     string `json:"text"`
+				Hint     string `json:"hint"`
+				Selected bool   `json:"selected"`
+			} `json:"options"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || len(body.Options) == 0 {
+			return nil
+		}
+		options := make([]map[string]any, 0, len(body.Options))
+		for _, option := range body.Options {
+			if strings.TrimSpace(option.Text) == "" {
+				continue
+			}
+			options = append(options, map[string]any{"text": strings.TrimSpace(option.Text), "hint": option.Hint, "selected": option.Selected})
+		}
+		if len(options) == 0 {
+			return nil
+		}
+		title := strings.TrimSpace(body.Title)
+		if title == "" {
+			title = fmt.Sprintf("为你推荐 %d 个更清晰的问题", len(options))
+		}
+		return map[string]any{"kind": "suggestion", "from": "server", "style": "recommend", "turn_id": turn, "title": title, "options": options}
+	case "detect":
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || strings.TrimSpace(body.Text) == "" {
+			return nil
+		}
+		return map[string]any{
+			"kind": "interpretation", "from": "server", "style": "detect", "turn_id": turn,
+			"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？", "text": strings.TrimSpace(body.Text),
+		}
+	case "guide":
+		var body struct {
+			Placeholder string   `json:"placeholder"`
+			Rules       []string `json:"rules"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil {
+			return nil
+		}
+		placeholder := strings.TrimSpace(body.Placeholder)
+		if placeholder == "" {
+			placeholder = "例如：12、58、62"
+		}
+		rules := body.Rules
+		if rules == nil {
+			rules = []string{}
+		}
+		return map[string]any{
+			"kind": "interpretation", "from": "server", "style": "guide", "turn_id": turn,
+			"title": "输入专属数字", "placeholder": placeholder, "rules": rules,
+		}
+	case "error":
+		var body struct {
+			Text    string   `json:"text"`
+			Numbers []string `json:"numbers"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || strings.TrimSpace(body.Text) == "" {
+			return nil
+		}
+		numbers := body.Numbers
+		if numbers == nil {
+			numbers = []string{}
+		}
+		return map[string]any{
+			"kind": "interpretation", "from": "server", "style": "error", "turn_id": turn,
+			"text": strings.TrimSpace(body.Text), "numbers": numbers,
+		}
+	case "pick":
+		var body struct {
+			Slots []struct {
+				Position     int    `json:"position"`
+				PositionName string `json:"position_name"`
+				Number       string `json:"number"`
+				Invalid      bool   `json:"invalid"`
+			} `json:"slots"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || len(body.Slots) == 0 {
+			return nil
+		}
+		slots := make([]map[string]any, 0, len(body.Slots))
+		for _, slot := range body.Slots {
+			slots = append(slots, map[string]any{
+				"position": slot.Position, "position_name": slot.PositionName,
+				"number": slot.Number, "invalid": slot.Invalid,
+			})
+		}
+		return map[string]any{"kind": "cards", "from": "server", "style": "pick", "turn_id": turn, "slots": slots}
+	case "choose":
+		var body struct {
+			Spreads []struct {
+				ID          int64  `json:"id"`
+				Name        string `json:"name"`
+				CardCount   int    `json:"card_count"`
+				Recommended bool   `json:"recommended"`
+				Selected    bool   `json:"selected"`
+			} `json:"spreads"`
+		}
+		if json.Unmarshal([]byte(content), &body) != nil || len(body.Spreads) == 0 {
+			return nil
+		}
+		spreads := make([]map[string]any, 0, len(body.Spreads))
+		for _, spread := range body.Spreads {
+			spreads = append(spreads, map[string]any{
+				"id": spread.ID, "name": spread.Name, "card_count": spread.CardCount,
+				"recommended": spread.Recommended, "selected": spread.Selected,
+			})
+		}
+		return map[string]any{
+			"kind": "cards", "from": "server", "style": "choose", "turn_id": turn,
+			"title": "先确认牌阵和张数", "spreads": spreads,
+		}
+	default:
+		return nil
+	}
+}
+
+func (a *App) conversationCards(r *http.Request, raw string) []map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return nil
+	}
+	var cards []drawnCard
+	if err := json.Unmarshal([]byte(raw), &cards); err != nil || len(cards) == 0 {
+		return nil
+	}
+	return a.conversationCardItems(r, cards)
+}
+
+func (a *App) conversationCardItems(r *http.Request, cards []drawnCard) []map[string]any {
+	cfg := a.cardConfig(r.Context())
+	if r != nil {
+		if uid, _, err := a.appActor(r); err == nil && uid > 0 {
+			cfg = a.cardConfigForUser(r.Context(), uid)
+		}
+	}
+	out := make([]map[string]any, 0, len(cards))
+	for _, card := range cards {
+		image := ""
+		if resolved, ok := absoluteAssetAny(r, resolveCardThumbnail(cfg, card.Name)).(string); ok {
+			image = resolved
+		}
+		item := map[string]any{
+			"position":      card.Position,
+			"position_name": card.PositionName,
+			"card_id":       card.CardID,
+			"name":          card.Name,
+			"orientation":   card.Orientation,
+			"image":         image,
+		}
+		if card.Number > 0 {
+			item["number"] = card.Number
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+type redrawOffer struct {
+	Title   string   `json:"title"`
+	Actions []string `json:"actions"`
+	Choice  string   `json:"choice"`
+}
+
+func (a *App) attachRedrawOffer(ctx context.Context, readingID, turn int64, body map[string]any) error {
+	offer, err := a.ensureRedrawOffer(ctx, readingID, turn)
+	if err != nil || offer == nil {
+		return err
+	}
+	body["redraw"] = offer
+	return nil
+}
+
+func (a *App) ensureRedrawOffer(ctx context.Context, readingID, turn int64) (map[string]any, error) {
+	var kind, drawMode string
+	if err := a.Store.QueryRow(ctx, `SELECT type, draw_mode FROM readings WHERE id=$1`, readingID).Scan(&kind, &drawMode); err != nil {
+		return nil, err
+	}
+	if kind != "normal" || drawMode == "numerology" {
+		return nil, nil
+	}
+	var raw string
+	err := a.Store.QueryRow(ctx, `SELECT content FROM reading_messages WHERE reading_id=$1 AND turn_id=$2 AND style='redraw'`, readingID, turn).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err != nil {
+		var seq int
+		if err := a.Store.QueryRow(ctx, `SELECT COALESCE(max(seq),0)+1 FROM reading_messages WHERE reading_id=$1 AND turn_id=$2`, readingID, turn).Scan(&seq); err != nil {
+			return nil, err
+		}
+		payload, _ := json.Marshal(redrawOffer{Title: "补抽牌面", Actions: []string{"draw", "skip"}})
+		if _, err := a.Store.Exec(ctx, `INSERT INTO reading_messages(reading_id, turn_id, seq, role, kind, style, content)
+			VALUES ($1,$2,$3,'assistant','suggestion','redraw',$4)`, readingID, turn, seq, string(payload)); err != nil {
+			return nil, err
+		}
+		raw = string(payload)
+	}
+	return redrawOfferView(raw, turn), nil
+}
+
+func redrawOfferView(raw string, turn int64) map[string]any {
+	var prompt redrawOffer
+	if err := json.Unmarshal([]byte(raw), &prompt); err != nil {
+		return nil
+	}
+	title := strings.TrimSpace(prompt.Title)
+	if title == "" {
+		title = "补抽牌面"
+	}
+	item := map[string]any{
+		"kind": "suggestion", "from": "server", "style": "redraw", "turn_id": turn,
+		"title": title, "actions": redrawActions(), "pending": prompt.Choice == "",
+	}
+	if prompt.Choice != "" {
+		item["choice"] = prompt.Choice
+	}
+	return item
+}
+
+func (a *App) attachPendingRedraw(ctx context.Context, readingID int64, item map[string]any) error {
+	offer, ok, err := a.pendingRedraw(ctx, readingID)
+	if err != nil {
+		return err
+	}
+	item["redraw_pending"] = ok
+	if ok {
+		item["redraw"] = offer
+	}
+	return nil
+}
+
+func (a *App) pendingRedraw(ctx context.Context, readingID int64) (map[string]any, bool, error) {
+	var turn int64
+	var raw string
+	err := a.Store.QueryRow(ctx, `SELECT turn_id, content FROM reading_messages
+		WHERE reading_id=$1 AND style='redraw' AND COALESCE(content::json->>'choice','')=''
+		ORDER BY turn_id DESC LIMIT 1`, readingID).Scan(&turn, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	offer := redrawOfferView(raw, turn)
+	return offer, offer != nil, nil
+}
+
+func (a *App) markPendingRedraws(ctx context.Context, items []map[string]any) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(items))
+	for _, item := range items {
+		id, ok := item["id"].(int64)
+		if ok && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	holders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		holders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := a.Store.Query(ctx, `SELECT DISTINCT reading_id FROM reading_messages
+		WHERE style='redraw' AND COALESCE(content::json->>'choice','')=''
+		AND reading_id IN (`+strings.Join(holders, ",")+`)`, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	list := []map[string]any{}
+	pending := map[int64]bool{}
 	for rows.Next() {
-		var mid, turn int64
-		var seq int
-		var role, content string
-		var created time.Time
-		if err := rows.Scan(&mid, &turn, &seq, &role, &content, &created); err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return err
 		}
-		list = append(list, map[string]any{"id": mid, "turn_id": turn, "seq": seq, "role": role, "content": content, "created_at": created})
+		pending[id] = true
 	}
-	writeOK(w, list)
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range items {
+		id, _ := item["id"].(int64)
+		item["redraw_pending"] = pending[id]
+	}
 	return nil
+}
+
+func (a *App) appFollowupRedraw(w http.ResponseWriter, r *http.Request) error {
+	uid, anon, err := a.appActor(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+		return err
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := decode(r, &req); err != nil || (req.Action != "draw" && req.Action != "skip") {
+		return biz("当前状态不能补抽")
+	}
+	tx, err := a.Store.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	var turn, msgID int64
+	var raw, cardsRaw string
+	err = tx.QueryRow(r.Context(), `SELECT m.id, m.turn_id, m.content, COALESCE(r.cards,'')
+		FROM reading_messages m
+		JOIN readings r ON r.id=m.reading_id
+		WHERE m.reading_id=$1 AND m.style='redraw' AND r.type='normal' AND r.draw_mode<>'numerology'
+		ORDER BY m.turn_id DESC LIMIT 1 FOR UPDATE OF m`, id).Scan(&msgID, &turn, &raw, &cardsRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return biz("当前状态不能补抽")
+	}
+	if err != nil {
+		return err
+	}
+	var prompt redrawOffer
+	if err := json.Unmarshal([]byte(raw), &prompt); err != nil || prompt.Choice != "" {
+		return biz("当前状态不能补抽")
+	}
+	prompt.Choice = req.Action
+	updated, _ := json.Marshal(prompt)
+	if _, err := tx.Exec(r.Context(), `UPDATE reading_messages SET content=$1 WHERE id=$2`, string(updated), msgID); err != nil {
+		return err
+	}
+	body := map[string]any{"redraw": redrawOfferView(string(updated), turn)}
+	if req.Action == "draw" {
+		card, cards, err := appendClarifier(cardsRaw)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `UPDATE readings SET cards=$1, updated_at=now() WHERE id=$2`, mustJSON(cards), id); err != nil {
+			return err
+		}
+		var seq int
+		if err := tx.QueryRow(r.Context(), `SELECT COALESCE(max(seq),0)+1 FROM reading_messages WHERE reading_id=$1 AND turn_id=$2`, id, turn).Scan(&seq); err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(card)
+		if _, err := tx.Exec(r.Context(), `INSERT INTO reading_messages(reading_id, turn_id, seq, role, kind, style, content)
+			VALUES ($1,$2,$3,'assistant','cards','single',$4)`, id, turn, seq, string(payload)); err != nil {
+			return err
+		}
+		body["card"] = singleCard(turn, a.conversationCardItems(r, []drawnCard{card}))
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	if err := a.attachConversation(r, id, body); err != nil {
+		return err
+	}
+	writeOK(w, body)
+	return nil
+}
+
+func appendClarifier(raw string) (drawnCard, []drawnCard, error) {
+	var cards []drawnCard
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &cards); err != nil {
+			return drawnCard{}, nil, err
+		}
+	}
+	if len(cards) >= 78 {
+		return drawnCard{}, nil, biz("78 张牌已全部使用")
+	}
+	skip := map[int]bool{}
+	for _, card := range cards {
+		if card.CardID > 0 {
+			skip[card.CardID] = true
+			continue
+		}
+		if def, ok := cardByName(card.Name); ok {
+			skip[def.ID] = true
+		}
+	}
+	added, err := drawCardsSkipping([]position{{Index: len(cards) + 1}}, skip)
+	if err != nil {
+		return drawnCard{}, nil, err
+	}
+	cards = append(cards, added[0])
+	return added[0], cards, nil
 }
 
 func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
@@ -910,7 +1753,7 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 	}
 	defer rows.Close()
 	list := []map[string]any{}
-	cfg := a.cardConfig(r.Context())
+	cfg := a.cardConfigForUser(r.Context(), uid)
 	for rows.Next() {
 		var id int64
 		var typ, question, status, day string
@@ -1095,6 +1938,31 @@ func (a *App) adminListMessages(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		list = append(list, map[string]any{"id": id, "reading_id": readingID, "turn_id": turn, "seq": seq, "role": role, "content": content, "created_at": created})
+	}
+	writeOK(w, list)
+	return nil
+}
+
+func (a *App) adminListWishlists(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, false); err != nil {
+		return err
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT id, user_id, content, image_url, created_at FROM wishlists ORDER BY id DESC LIMIT 200`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	list := []map[string]any{}
+	for rows.Next() {
+		var id, userID int64
+		var content, imageURL string
+		var created time.Time
+		if err := rows.Scan(&id, &userID, &content, &imageURL, &created); err != nil {
+			return err
+		}
+		list = append(list, map[string]any{
+			"id": id, "user_id": userID, "content": content, "image_url": imageURL, "created_at": created,
+		})
 	}
 	writeOK(w, list)
 	return nil

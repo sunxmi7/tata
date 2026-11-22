@@ -209,6 +209,9 @@ ALTER TABLE readings ADD COLUMN IF NOT EXISTS business_date TEXT NOT NULL DEFAUL
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS skip_detect BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS reward_consumed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS numerology_map TEXT NOT NULL DEFAULT '';
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS draw_mode TEXT NOT NULL DEFAULT '';
+ALTER TABLE readings DROP CONSTRAINT IF EXISTS readings_draw_mode_chk;
+ALTER TABLE readings ADD CONSTRAINT readings_draw_mode_chk CHECK (draw_mode IN ('', 'normal', 'numerology'));
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS voice TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS banned TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS ask_style TEXT NOT NULL DEFAULT '';
@@ -230,6 +233,13 @@ CREATE TABLE IF NOT EXISTS reading_messages (
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+`)
+	if err != nil {
+		return err
+	}
+	_, err = s.Exec(ctx, `
+ALTER TABLE reading_messages ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE reading_messages ADD COLUMN IF NOT EXISTS style TEXT NOT NULL DEFAULT '';
 `)
 	if err != nil {
 		return err

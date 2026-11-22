@@ -468,6 +468,8 @@ ERRORS = {
     "抽牌后不能修改问题": ("The question cannot be edited after cards are drawn", "カードを引いた後は質問を変更できません", "카드를 뽑은 뒤에는 질문을 수정할 수 없습니다"),
     "抽牌失败": ("Draw failed", "カードを引けませんでした", "카드 뽑기에 실패했습니다"),
     "抽牌方式不正确": ("Draw mode is invalid", "抽選方法が正しくありません", "뽑기 방식이 올바르지 않습니다"),
+    "请先选择抽牌方式": ("Choose a draw method first", "先に抽選方法を選んでください", "먼저 뽑기 방식을 선택하세요"),
+    "抽牌方式已锁定": ("The draw method is locked", "抽選方法は確定済みです", "뽑기 방식이 잠겼습니다"),
     "抽牌步骤不正确": ("Draw step is invalid", "抽選ステップが正しくありません", "뽑기 단계가 올바르지 않습니다"),
     "提示窗不存在": ("Banner not found", "バナーがありません", "배너가 없습니다"),
     "搜索关键词过长": ("Search query is too long", "検索語が長すぎます", "검색어가 너무 깁니다"),

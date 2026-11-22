@@ -35,7 +35,7 @@ func TestRetryDoesNotDoubleChargeOrRedraw(t *testing.T) {
 	}
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "要不要换工作", "type": "normal"})
 	rid := int64(reading["id"].(float64))
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 	drawn := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
 	cards := fmt.Sprint(drawn["cards"])
 	_, _ = store.Exec(t.Context(), `UPDATE readings SET status='FAILED_RETRYABLE' WHERE id=$1`, rid)

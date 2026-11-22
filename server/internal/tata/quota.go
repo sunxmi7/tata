@@ -278,9 +278,9 @@ func giftInviteScope(ctx context.Context, ex execer, readingID int64, chargeKey 
 	}
 	var kind string
 	var spreadID sql.NullInt64
-	var theme, numerology string
-	if err := ex.QueryRow(ctx, `SELECT r.type, r.spread_id, COALESCE(s.theme_key,''), COALESCE(r.numerology_map,'')
-		FROM readings r LEFT JOIN spreads s ON s.id = r.spread_id WHERE r.id=$1`, readingID).Scan(&kind, &spreadID, &theme, &numerology); err != nil {
+	var theme, drawMode string
+	if err := ex.QueryRow(ctx, `SELECT r.type, r.spread_id, COALESCE(s.theme_key,''), r.draw_mode
+		FROM readings r LEFT JOIN spreads s ON s.id = r.spread_id WHERE r.id=$1`, readingID).Scan(&kind, &spreadID, &theme, &drawMode); err != nil {
 		return false, err
 	}
 	switch kind {
@@ -290,8 +290,7 @@ func giftInviteScope(ctx context.Context, ex execer, readingID int64, chargeKey 
 		if theme != "" || !spreadID.Valid {
 			return false, nil
 		}
-		mapText := strings.TrimSpace(numerology)
-		if mapText != "" && mapText != "[]" && mapText != "null" {
+		if drawMode == "numerology" {
 			return true, nil
 		}
 		cfg, err := loadRegistrationSettings(ctx, ex)
