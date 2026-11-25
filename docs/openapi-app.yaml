@@ -26,7 +26,7 @@ info:
 
     ## 鉴权
     没有匿名登录。
-    公开、不需要登录：`GET /preset-questions`、`/spreads`、`/banners`、`/tarotists`、`/campaigns`、`/campaigns/{id}`、`/help/*`，以及 `GET/PUT /onboarding`、`POST /invites/open`。
+    公开、不需要登录：`GET /preset-questions`、`/spreads`、`/explore/topics`、`/banners`、`/tarotists`、`/campaigns`、`/campaigns/{id}`、`/help/*`，以及 `GET/PUT /onboarding`、`POST /invites/open`。
     未登录占卜不带 `Authorization`，用 `device_id`。创建、列表、详情、选阵、推荐、灵数、灵数补抽和对话记录可以这样调。请求里带了 `Authorization` 但令牌无效，返回 HTTP 401。
     解读、追问、删除、额度、档案、今日一牌必须登录。在 **Headers** 加 `Authorization: Bearer <accessToken>`（Bearer 后面有一个空格）。
     token 只来自邮箱验证码、微信或苹果登录的 `data.accessToken`。首次登录创建账号。不要放进请求体或 Query。
@@ -55,7 +55,7 @@ tags:
   - name: 首页
     description: 首页聚合壳：提示窗、塔罗师、牌阵目录、额度与今日一牌。开始抽牌入口走「抽牌」分组。我的塔罗牌走单独分组。
   - name: 探索
-    description: 这期没有探索牌阵目录。开局仍是 POST /readings，type 或 source 为 explore。后面的选阵和解读与「抽牌」相同。
+    description: 探索主题与牌阵目录走 GET /explore/topics（含 Yes or No / 二选一等快捷题 quick_questions）。开局仍是 POST /readings，type 或 source 为 explore；后面的选阵和解读与「抽牌」相同。
   - name: 我的中心
     description: 我的页聚合入口（头像资料、会员身份与额度）。改头像走 POST /uploads（folder=misc）再 PUT /profile 的 avatar_url。其余复用档案/额度读接口。
   - name: 我的塔罗牌
@@ -627,6 +627,38 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/Spread'
+  /api/app/v1/explore/topics:
+    get:
+      tags: [探索]
+      operationId: appExploreTopics
+      summary: 探索目录
+      description: |
+        公开，不需要登录。普通占卜牌阵走 GET /spreads，不在这里。
+        不传 theme_key：返回 11 个主题摘要（themes，不含 spreads）。
+        传 theme_key：返回该主题详情（含 spreads[].quick_questions / positions）。未知键返回「探索主题不存在」。
+        Yes or No / 二选一等入口的快捷预设问题取自对应主题的 quick_questions，不走 GET /preset-questions。
+      parameters:
+        - name: theme_key
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yes_or_no, either_or, relationship, communication, career, study, interpersonal, shopping, outfit, wellbeing, inner]
+          description: 探索主题键。省略则返回主题列表。
+      responses:
+        '200':
+          description: 列表时 data 为 ExploreTopics；带 theme_key 时 data 为 ExploreTheme。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessMeta'
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - $ref: '#/components/schemas/ExploreTopics'
+                          - $ref: '#/components/schemas/ExploreTheme'
   /api/app/v1/preset-questions:
     get:
       tags: [抽牌]
@@ -2997,6 +3029,65 @@ components:
         short_sentence:
           type: string
           description: 牌阵短句。未填为空串，不编造。
+    ExploreTopics:
+      type: object
+      properties:
+        themes:
+          type: array
+          description: 探索主题摘要。无条目时为空数组。列表接口不含 spreads。
+          items:
+            $ref: '#/components/schemas/ExploreTheme'
+    ExploreTheme:
+      type: object
+      properties:
+        theme_key:
+          type: string
+          example: yes_or_no
+          description: 主题键。
+        title:
+          type: string
+          example: Yes or No
+          description: 主题标题。
+        subtitle:
+          type: string
+          example: 听听此刻的倾向
+          description: 主题副标题。
+        spreads:
+          type: array
+          description: 该主题下的牌阵。主题列表接口不返回本字段；带 theme_key 详情才有。
+          items:
+            $ref: '#/components/schemas/ExploreThemeSpread'
+    ExploreThemeSpread:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 牌阵 id。创建探索占卜后用它选阵。
+        name:
+          type: string
+          description: 牌阵名称。
+        card_count:
+          type: integer
+          description: 抽牌张数。
+        short_sentence:
+          type: string
+          description: 牌阵短句。
+        description:
+          type: string
+          description: 含义说明。额度未标价，不在此返回。
+        positions:
+          type: array
+          description: 阵位列表。
+          items:
+            type: object
+            additionalProperties: true
+        quick_questions:
+          type: array
+          description: 该入口快捷预设问题。点击后填入输入框，不直接提交。
+          items:
+            type: string
+            example: 他近期会主动联系我吗？
     Banner:
       type: object
       properties:
@@ -4821,53 +4912,6 @@ components:
         app_call:
           type: string
           description: 本次调用的步骤组合说明。
-    ExploreTopics:
-      type: object
-      properties:
-        themes:
-          type: array
-          description: 探索主题。无条目时为空数组。
-          items:
-            $ref: '#/components/schemas/ExploreTheme'
-    ExploreTheme:
-      type: object
-      properties:
-        theme_key:
-          type: string
-          example: yes_or_no
-          description: 主题键。
-        title:
-          type: string
-          example: Yes or No
-          description: 主题标题。
-        subtitle:
-          type: string
-          example: 听听此刻的倾向
-          description: 主题副标题。
-        spreads:
-          type: array
-          description: 该主题下的牌阵。
-          items:
-            $ref: '#/components/schemas/ExploreThemeSpread'
-    ExploreThemeSpread:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-          description: 牌阵 id。创建探索占卜后用它选阵。
-        name:
-          type: string
-          description: 牌阵名称。
-        card_count:
-          type: integer
-          description: 抽牌张数。
-        short_sentence:
-          type: string
-          description: 牌阵短句。
-        description:
-          type: string
-          description: 含义说明。额度未标价，不在此返回。
     RedeemBody:
       type: object
       additionalProperties: false

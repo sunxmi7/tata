@@ -131,6 +131,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/invites/accept", a.h(a.appAcceptInvite))
 	mux.HandleFunc("GET /api/app/v1/cards", a.h(a.appListCards))
 	mux.HandleFunc("GET /api/app/v1/spreads", a.h(a.appSpreads))
+	mux.HandleFunc("GET /api/app/v1/explore/topics", a.h(a.appExploreTopics))
 	mux.HandleFunc("GET /api/app/v1/preset-questions", a.h(a.appPresetQuestions))
 	mux.HandleFunc("GET /api/app/v1/banners", a.h(a.appBanners))
 	mux.HandleFunc("GET /api/app/v1/tarotists", a.h(a.appTarotists))

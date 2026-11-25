@@ -33,8 +33,6 @@ func dispatchRetired(app *App, method, rawPath string, body []byte, token string
 	var fn func(http.ResponseWriter, *http.Request) error
 	vars := map[string]string{}
 	switch {
-	case method == http.MethodGet && path == "/api/app/v1/explore/topics":
-		fn = app.appExploreTopics
 	case method == http.MethodGet && path == "/api/app/v1/wallet/ledger":
 		fn = app.appWalletLedger
 	case method == http.MethodPost && path == "/api/app/v1/iap/verify":

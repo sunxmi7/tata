@@ -238,6 +238,8 @@ func TestPublicCatalogNoToken(t *testing.T) {
 	for _, path := range []string{
 		"/api/app/v1/preset-questions",
 		"/api/app/v1/spreads",
+		"/api/app/v1/explore/topics",
+		"/api/app/v1/explore/topics?theme_key=yes_or_no",
 		"/api/app/v1/banners",
 		"/api/app/v1/tarotists",
 		"/api/app/v1/campaigns",

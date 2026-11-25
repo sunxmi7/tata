@@ -3347,6 +3347,18 @@ components:
         description:
           type: string
           description: 含义说明。额度未标价，不在此返回。
+        positions:
+          type: array
+          description: 阵位列表。
+          items:
+            type: object
+            additionalProperties: true
+        quick_questions:
+          type: array
+          description: 该入口快捷预设问题。点击后填入输入框，不直接提交。
+          items:
+            type: string
+            example: 他近期会主动联系我吗？
     RedeemBody:
       type: object
       additionalProperties: false
@@ -5992,10 +6004,22 @@ paths:
       tags: [探索]
       operationId: appExploreTopics
       summary: 探索目录
-      description: 返回 11 个探索主题，每个主题下是该主题的牌阵。公开，不需要登录。普通占卜的 19 套不在这里，走 GET /spreads。
+      description: |
+        公开，不需要登录。普通占卜牌阵走 GET /spreads，不在这里。
+        不传 theme_key：返回 11 个主题摘要（themes，不含 spreads）。
+        传 theme_key：返回该主题详情（含 spreads[].quick_questions / positions）。未知键返回「探索主题不存在」。
+        Yes or No / 二选一等入口的快捷预设问题取自对应主题的 quick_questions，不走 GET /preset-questions。
+      parameters:
+        - name: theme_key
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yes_or_no, either_or, relationship, communication, career, study, interpersonal, shopping, outfit, wellbeing, inner]
+          description: 探索主题键。省略则返回主题列表。
       responses:
         "200":
-          description: data.themes 为探索主题列表。
+          description: 列表时 data 为 ExploreTopics；带 theme_key 时 data 为 ExploreTheme。
           content:
             application/json:
               schema:
@@ -6004,7 +6028,9 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/ExploreTopics"
+                        oneOf:
+                          - $ref: "#/components/schemas/ExploreTopics"
+                          - $ref: "#/components/schemas/ExploreTheme"
   /api/app/v1/redeem:
     post:
       tags: [钱包兑换]
