@@ -87,6 +87,33 @@ func TestHistoryConversationFields(t *testing.T) {
 	}
 }
 
+func TestGetReadingIncludesMessages(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, uid := registerUser(t, ts, store, "readdetail")
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, cards, interpretation)
+		VALUES ($1,'normal','工作怎么选','COMPLETED','[{"name":"愚者"}]','先把选择的代价看清楚。')`, uid); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM readings WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, uid).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	item := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", id))
+	if item["id"] == nil || item["reading_id"] == nil {
+		t.Fatalf("missing ids: %#v", item)
+	}
+	msgs, _ := item["messages"].([]any)
+	if len(msgs) == 0 {
+		t.Fatalf("expected messages in detail: %#v", item)
+	}
+	if item["has_more"] != false {
+		t.Fatalf("has_more: %#v", item["has_more"])
+	}
+	if item["conversation_type"] != "moment" {
+		t.Fatalf("conversation_type: %#v", item["conversation_type"])
+	}
+}
+
 func TestCreateExploreThemeKeyAndSpreadBackfill(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, _ := registerUser(t, ts, store, "themekey")

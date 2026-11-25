@@ -212,7 +212,7 @@
 | 项 | 内容 |
 |---|---|
 | **UI** | `574:1627` 历史列表。 |
-| **OpenAPI** | `GET /readings` 游标分页 + `type`；每项 `short_text` / `card_name` / `status_label` / `card_thumbnail`，以及 `conversation_type`（daily/moment/theme）+ `stage`/`stage_label`；explore 可传 `theme_key`。 |
+| **OpenAPI** | `GET /readings` 游标分页 + `type`；每项 `short_text` / `card_name` / `status_label` / `card_thumbnail`，以及 `conversation_type`（daily/moment/theme）+ `stage`/`stage_label`；explore 可传 `theme_key`。详情 `GET /readings/{id}` 含 messages。 |
 | **挡住** | 无。 |
 
 ### Q-C7 · 探索 topic → 开局

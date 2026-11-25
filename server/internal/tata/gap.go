@@ -1033,27 +1033,6 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 	return nil
 }
 
-func (a *App) appMessages(w http.ResponseWriter, r *http.Request) error {
-	_, id, _, err := a.beginReading(r)
-	if err != nil {
-		return err
-	}
-	messages, err := a.loadConversation(r, id)
-	if err != nil {
-		return err
-	}
-	limit, offset := 0, 0
-	if s := r.URL.Query().Get("limit"); s != "" {
-		limit, _ = strconv.Atoi(s)
-	}
-	if s := r.URL.Query().Get("offset"); s != "" {
-		offset, _ = strconv.Atoi(s)
-	}
-	page, hasMore := pageMessages(messages, limit, offset)
-	writeOK(w, map[string]any{"reading_id": id, "messages": page, "has_more": hasMore})
-	return nil
-}
-
 func (a *App) conversationReply(r *http.Request, id int64) (map[string]any, error) {
 	messages, err := a.loadConversation(r, id)
 	if err != nil {

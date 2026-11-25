@@ -44,6 +44,29 @@
 | `theme` | 主题占卜 | explore 且其余主题键 |
 | `""` | 空 | explore 尚未有 `theme_key`（创建未传、也未选阵） |
 
+### App 怎么区分「此刻抉择」和「主题占卜」（必读）
+
+底层 `type` 只有一种 `explore`，**两种入口共用**，不能写 `if type == "explore"` 就当成同一种屏。
+
+推荐判断（列表/详情字段都有）：
+
+```text
+if type == "explore" && conversation_type == "moment":  # 或 conversation_label == "此刻抉择"
+    → 此刻抉择
+if type == "explore" && conversation_type == "theme":   # 或 conversation_label == "主题占卜"
+    → 主题占卜
+```
+
+等价看 `theme_key`：
+
+| theme_key | 入口 |
+|---|---|
+| `yes_or_no`、`either_or` | 此刻抉择 |
+| `relationship`、`communication`、`career`、`study`、`interpersonal`、`shopping`、`outfit`、`wellbeing`、`inner` | 主题占卜 |
+| 空 | 尚未绑定，还分不出 |
+
+注意：`conversation_type == "moment"` 时还可能是普通占卜（`type=normal`）或占卜师（`type=tarotist`），所以探索子类要 **同时看 `type`**。
+
 探索创建可带 `theme_key`。未带时，选阵后从牌阵回填并写入记录。
 
 三种对话流程不同，`stage` / `stage_label` 也不同：
@@ -56,9 +79,11 @@
 | `theme` | `QUESTION_CREATED` | `pending_spread` | 待选牌阵 |
 | 共用 | `SPREAD_SELECTED` / `SHUFFLING` / `CUTTING` / `CARDS_FIXED` / `INTERPRETING` / `COMPLETED` / `FAILED_RETRYABLE` | `spread_selected` 等 | 牌阵已选择 / 洗牌中 / 切牌中 / 牌面已固定 / 解读生成中 / 已完成 / 失败可重试 |
 
-## 进度
+## 进度与对话
 
-`GET /api/app/v1/readings/{id}` 是这条占卜的记录。新客户端优先看 `conversation_type` + `stage`；`progress` 仍按 `status` 给旧文案。对话内容以 `GET /api/app/v1/readings/{id}/messages` 为准。
+`GET /api/app/v1/readings/{id}` 一次返回进度和对话：`conversation_type` + `stage` 判断续做屏；同包络里的 `messages` / `has_more` 画气泡。`progress` 仍按 `status` 给旧文案。
+
+对话分页：`?limit=20&offset=0`。不传 `limit` 时 messages 给剩余全部。不再提供单独的 `/readings/{id}/messages`。
 
 | 状态 | progress | 已经记下的内容 |
 |---|---|---|
@@ -99,9 +124,9 @@
 
 ## 历史分页
 
-`GET /api/app/v1/readings/{id}/messages?limit=20&offset=0`
+`GET /api/app/v1/readings/{id}?limit=20&offset=0`
 
-不传 `limit` 时返回全部，`has_more` 为 `false`。`offset` 是已经看过的条数。
+`limit` / `offset` 只作用于详情里的 `messages`。不传 `limit` 时返回全部，`has_more` 为 `false`。`offset` 是已经看过的条数。
 
 ## 怎么判断画面
 
@@ -480,9 +505,9 @@
 
 ### 历史详情
 
-`GET /api/app/v1/readings/{id}/messages`
+`GET /api/app/v1/readings/{id}`（看返回里的 `messages`）
 
-占卜 1569 实际返回的顺序是：
+占卜 1569 实际返回的对话顺序是：
 
 1. 类型二，「最近的我，最需要关注什么？」
 2. 类型一，过去愚者正位、现在魔术师逆位、未来女祭司正位

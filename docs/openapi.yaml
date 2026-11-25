@@ -263,23 +263,36 @@ components:
           description: 归属用户。未登录为 null。
         type:
           type: string
-          description: normal、tarotist、explore、daily。底层业务类型，与 conversation_type 不同。
+          description: |
+            底层业务类型：normal、tarotist、explore、daily。
+            注意：explore 同时表示「此刻抉择」和「主题占卜」两个入口，不能单靠本字段区分；
+            App 必须用 conversation_type（或 theme_key）再判断，见 conversation_type 说明。
         theme_key:
           type: string
           description: |
             探索主题键。创建 explore 时可写；选阵后若为空从牌阵回填。
             空字符串表示尚未绑定主题（仅 explore 未选阵且未传 theme_key）。
+            App 判断探索子类：yes_or_no / either_or → 此刻抉择；relationship、communication、career、
+            study、interpersonal、shopping、outfit、wellbeing、inner → 主题占卜。
         conversation_type:
           type: string
           enum: ['', daily, moment, theme]
           description: |
-            历史对话三类：daily=今日/明日；moment=普通占卜与探索此刻抉择（yes_or_no/either_or）；
-            theme=主题占卜。explore 尚未有 theme_key 时为空字符串。
+            历史对话三类（App 分 UI 用这个，不要只用 type）：
+            - daily：今日/明日（type=daily；再看 target）
+            - moment：普通占卜（type=normal）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no 或 either_or）
+            - theme：主题占卜（type=explore 且 theme_key 为其余探索主题）
+            explore 尚未有 theme_key 时为空字符串，此时还分不出此刻抉择与主题占卜。
+            判定示例：type=explore && conversation_type=moment → 此刻抉择；
+            type=explore && conversation_type=theme → 主题占卜。
         conversation_label:
           type: string
           description: |
-            展示名。daily 为「今日运势」或「明日运势」；moment 为「普通占卜」「此刻抉择」或「占卜师」；
-            theme 为「主题占卜」。conversation_type 为空时为空。
+            展示名，可直接用于列表角标/标题：
+            - 今日运势 / 明日运势（daily）
+            - 普通占卜 / 占卜师 / 此刻抉择（moment，按 type+theme_key）
+            - 主题占卜（theme）
+            conversation_type 为空时为空。区分此刻抉择与主题占卜时，也可用本字段是否等于「此刻抉择」「主题占卜」。
         stage:
           type: string
           description: |
@@ -436,6 +449,49 @@ components:
             data:
               $ref: "#/components/schemas/Reading"
               description: 单条占卜。
+    ReadingDetail:
+      description: GET /readings/{id} 的 data。进度字段与 Reading 相同，并附带对话气泡。
+      allOf:
+        - $ref: "#/components/schemas/Reading"
+        - type: object
+          properties:
+            reading_id:
+              type: integer
+              format: int64
+              description: 与 id 相同，方便和 ConversationData 对齐。
+            messages:
+              type: array
+              description: 对话气泡。不传 limit 时为从 offset 起的剩余全部。
+              items:
+                type: object
+                additionalProperties: true
+            has_more:
+              type: boolean
+              description: 对话是否还有下一页。未分页或已到末尾为 false。
+    ReadingDetailOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ReadingDetail"
+              description: 单条占卜进度 + 对话。
+    ConversationData:
+      type: object
+      required: [reading_id, has_more, messages]
+      properties:
+        reading_id:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        messages:
+          type: array
+          description: 每条有 kind、from、style。画面对照 docs/app-conversation.md。
+          items:
+            type: object
+            additionalProperties: true
     ReadingListOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -4847,153 +4903,6 @@ paths:
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/custom-decks:
-    get:
-      tags: [占卜解读]
-      operationId: appListCustomDecks
-      summary: 自定义牌组列表
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。每用户最多 10 套。不返回 faces。
-      responses:
-        "200":
-          description: data 为 CustomDeckList。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/CustomDeckList"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    post:
-      tags: [占卜解读]
-      operationId: appCreateCustomDeck
-      summary: 新建自定义牌组
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。默认草稿「我的自定义牌组」。图片先 POST /uploads?folder=custom。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CustomDeckBody"
-      responses:
-        "200":
-          description: data 为 CustomDeck（含 faces）。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/CustomDeck"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/custom-decks/{id}:
-    get:
-      tags: [占卜解读]
-      operationId: appGetCustomDeck
-      summary: 自定义牌组详情
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        "200":
-          description: data 为 CustomDeck（含 faces）。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/CustomDeck"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags: [占卜解读]
-      operationId: appPutCustomDeck
-      summary: 更新自定义牌组
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
-      description: faces 若传入则整表替换。未保存改动能改草稿；立即使用须 status=saved 后再 POST .../use。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CustomDeckBody"
-      responses:
-        "200":
-          description: data 为 CustomDeck。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/CustomDeck"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/custom-decks/{id}/use:
-    post:
-      tags: [占卜解读]
-      operationId: appUseCustomDeck
-      summary: 立即使用自定义牌组
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
-      description: 必须已保存。之后的占卜用这套牌；已完成记录仍按牌名解析官方图，不受影响。
-      responses:
-        "200":
-          description: data 为 CustomDeck。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/CustomDeck"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
   /api/app/v1/spreads:
     get:
       tags: [占卜解读]
@@ -5138,6 +5047,12 @@ paths:
         游标分页：limit 默认 20、上限 100；用 next_cursor 作为下一页的 before_id。可按 type 过滤。
         每条带 conversation_type（daily / moment / theme）与 conversation_label，以及按对话类型区分的 stage / stage_label；
         同时保留原 status / progress / continue / status_label。daily 另带 target（today/tomorrow）与 business_date。
+
+        App 区分入口（必读）：
+        - type 只有 normal / tarotist / explore / daily 四种；explore 一种 type 覆盖两个探索入口。
+        - 此刻抉择：type=explore 且 conversation_type=moment（conversation_label=此刻抉择；theme_key 为 yes_or_no 或 either_or）。
+        - 主题占卜：type=explore 且 conversation_type=theme（conversation_label=主题占卜；theme_key 为其余探索主题）。
+        - 不要用 type==explore 单独判断是哪一种；moment 还可能是普通占卜/占卜师，需同时看 type。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: limit
@@ -5214,10 +5129,23 @@ paths:
     get:
       tags: [占卜解读]
       operationId: appGetReading
-      summary: 占卜详情
+      summary: 占卜详情（进度 + 对话）
+      description: |
+        一次返回进度与对话。data 在 Reading 之上带 reading_id、messages、has_more。
+        不传 limit（或 ≤0）时 messages 从 offset 起给剩余全部。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer}
+          description: 对话分页条数。空或 ≤0 表示从 offset 起返回剩余全部。
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer}
+          description: 对话已看过的条数。首页用 0。
       responses:
         "200":
           description: 不属于当前用户、已删除或不存在时为业务错误。
@@ -5225,7 +5153,7 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/ReadingDetailOK"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -5246,88 +5174,6 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/BoolOK"
                   - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/question:
-    put:
-      tags: [占卜解读]
-      operationId: appEditQuestion
-      summary: 修改问题
-      description: |
-        普通占卜只能在 QUESTION_CREATED 或 SPREAD_SELECTED，且没有跳过检测。
-        explore 在 COMPLETED / INTERPRETING 之前可改。抽牌后不能改。最长 200 个码点。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/QuestionBody"
-            examples:
-              成功:
-                summary: 修改问题
-                value:
-                  question: 我最近的感情运势如何？
-      responses:
-        "200":
-          description: 成功 data 为更新后的 Reading。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ReadingOK"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/detect:
-    post:
-      tags: [占卜解读]
-      operationId: appDetect
-      summary: 问题检测
-      description: |
-        只做本地检测，不调用 detect 绑定的模型。分类树和有权益时的兜底触发还没定，所以 decided 为 false，model_called 为 false。
-        空问题 invalid 为 true，不能进入选阵。其余问题可以保留原问题并选阵。
-        需要同一次结果的事件流时用 `/detect/stream`，只发 done，不发 delta。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      responses:
-        "200":
-          description: code=0 时 data 为检测文本。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/DetectResult"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/detect/stream:
-    post:
-      tags: [占卜解读]
-      operationId: appDetectStream
-      summary: 问题检测（SSE 流式）
-      description: |
-        与 detect 相同，只发一次 done。不调用模型，没有 delta。
-        事件：delta（data:{"text":"片段"}）、done（data:{"text","vendor","model","suggestions"}）、error。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      responses:
-        "200":
-          description: 成功为 text/event-stream。
-          content:
-            text/event-stream:
-              schema:
-                type: string
-                description: "SSE 事件流。"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/app/v1/readings/{id}/spread:
@@ -5358,84 +5204,6 @@ paths:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/ReadingOK"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/shuffle:
-    post:
-      tags: [占卜解读]
-      operationId: appShuffle
-      summary: 洗牌
-      description: |
-        登录用户先过 play 额度门槛，不够则返回 QuotaBlockEnvelope（code=1），状态不变。
-        未登录不预扣。成功把 SPREAD_SELECTED 改为 SHUFFLING。无请求体。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      responses:
-        "200":
-          description: 成功为 Reading；额度拦截为 QuotaBlockEnvelope。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ReadingOK"
-                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/cut:
-    post:
-      tags: [占卜解读]
-      operationId: appCut
-      summary: 切牌
-      description: 仅 SHUFFLING 可进入 CUTTING。不再次扣费。无请求体。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      responses:
-        "200":
-          description: 成功 data 为 Reading。状态不对时「请先洗牌」。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ReadingOK"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/draw:
-    post:
-      tags: [占卜解读]
-      operationId: appDraw
-      summary: 抽牌
-      description: |
-        登录用户先过 play 额度门槛。状态须为 SPREAD_SELECTED 或 CUTTING。
-        SHUFFLING 会提示先切牌。mode 为 normal（随机）或 numerology。灵数按这一问保存的 78 张映射取牌，含正逆位；输入个数必须等于牌阵张数。全正或全逆会重抽正逆位。补抽 POST /redraw 只收一个新数字，追加一张，不覆盖已抽出的牌。
-        成功后状态 CARDS_FIXED。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DrawBody"
-            examples:
-              成功:
-                summary: 随机抽牌
-                value:
-                  mode: normal
-      responses:
-        "200":
-          description: 成功为 Reading；额度拦截为 QuotaBlockEnvelope。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ReadingOK"
-                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -5487,113 +5255,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QuotaBlockEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/confirm-quota:
-    post:
-      tags: [额度钻石]
-      operationId: appConfirmQuota
-      summary: 确认是否扣额度
-      description: |
-        未登录拒绝。已经扣过则 code=0，message「已经扣过，不再扣」，不再扣。
-        consume 不为 true 时不扣，记录保留。
-        consume=true 时按共享优先级扣 play；不够则 QuotaBlockEnvelope。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ConfirmQuotaBody"
-            examples:
-              成功:
-                summary: 确认扣费
-                value:
-                  consume: true
-      responses:
-        "200":
-          description: 确认结果或额度拦截。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/ConfirmQuotaData"
-                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/use-reward:
-    post:
-      tags: [额度钻石]
-      operationId: appUseReward
-      summary: 按共享优先级扣一次
-      description: |
-        无请求体。名字是 use-reward，实现是 settleSharedQuota(play)。
-        免费用户：今日免费 → 邀请奖励 → 人工补发 → 开通会员。会员扣统一额度。
-        单价未配置或额度不足时返回 QuotaBlockEnvelope，不编造消耗数量。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      responses:
-        "200":
-          description: 扣费结果或额度拦截。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/UseRewardData"
-                  - $ref: "#/components/schemas/QuotaBlockEnvelope"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/paywall:
-    post:
-      tags: [额度钻石]
-      operationId: appPaywall
-      summary: 取消或继续付费等待
-      description: |
-        cancel：保留记录，不生成。没有 pending/unconfigured 行时「没有可取消的付费等待」。
-        resume：对当前用户所有挂起的 paywall 再试一次扣费。单价未配置或钻石仍不足的任务被跳过，不会伪造支付成功。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PaywallBody"
-            examples:
-              成功:
-                summary: 继续付费墙
-                value:
-                  action: resume
-      responses:
-        "200":
-          description: code=0 时 data 为取消结果或 resumed_tasks。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/PaywallResult"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/app/v1/readings/{id}/followups:
@@ -5673,31 +5334,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QuotaBlockEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/readings/{id}/messages:
-    get:
-      tags: [占卜解读]
-      operationId: appMessages
-      summary: 追问消息
-      description: 按 turn_id、seq 升序。须拥有该占卜。
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-        - $ref: "#/components/parameters/PathId"
-      responses:
-        "200":
-          description: data 为消息数组。App 列表不含 reading_id。
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessMeta"
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Message"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/app/v1/readings/{id}/workflow:
@@ -5862,176 +5498,6 @@ paths:
                         $ref: "#/components/schemas/CalendarView"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/iap/verify:
-    post:
-      tags: [内购]
-      operationId: appIAPVerify
-      summary: 验单并入账额度
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: |
-        必须登录，且账号未注销、未合并。
-        不调用 App Store 或 Google Play。票据非空且商品映射到启用的 SKU 时 verify_status=verified。
-        发放量为 null：credit_status=amount_unconfigured，不写入账，不把 null 当成 0。
-        订阅缺少 expires_at、商品未映射、商品未启用、交易号已被别人使用，都会失败。
-        订阅发放累加统一额度；quota_pack 仅会员可买并入额度；consumable_pack 返回「塔塔币已下线」。
-        免费次数不会被这次入账改动。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/IAPVerifyBody"
-            examples:
-              成功:
-                summary: 本地验单
-                value:
-                  platform: app_store
-                  product_id: unmapped
-                  transaction_id: txn-demo
-                  receipt: demo-receipt
-      responses:
-        "200":
-          description: code=0 时 data 为订单快照。业务拒绝仍是 code=1、data=null，例如「票据为空」「平台不正确」。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/IAPOrderSnapshot"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/iap/restore:
-    post:
-      tags: [内购]
-      operationId: appIAPRestore
-      summary: 恢复购买
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: |
-        restore_hook_enabled=false 时直接「恢复购买钩子已关闭」，不写订单。verify 不受此开关影响。
-        最多 20 笔。单笔失败记在 results 里，不让整批变成 code=1。
-        验单规则与 /iap/verify 相同：不访问商店，价格与发放量未配置则不入账。
-        restore_required_first_pack 只出现在响应里，不作为拦截条件。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/IAPRestoreBody"
-            examples:
-              成功:
-                summary: 恢复购买
-                value:
-                  platform: app_store
-                  purchases:
-                    - product_id: unmapped
-                      transaction_id: txn-demo
-                      receipt: demo-receipt
-      responses:
-        "200":
-          description: code=0 时 data 含开关和 results。钩子关闭时为普通业务错误。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            allOf:
-                              - $ref: "#/components/schemas/IAPConfig"
-                              - type: object
-                                properties:
-                                  results:
-                                    type: array
-                                    items:
-                                      $ref: "#/components/schemas/IAPOrderSnapshot"
-                                  resumed_tasks:
-                                    type: array
-                                    items:
-                                      $ref: "#/components/schemas/ResumedTask"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/iap/entitlements:
-    get:
-      tags: [内购]
-      operationId: appIAPEntitlements
-      summary: 会员额度与身份
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。非会员不返回额度余额。会员返回 quota_remaining。display_label 为「额度」。
-      responses:
-        "200":
-          description: data 为 DiamondView，不含 ledger。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/DiamondView"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/iap/skus:
-    get:
-      tags: [内购]
-      operationId: appIAPSKUs
-      summary: 已启用的 SKU
-      description: |
-        公开，不需要登录。登录后按身份过滤：consumable_pack 永不返回；quota_pack 仅会员可见。
-        只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、quota_pack、yearly_unlock。
-        种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。 unit=quota。
-      parameters:
-        - name: kind
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [month_subscription, year_subscription, quota_pack, yearly_unlock, deck_year, deck_bundle, deck_single, deck_addon]
-      responses:
-        "200":
-          description: data 为 IAPSKU 数组。
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessMeta"
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/IAPSKU"
-  /api/app/v1/iap/config:
-    get:
-      tags: [内购]
-      operationId: appIAPConfig
-      summary: 恢复购买开关
-      description: 公开，不需要登录。
-      responses:
-        "200":
-          description: data 为 IAPConfig。
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessMeta"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/IAPConfig"
   /api/app/v1/explore/topics:
     get:
       tags: [探索]
@@ -6098,30 +5564,6 @@ paths:
                         properties:
                           data:
                             $ref: "#/components/schemas/RedeemResult"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /api/app/v1/wallet/ledger:
-    get:
-      tags: [钱包兑换]
-      operationId: appWalletLedger
-      summary: 额度流水
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      description: 必须登录。items 无数据时为空数组，不编造收支。字段为 time/type/amount/balance/note。展示名 display_label=额度。
-      responses:
-        "200":
-          description: data 为 WalletLedger。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - allOf:
-                      - $ref: "#/components/schemas/SuccessMeta"
-                      - type: object
-                        properties:
-                          data:
-                            $ref: "#/components/schemas/WalletLedger"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"

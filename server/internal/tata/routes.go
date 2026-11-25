@@ -148,7 +148,6 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups", a.h(a.appFollowup))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/redraw", a.h(a.appFollowupRedraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/stream", a.h(a.appFollowupStream))
-	mux.HandleFunc("GET /api/app/v1/readings/{id}/messages", a.h(a.appMessages))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/workflow", a.h(a.appWorkflow))
 	mux.HandleFunc("GET /api/app/v1/readings", a.h(a.appListReadings))
 	mux.HandleFunc("GET /api/app/v1/readings/{id}", a.h(a.appGetReading))

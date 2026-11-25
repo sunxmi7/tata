@@ -1039,7 +1039,7 @@ COMMENT ON COLUMN ai_jobs.kind IS 'interpret / detect / followup / yearly。';
 COMMENT ON COLUMN ai_jobs.status IS 'queued / running / succeeded / failed。';
 COMMENT ON COLUMN ai_jobs.partial_text IS '流式过程中的已产出文本，供重连回放。';
 COMMENT ON COLUMN readings.cards IS 'JSON 牌面。灵数抽牌 numbers 映射 Rider-Waite 后写入。';
-COMMENT ON TABLE reading_messages IS '解读追问对话。对应 /readings/{id}/messages、followups。';
+COMMENT ON TABLE reading_messages IS '解读追问对话。对应 GET /readings/{id} 的 messages、followups。';
 
 COMMENT ON TABLE monthly_report_saves IS '月度报告「已保存」标记。对应 POST /monthly-reports/save。统计仍现查 readings。';
 COMMENT ON TABLE yearly_reports IS '年度运势。解锁后按 Pixso 1034:13493 四步：资料 → 十二宫 12 张 → 四季 4 张 → 生成报告。';

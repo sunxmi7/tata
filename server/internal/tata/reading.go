@@ -1342,6 +1342,21 @@ func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
 	if err := a.attachPendingRedraw(r.Context(), id, item); err != nil {
 		return err
 	}
+	messages, err := a.loadConversation(r, id)
+	if err != nil {
+		return err
+	}
+	limit, offset := 0, 0
+	if s := r.URL.Query().Get("limit"); s != "" {
+		limit, _ = strconv.Atoi(s)
+	}
+	if s := r.URL.Query().Get("offset"); s != "" {
+		offset, _ = strconv.Atoi(s)
+	}
+	page, hasMore := pageMessages(messages, limit, offset)
+	item["reading_id"] = id
+	item["messages"] = page
+	item["has_more"] = hasMore
 	writeOK(w, item)
 	return nil
 }

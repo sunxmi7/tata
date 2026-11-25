@@ -65,7 +65,12 @@ tags:
   - name: 牌阵界面
     description: 牌阵目录、阵位和选阵。阵位布局对照 Spread.positions。
   - name: 历史记录
-    description: 我的占卜列表、详情、删除和对话记录。
+    description: |
+      我的占卜列表、详情（进度 + 对话 bubbles）、删除。对话只在 GET /readings/{id}，不再有单独 /messages。
+      底层 type=explore 同时覆盖「此刻抉择」和「主题占卜」，App 不得用 type 区分二者。
+      判断规则：type=explore 且 conversation_type=moment（或 conversation_label=此刻抉择）→ 此刻抉择；
+      type=explore 且 conversation_type=theme（或 conversation_label=主题占卜）→ 主题占卜。
+      也可看 theme_key：yes_or_no / either_or 为此刻抉择，其余探索主题为主题占卜。
   - name: 日历记录
     description: 今日/明日一牌与日历月视图。日详情项含牌名、正逆位、短文、多张缩略图、占卜师与时分。
   - name: 塔塔币购买
@@ -947,6 +952,12 @@ paths:
         游标分页：limit 默认 20、上限 100；用上一页的 next_cursor 作为下一页的 before_id。可按 type 过滤。
         每条带 conversation_type（daily / moment / theme）与 conversation_label，以及按对话类型区分的 stage / stage_label；
         同时保留原 status / progress / continue / status_label。daily 另带 target（today/tomorrow）与 business_date。
+
+        App 区分入口（必读）：
+        - type 只有 normal / tarotist / explore / daily 四种；explore 一种 type 覆盖两个探索入口。
+        - 此刻抉择：type=explore 且 conversation_type=moment（conversation_label=此刻抉择；theme_key 为 yes_or_no 或 either_or）。
+        - 主题占卜：type=explore 且 conversation_type=theme（conversation_label=主题占卜；theme_key 为其余探索主题）。
+        - 不要用 type==explore 单独判断是哪一种；moment 还可能是普通占卜/占卜师，需同时看 type。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
         - $ref: '#/components/parameters/DeviceIdQuery'
@@ -1029,14 +1040,25 @@ paths:
     get:
       tags: [历史记录, 抽牌]
       operationId: appGetReading
-      summary: 占卜进度
+      summary: 占卜详情（进度 + 对话）
       description: |
-        用来判断停在哪一步。新客户端优先看 conversation_type + stage；progress 仍按 status 给旧文案。
-        对话内容以 GET /readings/{id}/messages 为准。未登录不带令牌，query 带 device_id。
+        一次返回进度与对话。新客户端优先看 conversation_type + stage；progress 仍按 status 给旧文案。
+        data 在 Reading 之上带 reading_id、messages、has_more。不传 limit（或 ≤0）时 messages 从 offset 起给剩余全部。
+        未登录不带令牌，query 带 device_id。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
         - $ref: '#/components/parameters/DeviceIdQuery'
         - $ref: '#/components/parameters/PathId'
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer}
+          description: 对话分页条数。空或 ≤0 表示从 offset 起返回剩余全部。
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer}
+          description: 对话已看过的条数。首页用 0。
       responses:
         '200':
           description: 不属于当前用户、已删除或不存在时为业务错误。
@@ -1044,7 +1066,7 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/ReadingOK'
+                  - $ref: '#/components/schemas/ReadingDetailOK'
                   - $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -1427,39 +1449,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/QuotaBlockEnvelope'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /api/app/v1/readings/{id}/messages:
-    get:
-      tags: [历史记录, 抽牌]
-      operationId: appMessages
-      summary: 占卜对话
-      description: |
-        按过程顺序返回整段对话。query 为 limit、offset。不传 limit 或 limit 小于等于 0 时，从 offset 起返回剩余，has_more 为 false。
-        data 为 reading_id、messages、has_more。每条有 kind、from、style。字段说明见 docs/app-conversation.md。
-        未登录不带令牌，query 带 device_id。
-      parameters:
-        - $ref: '#/components/parameters/DivinationAuthorization'
-        - $ref: '#/components/parameters/DeviceIdQuery'
-        - $ref: '#/components/parameters/PathId'
-        - name: limit
-          in: query
-          schema: {type: integer}
-        - name: offset
-          in: query
-          schema: {type: integer}
-      responses:
-        '200':
-          description: data 含 reading_id、messages、has_more。
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessMeta'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/ConversationData'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings/{id}/workflow:
@@ -2737,23 +2726,36 @@ components:
           description: 归属用户。未登录创建的记录为 null，登录后按 device_id 挂上。
         type:
           type: string
-          description: normal、tarotist、explore、daily。底层业务类型，与 conversation_type 不同。
+          description: |
+            底层业务类型：normal、tarotist、explore、daily。
+            注意：explore 同时表示「此刻抉择」和「主题占卜」两个入口，不能单靠本字段区分；
+            App 必须用 conversation_type（或 theme_key）再判断，见 conversation_type 说明。
         theme_key:
           type: string
           description: |
             探索主题键。创建 explore 时可写；选阵后若为空从牌阵回填。
             空字符串表示尚未绑定主题（仅 explore 未选阵且未传 theme_key）。
+            App 判断探索子类：yes_or_no / either_or → 此刻抉择；relationship、communication、career、
+            study、interpersonal、shopping、outfit、wellbeing、inner → 主题占卜。
         conversation_type:
           type: string
           enum: ['', daily, moment, theme]
           description: |
-            历史对话三类：daily=今日/明日；moment=普通占卜与探索此刻抉择（yes_or_no/either_or）；
-            theme=主题占卜。explore 尚未有 theme_key 时为空字符串。
+            历史对话三类（App 分 UI 用这个，不要只用 type）：
+            - daily：今日/明日（type=daily；再看 target）
+            - moment：普通占卜（type=normal）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no 或 either_or）
+            - theme：主题占卜（type=explore 且 theme_key 为其余探索主题）
+            explore 尚未有 theme_key 时为空字符串，此时还分不出此刻抉择与主题占卜。
+            判定示例：type=explore && conversation_type=moment → 此刻抉择；
+            type=explore && conversation_type=theme → 主题占卜。
         conversation_label:
           type: string
           description: |
-            展示名。daily 为「今日运势」或「明日运势」；moment 为「普通占卜」「此刻抉择」或「占卜师」；
-            theme 为「主题占卜」。conversation_type 为空时为空。
+            展示名，可直接用于列表角标/标题：
+            - 今日运势 / 明日运势（daily）
+            - 普通占卜 / 占卜师 / 此刻抉择（moment，按 type+theme_key）
+            - 主题占卜（theme）
+            conversation_type 为空时为空。区分此刻抉择与主题占卜时，也可用本字段是否等于「此刻抉择」「主题占卜」。
         stage:
           type: string
           description: |
@@ -2910,6 +2912,34 @@ components:
             data:
               $ref: '#/components/schemas/Reading'
               description: 单条占卜。
+    ReadingDetail:
+      description: GET /readings/{id} 的 data。进度字段与 Reading 相同，并附带对话气泡。
+      allOf:
+        - $ref: '#/components/schemas/Reading'
+        - type: object
+          properties:
+            reading_id:
+              type: integer
+              format: int64
+              description: 与 id 相同，方便和 ConversationData 对齐。
+            messages:
+              type: array
+              description: 对话气泡。字段见 docs/app-conversation.md。不传 limit 时为从 offset 起的剩余全部。
+              items:
+                type: object
+                additionalProperties: true
+            has_more:
+              type: boolean
+              description: 对话是否还有下一页。未分页或已到末尾为 false。
+    ReadingDetailOK:
+      allOf:
+        - $ref: '#/components/schemas/SuccessMeta'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ReadingDetail'
+              description: 单条占卜进度 + 对话。
     ReadingListOK:
       allOf:
         - $ref: '#/components/schemas/SuccessMeta'

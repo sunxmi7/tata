@@ -521,7 +521,7 @@ func TestReadingMessagesReplayConversation(t *testing.T) {
 		($1,1,2,'assistant','再做一次小范围尝试')`, id); err != nil {
 		t.Fatal(err)
 	}
-	body := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/messages", id))
+	body := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", id))
 	if body["reading_id"].(float64) != float64(id) {
 		t.Fatalf("reading id: %#v", body["reading_id"])
 	}
@@ -591,7 +591,7 @@ func TestConversationShapesMatchOriginals(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/messages", id))
+	body := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", id))
 	messages, _ := body["messages"].([]any)
 	got := map[string]map[string]any{}
 	for _, raw := range messages {
@@ -679,7 +679,7 @@ func TestFollowupMustOfferClarifier(t *testing.T) {
 	if actions[0].(map[string]any)["label"] != "去抽牌" || actions[1].(map[string]any)["label"] != "跳过" {
 		t.Fatalf("redraw actions: %#v", actions)
 	}
-	paused := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/messages", id))
+	paused := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", id))
 	pausedMessages, _ := paused["messages"].([]any)
 	foundPending := false
 	for _, rawItem := range pausedMessages {
@@ -724,7 +724,7 @@ func TestFollowupMustOfferClarifier(t *testing.T) {
 	if cards[0].(map[string]any)["name"] == "" || cards[0].(map[string]any)["name"] == "愚者" {
 		t.Fatalf("clarifier card: %#v", cards[0])
 	}
-	history := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/messages", id))
+	history := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", id))
 	messages, _ := history["messages"].([]any)
 	spreadN, offers, singles := 0, 0, 0
 	for _, rawItem := range messages {
@@ -918,12 +918,12 @@ func TestConventionalFlowCoversEveryType(t *testing.T) {
 	if !paused {
 		t.Fatalf("followup lost redraw: %#v", followed["messages"])
 	}
-	page := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/messages?limit=1&offset=0", ownID))
+	page := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d?limit=1&offset=0", ownID))
 	firstPage := messageList(t, page)
 	if page["has_more"] != true || len(firstPage) != 1 {
 		t.Fatalf("page: %#v", page)
 	}
-	rest := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/messages?limit=1&offset=1", ownID))
+	rest := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d?limit=1&offset=1", ownID))
 	second := messageList(t, rest)
 	if rest["has_more"] != true || second[0]["style"] == firstPage[0]["style"] && second[0]["text"] == firstPage[0]["text"] {
 		t.Fatalf("offset repeated the first message: %#v", second[0])
