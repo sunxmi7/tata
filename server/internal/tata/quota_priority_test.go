@@ -16,8 +16,18 @@ import (
 func TestSharedQuotaPriority(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_spread_ids='[]' WHERE id=1`)
+	})
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_spread_ids='[]' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
 	token, uid := registerUser(t, ts, store, "priority")
 	allowGiftSpread(t, store)
+	// This case starts from invite only; clear any pending registration gift row.
+	if _, err := store.Exec(t.Context(), `DELETE FROM registration_gifts WHERE user_id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := store.Exec(t.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at, invite_remaining) VALUES ($1, now(), now(), 3)
 		ON CONFLICT (user_id) DO UPDATE SET invite_remaining=3`, uid); err != nil {
@@ -645,6 +655,45 @@ func TestRegistrationGiftConfig(t *testing.T) {
 	}
 	if granted2.Valid || remaining2 != 0 {
 		t.Fatalf("ungranted: valid=%v remaining=%d", granted2.Valid, remaining2)
+	}
+}
+
+// Pending gift must be granted inside charge/settle, without App calling GET /quota first.
+func TestSettleGrantsPendingRegistrationGiftWithoutQuotaAPI(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_valid_days=3, registration_grant_count=1, registration_spread_ids='[]' WHERE id=1`)
+	})
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_spread_ids='[]' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	token, uid := registerUser(t, ts, store, "settlegrant")
+	var granted sql.NullTime
+	if err := store.QueryRow(t.Context(), `SELECT granted_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&granted); err != nil {
+		t.Fatal(err)
+	}
+	if granted.Valid {
+		t.Fatal("expected ungranted before settle")
+	}
+	allowGiftSpread(t, store)
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=0, registration_grant_count=1 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	id := chargeFreePlay(t, ts, store, token, "结算时补发注册赠送")
+	if playEntitlement(t, store, id) != entReward {
+		t.Fatalf("entitlement %s", playEntitlement(t, store, id))
+	}
+	var left int
+	var grantedAt sql.NullTime
+	if err := store.QueryRow(t.Context(), `SELECT remaining, granted_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&left, &grantedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !grantedAt.Valid {
+		t.Fatal("gift should be granted during charge")
+	}
+	if left != 0 {
+		t.Fatalf("remaining after play %d", left)
 	}
 }
 

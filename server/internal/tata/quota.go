@@ -26,6 +26,8 @@ import (
 //  2. redeem-code free counts on the old daily / ≤3-card scope
 //  3. paywall → 开通会员
 // Daily free is not spent. Explore, yearly, and tarotist are outside the gift and invite.
+// Pending registration gifts are granted inside playCover/settleSharedQuota;
+// App GET /quota is not required before charging.
 //
 // Trials (neither daily nor quota):
 //  - onboard_trial: one per device, consumed when interpretation is shown after login
@@ -110,6 +112,11 @@ func settleSharedQuota(ctx context.Context, tx Tx, opts chargeOpts) (quotaDecisi
 	}
 	if opts.UserID == 0 {
 		return quotaDecision{Status: quotaAnon, Message: paywallNeedLogin}, nil
+	}
+	// Interpret / spread settle must grant pending registration gifts itself.
+	// App GET /quota is display-only and must not be required before charging.
+	if err := ensureRegistrationGift(ctx, tx, opts.UserID); err != nil {
+		return quotaDecision{}, err
 	}
 	var kind string
 	var rewardUsed, dailyUsed, settled bool
@@ -998,13 +1005,17 @@ func (s *Store) noteRegistration(ctx context.Context, uid int64) error {
 }
 
 func (s *Store) ensureRegistrationGift(ctx context.Context, uid int64) error {
+	return ensureRegistrationGift(ctx, s, uid)
+}
+
+func ensureRegistrationGift(ctx context.Context, ex execer, uid int64) error {
 	if uid <= 0 {
 		return nil
 	}
 	var registered time.Time
 	var granted sql.NullTime
 	var blocked bool
-	err := s.QueryRow(ctx, `SELECT registered_at, granted_at, reward_blocked FROM registration_gifts WHERE user_id=$1`, uid).Scan(&registered, &granted, &blocked)
+	err := ex.QueryRow(ctx, `SELECT registered_at, granted_at, reward_blocked FROM registration_gifts WHERE user_id=$1`, uid).Scan(&registered, &granted, &blocked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -1014,15 +1025,15 @@ func (s *Store) ensureRegistrationGift(ctx context.Context, uid int64) error {
 	if granted.Valid || blocked {
 		return nil
 	}
-	blocked, err = rewardBlocked(ctx, s, uid)
+	blocked, err = rewardBlocked(ctx, ex, uid)
 	if err != nil {
 		return err
 	}
 	if blocked {
-		_, err = s.Exec(ctx, `UPDATE registration_gifts SET reward_blocked=TRUE WHERE user_id=$1 AND granted_at IS NULL`, uid)
+		_, err = ex.Exec(ctx, `UPDATE registration_gifts SET reward_blocked=TRUE WHERE user_id=$1 AND granted_at IS NULL`, uid)
 		return err
 	}
-	cfg, err := loadRegistrationSettings(ctx, s)
+	cfg, err := loadRegistrationSettings(ctx, ex)
 	if err != nil {
 		return err
 	}
@@ -1032,11 +1043,13 @@ func (s *Store) ensureRegistrationGift(ctx context.Context, uid int64) error {
 	if time.Now().Before(registered.Add(time.Duration(cfg.DelayMinutes.Int64) * time.Minute)) {
 		return nil
 	}
-	now := time.Now()
-	_, err = s.Exec(ctx, `UPDATE registration_gifts
-		SET granted_at=$2, usable_at=$2, expires_at=$3, total=$4, remaining=$4
+	// Use DB now() for usable_at so same-transaction checks like usable_at<=now() pass.
+	_, err = ex.Exec(ctx, `UPDATE registration_gifts
+		SET granted_at=now(), usable_at=now(),
+			expires_at=now() + make_interval(days => $2),
+			total=$3, remaining=$3
 		WHERE user_id=$1 AND granted_at IS NULL`,
-		uid, now, now.Add(time.Duration(cfg.ValidDays)*24*time.Hour), cfg.GrantCount)
+		uid, cfg.ValidDays, cfg.GrantCount)
 	return err
 }
 
@@ -1193,6 +1206,9 @@ func playCover(ctx context.Context, tx Tx, opts chargeOpts) (string, error) {
 	if already {
 		return "done", nil
 	}
+	if err := ensureRegistrationGift(ctx, tx, opts.UserID); err != nil {
+		return "", err
+	}
 	member, err := hasActiveMembership(ctx, tx, opts.UserID)
 	if err != nil {
 		return "", err
@@ -1298,6 +1314,11 @@ func (a *App) chargeAtSpread(w http.ResponseWriter, r *http.Request, readingID i
 		return false, err
 	}
 	if cover == "later" || cover == "done" {
+		// Commit so playCover's pending registration-gift grant is kept.
+		// Rolling back here used to drop the gift and force App GET /quota.
+		if err := tx.Commit(r.Context()); err != nil {
+			return false, err
+		}
 		return false, nil
 	}
 	decision, err := settleSharedQuota(r.Context(), tx, opts)
