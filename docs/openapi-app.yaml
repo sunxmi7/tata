@@ -2147,6 +2147,7 @@ paths:
         必须登录。month 缺省为用户时区当前月。未来月份拒绝。
         统计来自该月 readings：探索次数、陪伴天数、关注主题（问题命中探索主题标题）。
         寄语截取当月已完成解读，无则 quote_status=pending，不编造。无记录时 status=empty。
+        演示：`?demo=1`/`ready` 返回有数据样例，`?demo=empty` 返回空月；或配置 `reports.demo=true` 默认给 ready 样例。
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - name: month
@@ -2155,6 +2156,13 @@ paths:
           schema:
             type: string
             example: 2026-11
+        - name: demo
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ['1', ready, empty]
+          description: 可选。返回展示用假数据，不读真实占卜统计。
       responses:
         '200':
           description: data 为 MonthlyReport。
@@ -2215,9 +2223,17 @@ paths:
         必须登录。路径 id 为年份。年卡有效则 unlocked=true。
         单独购买价格取已启用的 yearly_unlock SKU（种子 ¥28.8）。卖点四段取 app_config yearly.{year}.*，未填 content_status=pending。
         解锁后四步：profile（出生日期/时间/地点）→ rhythm（十二宫 12）→ domains（四季 4）→ generate。step 指出当前步。
+        演示：`?demo=1`/`ready` 返回已生成完整样例，`?demo=locked` 返回未解锁卖点页；或配置 `reports.demo=true` 默认 ready。
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/PathId'
+        - name: demo
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ['1', ready, locked]
+          description: 可选。返回展示用假数据，不读真实年运进度。
       responses:
         '200':
           description: data 为 YearlyReport。

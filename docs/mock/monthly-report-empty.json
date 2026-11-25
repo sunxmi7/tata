@@ -1,0 +1,32 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "month": "2026-12",
+    "status": "empty",
+    "empty_title": "这个月还没有抽过牌",
+    "exploration_count": 0,
+    "companion_days": 0,
+    "focus_topics": [],
+    "quote": "",
+    "quote_status": "pending",
+    "saved": false,
+    "saved_at": null,
+    "months": [
+      { "month": "2026-12", "exploration_count": 0, "saved": false },
+      { "month": "2026-11", "exploration_count": 18, "saved": true },
+      { "month": "2026-10", "exploration_count": 9, "saved": true },
+      { "month": "2026-09", "exploration_count": 4, "saved": false },
+      { "month": "2026-08", "exploration_count": 0, "saved": false },
+      { "month": "2026-07", "exploration_count": 2, "saved": false },
+      { "month": "2026-06", "exploration_count": 0, "saved": false },
+      { "month": "2026-05", "exploration_count": 1, "saved": false },
+      { "month": "2026-04", "exploration_count": 0, "saved": false },
+      { "month": "2026-03", "exploration_count": 0, "saved": false },
+      { "month": "2026-02", "exploration_count": 0, "saved": false },
+      { "month": "2026-01", "exploration_count": 3, "saved": false }
+    ],
+    "fields_confirmed": true,
+    "content_invented": false
+  }
+}

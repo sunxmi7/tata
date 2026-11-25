@@ -45,6 +45,10 @@ apple:
   enabled: false
   clientId: ""
 
+# 月报/年报演示数据。true 时 GET monthly-reports、yearly-reports、share 直接返回展示用假数据，方便 App 画页。也可用 ?demo=1|ready|empty|locked。
+reports:
+  demo: true
+
 # 图片上传。driver=local 写本机；driver=oss 传到阿里云 OSS。
 upload:
   driver: local

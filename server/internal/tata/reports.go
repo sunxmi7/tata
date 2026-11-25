@@ -21,6 +21,10 @@ func (a *App) appMonthlyReports(w http.ResponseWriter, r *http.Request) error {
 	if month == "" {
 		month = now.Format("2006-01")
 	}
+	if mode := reportsDemoMode(r); mode != "" {
+		writeOK(w, demoMonthlyReport(month, mode, now))
+		return nil
+	}
 	year, mon, err := parseYearMonth(month)
 	if err != nil {
 		return err
@@ -85,6 +89,10 @@ func (a *App) appYearlyReport(w http.ResponseWriter, r *http.Request) error {
 	if year < 2000 || year > 2100 {
 		return biz("年份不正确")
 	}
+	if mode := reportsDemoMode(r); mode != "" {
+		writeOK(w, demoYearlyReport(r, int(year), mode))
+		return nil
+	}
 	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
 	if err != nil {
 		return err
@@ -105,13 +113,22 @@ func (a *App) appYearlyShare(w http.ResponseWriter, r *http.Request) error {
 	if year < 2000 || year > 2100 {
 		return biz("年份不正确")
 	}
-	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
-	if err != nil {
-		return err
+	var view map[string]any
+	if mode := reportsDemoMode(r); mode != "" {
+		view = demoYearlyReport(r, int(year), mode)
+	} else {
+		var err error
+		view, err = a.buildYearlyReport(r.Context(), uid, int(year), r)
+		if err != nil {
+			return err
+		}
 	}
 	var name string
 	_ = a.Store.QueryRow(r.Context(), `SELECT COALESCE(name,'') FROM app_users WHERE id=$1`, uid).Scan(&name)
 	name = strings.TrimSpace(name)
+	if name == "" && reportsDemoMode(r) != "" {
+		name = "塔塔体验官"
+	}
 	var generatedFor any
 	if name != "" {
 		generatedFor = fmt.Sprintf(T(r.Context(), "为%s生成"), name)

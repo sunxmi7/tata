@@ -1,0 +1,328 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "year": 2026,
+    "unlocked": true,
+    "unlock_source": "year_subscription",
+    "year_member_unlocks": true,
+    "unlock_price_minor": 2880,
+    "unlock_price_currency": "CNY",
+    "standalone_purchase": false,
+    "content_status": "ready",
+    "theme": "这一年的主题，是把「想清楚」慢慢落到「做得到」。你会更频繁地面对选择：留下什么、放下什么、把精力投向哪里。",
+    "domain": "感情、事业与自我成长会轮流成为主线。关系里更需要说清楚期待；工作上适合做可验证的小推进，而不是一次押上全部。",
+    "rhythm": "上半年偏探索与铺垫，下半年更考验耐心与节奏。春夏适合试错，秋冬适合复盘与收束。",
+    "action": "每月留一次认真提问的时间；把模糊不安写成具体问题；用小行动验证判断，而不是反复空转。",
+    "sections": [
+      {
+        "key": "theme",
+        "title": "主题",
+        "body": "这一年的主题，是把「想清楚」慢慢落到「做得到」。你会更频繁地面对选择：留下什么、放下什么、把精力投向哪里。",
+        "content_status": "ready"
+      },
+      {
+        "key": "domain",
+        "title": "领域",
+        "body": "感情、事业与自我成长会轮流成为主线。关系里更需要说清楚期待；工作上适合做可验证的小推进，而不是一次押上全部。",
+        "content_status": "ready"
+      },
+      {
+        "key": "rhythm",
+        "title": "节奏",
+        "body": "上半年偏探索与铺垫，下半年更考验耐心与节奏。春夏适合试错，秋冬适合复盘与收束。",
+        "content_status": "ready"
+      },
+      {
+        "key": "action",
+        "title": "行动",
+        "body": "每月留一次认真提问的时间；把模糊不安写成具体问题；用小行动验证判断，而不是反复空转。",
+        "content_status": "ready"
+      }
+    ],
+    "fields_confirmed": true,
+    "content_invented": false,
+    "step": "ready",
+    "profile": {
+      "birth_date": "1996-08-18",
+      "birth_time": "08:30",
+      "birth_place": "上海",
+      "gender": "不愿透露",
+      "completed": true
+    },
+    "rhythm_cards": [
+      {
+        "position": 1,
+        "position_name": "自我",
+        "card_id": 0,
+        "name": "愚者",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 2,
+        "position_name": "财富",
+        "card_id": 1,
+        "name": "魔术师",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 3,
+        "position_name": "沟通",
+        "card_id": 3,
+        "name": "女皇",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 4,
+        "position_name": "家庭",
+        "card_id": 4,
+        "name": "皇帝",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 5,
+        "position_name": "创造",
+        "card_id": 6,
+        "name": "恋人",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 6,
+        "position_name": "日常",
+        "card_id": 8,
+        "name": "力量",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 7,
+        "position_name": "伴侣",
+        "card_id": 9,
+        "name": "隐者",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 8,
+        "position_name": "深层",
+        "card_id": 13,
+        "name": "死神",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 9,
+        "position_name": "远行",
+        "card_id": 16,
+        "name": "星星",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 10,
+        "position_name": "事业",
+        "card_id": 7,
+        "name": "战车",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 11,
+        "position_name": "社群",
+        "card_id": 19,
+        "name": "太阳",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 12,
+        "position_name": "潜意识",
+        "card_id": 18,
+        "name": "月亮",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      }
+    ],
+    "house_cards": [
+      {
+        "position": 1,
+        "position_name": "自我",
+        "card_id": 0,
+        "name": "愚者",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 2,
+        "position_name": "财富",
+        "card_id": 1,
+        "name": "魔术师",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 3,
+        "position_name": "沟通",
+        "card_id": 3,
+        "name": "女皇",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 4,
+        "position_name": "家庭",
+        "card_id": 4,
+        "name": "皇帝",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 5,
+        "position_name": "创造",
+        "card_id": 6,
+        "name": "恋人",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 6,
+        "position_name": "日常",
+        "card_id": 8,
+        "name": "力量",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 7,
+        "position_name": "伴侣",
+        "card_id": 9,
+        "name": "隐者",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 8,
+        "position_name": "深层",
+        "card_id": 13,
+        "name": "死神",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 9,
+        "position_name": "远行",
+        "card_id": 16,
+        "name": "星星",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 10,
+        "position_name": "事业",
+        "card_id": 7,
+        "name": "战车",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 11,
+        "position_name": "社群",
+        "card_id": 19,
+        "name": "太阳",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 12,
+        "position_name": "潜意识",
+        "card_id": 18,
+        "name": "月亮",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      }
+    ],
+    "domain_cards": [
+      {
+        "position": 1,
+        "position_name": "春",
+        "card_id": 17,
+        "name": "审判",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 2,
+        "position_name": "夏",
+        "card_id": 10,
+        "name": "命运之轮",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 3,
+        "position_name": "秋",
+        "card_id": 14,
+        "name": "节制",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 4,
+        "position_name": "冬",
+        "card_id": 21,
+        "name": "世界",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      }
+    ],
+    "season_cards": [
+      {
+        "position": 1,
+        "position_name": "春",
+        "card_id": 17,
+        "name": "审判",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 2,
+        "position_name": "夏",
+        "card_id": 10,
+        "name": "命运之轮",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 3,
+        "position_name": "秋",
+        "card_id": 14,
+        "name": "节制",
+        "orientation": "reversed",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 4,
+        "position_name": "冬",
+        "card_id": 21,
+        "name": "世界",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      }
+    ],
+    "report": "按已固定的十二宫与四季牌面解读如下。\n\n### 十二宫总览\n自我宫的愚者正位，提示这一年适合带着好奇开启新阶段，不必先把自己定死在旧身份上。财富宫魔术师正位，强调资源需要主动组合，而不是被动等待。沟通宫女皇逆位，提醒表达与滋养可能失衡：要么说得太少，要么付出过度。家庭宫皇帝正位，适合把生活根基整理得更有秩序。创造宫恋人正位，创作与选择都会更有温度。日常宫力量逆位，提示身体与节奏容易被硬撑透支。伴侣宫隐者逆位，关系里可能回避深入沟通。深层宫死神正位，支持必要的告别与换挡。远行宫星星正位，视野与希望感会回来。事业宫战车正位，方向一旦明确就适合推进。社群宫太阳正位，合作与曝光会带来正反馈。潜意识宫月亮逆位，适合把模糊不安摊开看清。\n\n### 四季节奏\n春·审判正位：适合复盘旧决定，带着更清醒的自我重新出发。夏·命运之轮正位：机会窗口会打开，关键是接得住变化。秋·节制逆位：节奏容易失控，需要主动刹车与调配。冬·世界正位：适合收束成果、完成阶段性闭环。\n\n### 总评与行动建议\n2026 对你更像「选择—验证—收束」的一年：先允许自己重新定位，再用小步行动检验，最后在年末形成可交付的结果。关系与事业都不要只停在感觉层，把期待、边界和下一周能做的一步写下来。每月用一次认真提问校准方向，会比频繁空转更有效。",
+    "report_status": "ready",
+    "fail_reason": null,
+    "generated_at": "2026-11-25T12:10:00+08:00",
+    "steps": [
+      { "key": "profile", "title": "填写基本信息", "done": true, "required": 0, "drawn": 0 },
+      { "key": "rhythm", "title": "抽取十二宫牌阵", "done": true, "required": 12, "drawn": 12 },
+      { "key": "domains", "title": "抽取四季牌阵", "done": true, "required": 4, "drawn": 4 },
+      { "key": "generate", "title": "生成年度报告", "done": true, "required": 0, "drawn": 0 }
+    ]
+  }
+}

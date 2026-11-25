@@ -1,0 +1,37 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "month": "2026-11",
+    "status": "ready",
+    "empty_title": "",
+    "exploration_count": 18,
+    "companion_days": 12,
+    "focus_topics": [
+      { "title": "感情与关系", "count": 7, "ratio": 0.39 },
+      { "title": "工作与学业", "count": 5, "ratio": 0.28 },
+      { "title": "自我成长", "count": 4, "ratio": 0.22 },
+      { "title": "情绪与疗愈", "count": 2, "ratio": 0.11 }
+    ],
+    "quote": "有连接，但现实推进不足——把期待说清楚，比反复猜测更有用。",
+    "quote_status": "ready",
+    "saved": true,
+    "saved_at": "2026-11-25T12:00:00+08:00",
+    "months": [
+      { "month": "2026-11", "exploration_count": 18, "saved": true },
+      { "month": "2026-10", "exploration_count": 9, "saved": true },
+      { "month": "2026-09", "exploration_count": 4, "saved": false },
+      { "month": "2026-08", "exploration_count": 0, "saved": false },
+      { "month": "2026-07", "exploration_count": 2, "saved": false },
+      { "month": "2026-06", "exploration_count": 0, "saved": false },
+      { "month": "2026-05", "exploration_count": 1, "saved": false },
+      { "month": "2026-04", "exploration_count": 0, "saved": false },
+      { "month": "2026-03", "exploration_count": 0, "saved": false },
+      { "month": "2026-02", "exploration_count": 0, "saved": false },
+      { "month": "2026-01", "exploration_count": 3, "saved": false },
+      { "month": "2025-12", "exploration_count": 0, "saved": false }
+    ],
+    "fields_confirmed": true,
+    "content_invented": false
+  }
+}
