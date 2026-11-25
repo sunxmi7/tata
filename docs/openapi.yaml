@@ -231,79 +231,90 @@ components:
           description: 阵位含义说明。
     DrawnCard:
       type: object
+      description: 牌面对象。出现在 Reading.cards 与对话气泡 messages[].cards 中。
       properties:
         position:
           type: integer
-          description: 该牌所在阵位序号。
+          description: 牌位序号，从 1 开始。
         position_name:
           type: string
-          description: 阵位名。
+          description: 牌位名，例如「过去」「现在」。
         card_id:
           type: integer
-          description: 韦特牌序，力量为 VIII、正义为 XI。
+          description: 韦特牌序编号。力量为 VIII、正义为 XI。
         name:
           type: string
           description: 牌名，例如「愚者」。
         orientation:
           type: string
           enum: [upright, reversed]
-          description: 正位 upright，逆位 reversed。
+          description: upright=正位，reversed=逆位。
+        image:
+          type: string
+          description: 牌图绝对 URL。对话气泡里的牌常用此字段；无图时可能为空字符串。
+        number:
+          type: integer
+          description: 仅灵数抽牌出现。用户输入的 1–78 数字。普通抽牌没有此字段。
     Reading:
       type: object
-      description: scanReading / loadReading 的字段。时间是 RFC3339。
+      description: |
+        单条占卜记录。列表 items[] 与详情 data（去掉 messages 后）共用本结构。
+        时间均为 RFC3339。App 分入口看 conversation_type，分续做屏看 stage。
       properties:
         id:
           type: integer
           format: int64
-          description: 占卜记录 id。
+          description: 占卜记录 id。详情里与 reading_id 相同。
         user_id:
           type: integer
           format: int64
           nullable: true
-          description: 归属用户。未登录为 null。
+          description: 归属用户 id。未登录创建的记录为 null，登录后按 device_id 挂上。
         type:
           type: string
+          enum: [normal, tarotist, explore, daily]
           description: |
-            底层业务类型：normal、tarotist、explore、daily。
-            注意：explore 同时表示「此刻抉择」和「主题占卜」两个入口，不能单靠本字段区分；
-            App 必须用 conversation_type（或 theme_key）再判断，见 conversation_type 说明。
+            底层业务类型（4 种）。
+            explore 同时覆盖「此刻抉择」和「主题占卜」，不能单靠本字段区分；
+            必须再用 conversation_type 或 theme_key，见 conversation_type。
         theme_key:
           type: string
           description: |
-            探索主题键。创建 explore 时可写；选阵后若为空从牌阵回填。
-            空字符串表示尚未绑定主题（仅 explore 未选阵且未传 theme_key）。
-            App 判断探索子类：yes_or_no / either_or → 此刻抉择；relationship、communication、career、
-            study、interpersonal、shopping、outfit、wellbeing、inner → 主题占卜。
+            探索主题键。创建 explore 时可写；选阵后若为空从牌阵回填。非 explore 一般为空字符串。
+            - yes_or_no / either_or → 此刻抉择
+            - relationship / communication / career / study / interpersonal / shopping / outfit / wellbeing / inner → 主题占卜
+            - 空 → 探索记录尚未绑定主题，conversation_type 也为空
         conversation_type:
           type: string
           enum: ['', daily, moment, theme]
           description: |
-            历史对话三类（App 分 UI 用这个，不要只用 type）：
-            - daily：今日/明日（type=daily；再看 target）
-            - moment：普通占卜（type=normal）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no 或 either_or）
-            - theme：主题占卜（type=explore 且 theme_key 为其余探索主题）
-            explore 尚未有 theme_key 时为空字符串，此时还分不出此刻抉择与主题占卜。
-            判定示例：type=explore && conversation_type=moment → 此刻抉择；
+            历史对话三类（App 分 UI 用这个）：
+            - daily：今日/明日（type=daily，再看 target）
+            - moment：普通占卜（type=normal）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no|either_or）
+            - theme：主题占卜（type=explore 且其余 theme_key）
+            - 空字符串：explore 尚未有 theme_key
+            判定：type=explore && conversation_type=moment → 此刻抉择；
             type=explore && conversation_type=theme → 主题占卜。
         conversation_label:
           type: string
           description: |
-            展示名，可直接用于列表角标/标题：
-            - 今日运势 / 明日运势（daily）
-            - 普通占卜 / 占卜师 / 此刻抉择（moment，按 type+theme_key）
-            - 主题占卜（theme）
-            conversation_type 为空时为空。区分此刻抉择与主题占卜时，也可用本字段是否等于「此刻抉择」「主题占卜」。
+            列表/详情展示名：今日运势、明日运势、普通占卜、占卜师、此刻抉择、主题占卜。
+            conversation_type 为空时为空字符串。
         stage:
           type: string
           description: |
-            按 conversation_type 区分的阶段键（如 pending_draw、question_submitted、pending_spread）。
-            与 status 并存；客户端续做应按 conversation_type + stage 选 UI。
+            按 conversation_type 区分的阶段键，续做 UI 用这个（优先于 progress）。
+            daily 常见：pending_draw / pending_interpret / interpreting / completed / failed_retryable
+            moment 常见：question_submitted / spread_selected / shuffling / cutting / cards_fixed / interpreting / completed / failed_retryable
+            theme 常见：pending_spread / spread_selected / shuffling / cutting / cards_fixed / interpreting / completed / failed_retryable
         stage_label:
           type: string
-          description: 阶段中文文案，随 conversation_type 变化（如待抽牌 / 问题已提交 / 待选牌阵）。
+          description: |
+            阶段中文。例如待抽牌、待解读、问题已提交、待选牌阵、牌阵已选择、洗牌中、切牌中、
+            牌面已固定、解读生成中、已完成、失败可重试。
         question:
           type: string
-          description: 用户问题原文。未填写时为空字符串。
+          description: 用户问题原文。探索主题占卜允许为空字符串。
         spread_id:
           type: integer
           format: int64
@@ -313,22 +324,30 @@ components:
           type: integer
           format: int64
           nullable: true
-          description: 占卜师 id。非占卜师占卜为 null。
+          description: 占卜师 id。非占卜师为 null。
         status:
           type: string
           enum: [QUESTION_CREATED, SPREAD_SELECTED, SHUFFLING, CUTTING, CARDS_FIXED, INTERPRETING, COMPLETED,
             FAILED_RETRYABLE]
-          description: 底层状态机（三类对话共用）。COMPLETED 已解读，FAILED_RETRYABLE 可重试。
+          description: |
+            底层状态机（三类对话共用）。新 App 优先用 stage；本字段兼容旧逻辑。
+            QUESTION_CREATED → SPREAD_SELECTED → SHUFFLING → CUTTING → CARDS_FIXED → INTERPRETING → COMPLETED；
+            FAILED_RETRYABLE 表示生成失败可重试。
+        draw_mode:
+          type: string
+          description: |
+            抽牌方式。normal=常规，numerology=灵数；未选时为空字符串。
+            探索 / 塔罗师 / 今日一牌一般为空。
         cards:
           type: array
           nullable: true
-          description: 已抽牌列表。尚未抽牌为 null 或空。
+          description: 已抽牌列表。尚未抽牌为 null 或空数组。
           items:
             $ref: "#/components/schemas/DrawnCard"
         interpretation:
           type: string
           nullable: true
-          description: 解读正文。未生成时为 null。
+          description: 解读正文。未生成时为 null。INTERPRETING 时可能是片段；COMPLETED 为全文。
         vendor_name:
           type: string
           nullable: true
@@ -343,7 +362,7 @@ components:
           description: 生成失败原因。成功或未失败为 null。
         quota_consumed:
           type: boolean
-          description: 数据库标记，表示已扣今日免费次数。注册奖励走 reward_consumed，不在此列表字段中。
+          description: 是否已扣今日免费次数（库标记）。注册奖励不走本字段。
         first_experience:
           type: boolean
           description: 是否该用户首次体验占卜。
@@ -359,43 +378,56 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: 软删时间。未删除为 null。
+          description: 软删时间。未删除为 null。列表不会返回已删除记录。
         progress:
           type: string
-          description: 旧进度文案（按 status，三类共用）。新客户端优先用 stage_label。
+          description: |
+            旧进度文案（按 status）：问题已提交 / 牌阵已选择 / 洗牌中 / 切牌中 / 牌面已固定 /
+            解读生成中 / 已完成 / 失败可重试。新客户端优先用 stage_label。
         continue:
           type: string
-          description: 建议的下一步动作名；完成时为空字符串。
+          description: |
+            建议下一步动作名。例如 detect、shuffle、cut、draw、interpret；完成时为空字符串。
         card_name:
           type: string
-          description: 第一张牌名。无牌时为空。列表与详情、今日一牌共用。
+          description: 第一张牌名。无牌时为空字符串。
         short_text:
           type: string
-          description: 从 interpretation 截取的一句预览，无解读时为空，不编造。
+          description: 从 interpretation 截取的预览（最多约 48 字）。无解读时为空，不编造。
         status_label:
           type: string
           description: COMPLETED 为「已解读」，其余为「待继续」。粗粒度；细阶段看 stage_label。
-        yi:
-          type: string
-          nullable: true
-          description: 今日一牌「宜」。正位优先用 cards.yi，空则用 upright_yi；逆位用 reversed_yi。都空为 null。
-        card_message:
-          type: string
-          nullable: true
-          description: 今日一牌寄语。按牌的正逆位取 upright_message 或 reversed_message。无牌或未配置为 null。
         card_thumbnail:
           type: string
           nullable: true
-          description: 牌面缩略图完整 URL。优先 cards.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。无牌名时为 null。
+          description: |
+            第一张牌缩略图完整 URL。优先单牌图 → 模板 → 默认图 → 内置默认牌背。
+            无牌名时为 null。
+        yi:
+          type: string
+          nullable: true
+          description: 今日一牌「宜」。按正逆位取文案；都空为 null。列表非 daily 也可能出现。
+        card_message:
+          type: string
+          nullable: true
+          description: 今日一牌寄语。按正逆位取 upright_message / reversed_message；无则为 null。
         target:
           type: string
-          description: today 或 tomorrow。仅 daily；由 business_date 与用户当日业务日比较得出。
+          enum: [today, tomorrow, '']
+          description: 仅 daily 有意义。today=今日运势，tomorrow=明日运势。非 daily 可为空或不使用。
         business_date:
           type: string
-          description: 业务日 YYYY-MM-DD。列表与详情对 daily 返回；其他类型也可能有值但不作 target 依据展示。
+          description: 业务日 YYYY-MM-DD。daily 用来算 target；其它类型也可能有值。
         has_result:
           type: boolean
-          description: 已有牌名时为 true。
+          description: 已有牌名时为 true（今日一牌首页卡常用）。列表项也可能带。
+        redraw_pending:
+          type: boolean
+          description: 是否有未点选的补抽提示（类型十七 pending）。列表与详情都会带。
+        redraw:
+          description: 仅 redraw_pending=true 时出现。结构与 messages 里 style=redraw 的气泡相同。
+          allOf:
+            - $ref: "#/components/schemas/ConversationMessage"
     ReadingCreated:
       description: |
         创建占卜在 Reading 之上附加的额度结果。成功包络仍是 code=0。
@@ -450,24 +482,28 @@ components:
               $ref: "#/components/schemas/Reading"
               description: 单条占卜。
     ReadingDetail:
-      description: GET /readings/{id} 的 data。进度字段与 Reading 相同，并附带对话气泡。
+      description: |
+        GET /readings/{id} 的 data = Reading 全部字段 + 对话三字段。
+        App 点进历史：先读 conversation_type/stage 决定续做或聊天屏，再用 messages 画气泡。
       allOf:
         - $ref: "#/components/schemas/Reading"
         - type: object
+          required: [reading_id, messages, has_more]
           properties:
             reading_id:
               type: integer
               format: int64
-              description: 与 id 相同，方便和 ConversationData 对齐。
+              description: 与 id 相同。
             messages:
               type: array
-              description: 对话气泡。不传 limit 时为从 offset 起的剩余全部。
+              description: |
+                对话气泡，按发生顺序。用 kind + style 选组件；from 区分 user/server。
+                query limit/offset 只切本数组。画面对照见各 style 字段说明与 docs/app-conversation.md。
               items:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/ConversationMessage"
             has_more:
               type: boolean
-              description: 对话是否还有下一页。未分页或已到末尾为 false。
+              description: messages 是否还有下一页。未传 limit 或已到末尾为 false。
     ReadingDetailOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -477,6 +513,202 @@ components:
             data:
               $ref: "#/components/schemas/ReadingDetail"
               description: 单条占卜进度 + 对话。
+    ConversationMessage:
+      type: object
+      description: |
+        一条对话气泡。必有 kind、from、style；其余字段随 style 出现。
+        客户端不渲染的类型（点赞十一、更多问题十五、空输入十八、空气泡二十）接口不返回。
+      required: [kind, from, style]
+      properties:
+        kind:
+          type: string
+          enum: [question, cards, interpretation, suggestion]
+          description: 大类。
+        from:
+          type: string
+          enum: [user, server]
+          description: user=用户，server=服务端。
+        style:
+          type: string
+          enum: [labeled, bubble, chip, option, followup, recommend, spread, single, pick, choose, body, detect, guide, error, redraw]
+          description: |
+            与 kind 组合选组件：
+            question+labeled=类型二；question+bubble=类型十八；
+            suggestion+chip/option/followup/recommend/redraw=类型十二/十四/四/五/十七；
+            cards+spread/single/pick/choose=类型一/十九/七/十六；
+            interpretation+body/detect/guide/error=类型三/六/八/九十。
+        turn_id:
+          type: integer
+          format: int64
+          description: 追问轮次。类型十八/十九/十七及追问回答等会带。
+        seq:
+          type: integer
+          description: 同一轮内顺序。追问解读分段时出现。
+        label:
+          type: string
+          description: 小标题。类型二一般为「你的问题」。
+        text:
+          type: string
+          description: 正文。问题、解读、错误提示、胶囊文案等。
+        title:
+          type: string
+          description: 块标题。牌面预览、补抽、推荐、检测、灵数引导等。
+        hint:
+          type: string
+          description: 类型十四选项的灰色说明。
+        selected:
+          type: boolean
+          description: 类型十四是否选中。
+        placeholder:
+          type: string
+          description: 类型八输入框占位。
+        status:
+          type: string
+          description: 类型六检测状态文案，例如「已完成」。
+        reason_title:
+          type: string
+          description: 类型六「为什么建议修改？」一类标题。
+        pending:
+          type: boolean
+          description: 类型十七是否还未点选。
+        choice:
+          type: string
+          description: 类型十七点选结果。draw=去抽牌，skip=跳过；未点选不出现。
+        card_count:
+          type: integer
+          description: 类型七/八等场景的张数提示。
+        input_rows:
+          type: integer
+          description: 类型八灵数输入区建议行数。张数 ≤6 为 1，否则按每行约 6 个估算。
+        options:
+          type: array
+          description: |
+            类型四/五的选项列表。
+            类型四每项常见字段只有 text；类型五每项常见 text、hint、selected。
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+                description: 选项正文。
+              hint:
+                type: string
+                description: 灰色说明（类型五常见）。
+              selected:
+                type: boolean
+                description: 是否选中（类型五常见）。
+        actions:
+          type: array
+          description: 类型十七按钮。一般含去抽牌、跳过。
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id:
+                type: string
+                enum: [draw, skip]
+                description: draw=去抽牌，skip=跳过。
+              label:
+                type: string
+                description: 按钮文案，如「去抽牌」「跳过」。
+        rules:
+          type: array
+          description: 类型八灰色规则文案列表。
+          items:
+            type: string
+        numbers:
+          type: array
+          description: 类型九/十已输入数字。
+          items:
+            type: integer
+        slots:
+          type: array
+          description: 类型七牌位输入区。
+          items:
+            $ref: "#/components/schemas/ConversationSlot"
+        cards:
+          type: array
+          description: 类型一/十九的牌列表。
+          items:
+            $ref: "#/components/schemas/DrawnCard"
+        spreads:
+          type: array
+          description: 类型十六当前可选牌阵卡。
+          items:
+            $ref: "#/components/schemas/ConversationSpreadChoice"
+        more_spreads:
+          type: string
+          description: 类型十六「更多牌阵」入口文案，固定为「更多牌阵」。完整目录另走 GET /spreads。
+        draw_mode_label:
+          type: string
+          description: 类型十六抽牌方式区标题，一般为「抽牌方式」。
+        draw_modes:
+          type: array
+          description: 类型十六可选抽牌方式（常规 / 灵数）。
+          items:
+            $ref: "#/components/schemas/ConversationDrawMode"
+    ConversationSlot:
+      type: object
+      description: 类型七（cards+pick）单个牌位输入格。
+      properties:
+        position:
+          type: integer
+          description: 牌位序号，从 1 开始。
+        position_name:
+          type: string
+          description: 牌位名。
+        number:
+          type: string
+          description: 用户输入的数字字符串；未填可为空字符串。
+        mark:
+          type: string
+          description: 状态文案，如待选择 / 已选择 / 重复数字 / 超出范围。
+        invalid:
+          type: boolean
+          description: true 时该格标红。
+    ConversationSpreadChoice:
+      type: object
+      description: 类型十六（cards+choose）里的一张牌阵卡。
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 牌阵 id。提交选阵时用这个。
+        name:
+          type: string
+          description: 牌阵名。
+        description:
+          type: string
+          description: 牌阵含义说明。
+        short_sentence:
+          type: string
+          description: 短句；没有则为空字符串。
+        card_count:
+          type: integer
+          description: 张数。
+        recommended:
+          type: boolean
+          description: true 时画面显示「推荐牌阵」。
+        selected:
+          type: boolean
+          description: 当前占卜是否已选中该阵。
+        thumbnail:
+          type: string
+          description: 缩略图绝对 URL；无图可为空字符串。
+    ConversationDrawMode:
+      type: object
+      description: 类型十六里的一种抽牌方式。
+      properties:
+        id:
+          type: string
+          enum: [normal, numerology]
+          description: normal=常规抽牌，numerology=灵数抽牌。
+        label:
+          type: string
+          description: 展示名，如「常规抽牌」「灵数抽牌」。
+        hint:
+          type: string
+          description: 灰色说明。
     ConversationData:
       type: object
       required: [reading_id, has_more, messages]
@@ -484,14 +716,15 @@ components:
         reading_id:
           type: integer
           format: int64
+          description: 占卜 id。问题推荐等尚未创建时可能不出现本字段。
         has_more:
           type: boolean
+          description: messages 是否还有下一页。
         messages:
           type: array
           description: 每条有 kind、from、style。画面对照 docs/app-conversation.md。
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/ConversationMessage"
     ReadingListOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -505,11 +738,12 @@ components:
                 $ref: "#/components/schemas/Reading"
     ReadingPage:
       type: object
-      description: 占卜列表的游标分页结果。
+      description: GET /readings 的 data。游标分页。
+      required: [items, has_more, next_cursor, limit]
       properties:
         items:
           type: array
-          description: 本页占卜。无记录时为空数组。
+          description: 本页占卜（Reading）。无记录时为空数组。不含 messages。
           items:
             $ref: "#/components/schemas/Reading"
         has_more:
@@ -518,10 +752,10 @@ components:
         next_cursor:
           type: integer
           format: int64
-          description: 下一页的 before_id。has_more=false 时为 0。
+          description: 下一页请求的 before_id。has_more=false 时为 0。
         limit:
           type: integer
-          description: 本页请求的条数上限。
+          description: 本页实际使用的条数上限（已按默认 20 / 上限 100 规范化）。
     ReadingCreatedOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -5062,29 +5296,33 @@ paths:
             type: integer
             default: 20
             maximum: 100
+          description: 每页条数。空或非法用 20，超过 100 截到 100。
         - name: before_id
           in: query
           required: false
           schema:
             type: integer
             format: int64
-          description: 只返回 id 小于该值的记录。非正数返回「before_id 不正确」。
+          description: 游标：只返回 id 小于该值的记录。首页省略。非正数返回「before_id 不正确」。
         - name: type
           in: query
           required: false
           schema:
             type: string
             enum: [normal, tarotist, explore, daily]
-          description: 非法值返回「type 不正确」。
+          description: 按占卜类型过滤。非法值返回「type 不正确」。
       responses:
         "200":
-          description: data 为分页对象 ReadingPage。
+          description: |
+            外层固定 code / message；data 为 ReadingPage。
+            data.items[] 每条是 Reading（无 messages）；翻页用 data.next_cursor 作为下一页 before_id。
           content:
             application/json:
               schema:
                 allOf:
                   - $ref: "#/components/schemas/SuccessMeta"
                   - type: object
+                    required: [data]
                     properties:
                       data:
                         $ref: "#/components/schemas/ReadingPage"
@@ -5131,8 +5369,8 @@ paths:
       operationId: appGetReading
       summary: 占卜详情（进度 + 对话）
       description: |
-        一次返回进度与对话。data 在 Reading 之上带 reading_id、messages、has_more。
-        不传 limit（或 ≤0）时 messages 从 offset 起给剩余全部。
+        一次返回进度与对话。新客户端优先看 conversation_type + stage；progress 仍按 status 给旧文案。
+        data 在 Reading 之上带 reading_id、messages、has_more。不传 limit（或 ≤0）时 messages 从 offset 起给剩余全部。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -5148,7 +5386,9 @@ paths:
           description: 对话已看过的条数。首页用 0。
       responses:
         "200":
-          description: 不属于当前用户、已删除或不存在时为业务错误。
+          description: |
+            成功：code=0，data=ReadingDetail（Reading 全部字段 + reading_id + messages + has_more）。
+            不属于当前用户、已删除或不存在：仍 HTTP 200，走 ErrorEnvelope（code≠0）。
           content:
             application/json:
               schema:
@@ -5167,13 +5407,19 @@ paths:
         - $ref: "#/components/parameters/PathId"
       responses:
         "200":
-          description: 成功 data=true。
+          description: 成功时 code=0、data=true。失败仍 HTTP 200，走 ErrorEnvelope。
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/BoolOK"
                   - $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                删除成功:
+                  value:
+                    code: 0
+                    message: ""
+                    data: true
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/app/v1/readings/{id}/spread:
@@ -6568,9 +6814,9 @@ paths:
       responses:
         "200":
           description: |
-        roles 含 role 与已授权模块 id，供前端过滤菜单。
-        homePath：admin 或有内容权限为 /tata/spread，否则为第一个有权限模块的首页。
-        token 字段为空字符串。
+            roles 含 role 与已授权模块 id，供前端过滤菜单。
+            homePath：admin 或有内容权限为 /tata/spread，否则为第一个有权限模块的首页。
+            token 字段为空字符串。
           content:
             application/json:
               schema:
