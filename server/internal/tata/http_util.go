@@ -97,11 +97,10 @@ type redisLocker interface {
 	Unlock(key string) error
 }
 
-func (a *App) signAccess(aud string, sub int64, anon, role string) (string, error) {
+func (a *App) signAccess(aud string, sub int64, role string) (string, error) {
 	claims := jwt.MapClaims{
 		"aud":  aud,
 		"sub":  sub,
-		"anon": anon,
 		"role": role,
 		"exp":  time.Now().Add(2 * time.Hour).Unix(),
 		"typ":  "access",
@@ -109,10 +108,10 @@ func (a *App) signAccess(aud string, sub int64, anon, role string) (string, erro
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.JWTSecret)
 }
 
-func (a *App) parseAccess(r *http.Request, aud string) (sub int64, anon, role string, err error) {
+func (a *App) parseAccess(r *http.Request, aud string) (sub int64, role string, err error) {
 	h := r.Header.Get("Authorization")
 	if !strings.HasPrefix(h, "Bearer ") {
-		return 0, "", "", authFail{}
+		return 0, "", authFail{}
 	}
 	tok, err := jwt.Parse(strings.TrimPrefix(h, "Bearer "), func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodHS256 {
@@ -121,25 +120,22 @@ func (a *App) parseAccess(r *http.Request, aud string) (sub int64, anon, role st
 		return a.JWTSecret, nil
 	})
 	if err != nil || !tok.Valid {
-		return 0, "", "", authFail{}
+		return 0, "", authFail{}
 	}
 	claims, ok := tok.Claims.(jwt.MapClaims)
 	if !ok || claims["aud"] != aud || claims["typ"] != "access" {
-		return 0, "", "", authFail{}
+		return 0, "", authFail{}
 	}
 	switch v := claims["sub"].(type) {
 	case float64:
 		sub = int64(v)
 	default:
-		return 0, "", "", authFail{}
-	}
-	if s, ok := claims["anon"].(string); ok {
-		anon = s
+		return 0, "", authFail{}
 	}
 	if s, ok := claims["role"].(string); ok {
 		role = s
 	}
-	return sub, anon, role, nil
+	return sub, role, nil
 }
 
 func (a *App) issueRefresh(ctx context.Context, aud string, sub int64) (string, error) {

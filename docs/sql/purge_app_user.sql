@@ -85,12 +85,6 @@ SELECT 'apple', lower(apple_sub) FROM _purge_params WHERE apple_sub IS NOT NULL 
 CREATE TEMP TABLE _purge_readings ON COMMIT DROP AS
 SELECT id FROM readings WHERE user_id IN (SELECT id FROM _purge_users);
 
-CREATE TEMP TABLE _purge_anons ON COMMIT DROP AS
-SELECT DISTINCT anonymous_id AS anon
-FROM readings
-WHERE user_id IN (SELECT id FROM _purge_users)
-  AND anonymous_id IS NOT NULL AND anonymous_id <> '';
-
 UPDATE app_users
 SET custom_deck_id = NULL
 WHERE id IN (SELECT id FROM _purge_users);
@@ -118,9 +112,7 @@ DELETE FROM readings WHERE id IN (SELECT id FROM _purge_readings)
 
 DELETE FROM device_experiences
 WHERE user_id IN (SELECT id FROM _purge_users)
-   OR reading_id IN (SELECT id FROM _purge_readings)
-   OR anonymous_id IN (SELECT anon FROM _purge_anons);
-DELETE FROM anon_devices WHERE anonymous_id IN (SELECT anon FROM _purge_anons);
+   OR reading_id IN (SELECT id FROM _purge_readings);
 
 DELETE FROM invite_rewards
 WHERE inviter_id IN (SELECT id FROM _purge_users)

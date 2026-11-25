@@ -12,7 +12,6 @@ import (
 type Readings struct {
 	Id              int64       `json:"id"               orm:"id"               description:""`
 	UserId          int64       `json:"user_id"          orm:"user_id"          description:""`
-	AnonymousId     string      `json:"anonymous_id"     orm:"anonymous_id"     description:""`
 	Type            string      `json:"type"             orm:"type"             description:""`
 	Question        string      `json:"question"         orm:"question"         description:""`
 	SpreadId        int64       `json:"spread_id"        orm:"spread_id"        description:""`

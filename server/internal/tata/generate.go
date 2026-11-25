@@ -84,20 +84,15 @@ func scanReadings(rows interface {
 func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 	var id int64
 	var userID, spreadID, tarotistID *int64
-	var anon *string
 	var typ, question, status string
 	var cards, interpretation, vendor, model, fail *string
 	var quota, first bool
 	var created, updated time.Time
 	var deleted *time.Time
 	var drawMode string
-	err := sc.Scan(&id, &userID, &anon, &typ, &question, &spreadID, &tarotistID, &status, &cards, &interpretation, &vendor, &model, &fail, &quota, &first, &created, &updated, &deleted, &drawMode)
+	err := sc.Scan(&id, &userID, &typ, &question, &spreadID, &tarotistID, &status, &cards, &interpretation, &vendor, &model, &fail, &quota, &first, &created, &updated, &deleted, &drawMode)
 	if err != nil {
 		return nil, err
-	}
-	anonID := ""
-	if anon != nil {
-		anonID = *anon
 	}
 	var cardsJSON any
 	if cards != nil && *cards != "" {
@@ -105,7 +100,7 @@ func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 	}
 	label, next := progressOf(status)
 	item := map[string]any{
-		"id": id, "user_id": userID, "anonymous_id": anonID, "type": typ, "question": question,
+		"id": id, "user_id": userID, "type": typ, "question": question,
 		"spread_id": spreadID, "tarotist_id": tarotistID, "status": status, "cards": cardsJSON,
 		"interpretation": interpretation, "vendor_name": vendor, "model_name": model, "fail_reason": fail,
 		"quota_consumed": quota, "first_experience": first, "created_at": created, "updated_at": updated, "deleted_at": deleted,
@@ -120,7 +115,7 @@ func (a *App) loadReading(ctx context.Context, id int64) (map[string]any, error)
 }
 
 func (a *App) loadReadingAbs(ctx context.Context, r *http.Request, id int64) (map[string]any, error) {
-	row := a.Store.QueryRow(ctx, `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE id=$1`, id)
+	row := a.Store.QueryRow(ctx, `SELECT id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE id=$1`, id)
 	item, err := scanReading(row)
 	if err != nil {
 		return nil, biz("记录不存在")

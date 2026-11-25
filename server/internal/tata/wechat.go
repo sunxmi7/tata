@@ -209,7 +209,6 @@ type wechatAuthBody struct {
 	InviteCode   string `json:"invite_code"`
 	InviteSource string `json:"invite_source"`
 	DeviceID     string `json:"device_id"`
-	AnonymousID  string `json:"anonymous_id"`
 	Nickname     string `json:"nickname"`
 	AvatarURL    string `json:"avatar_url"`
 	HeadImgURL   string `json:"headimgurl"`

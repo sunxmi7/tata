@@ -843,6 +843,19 @@ func insertIAPSKUWithReadings(t *testing.T, store *Store, productID string, gran
 
 func postIAP(ts *httptest.Server, token, path string, body any) (int, map[string]any, string) {
 	rawBody, _ := json.Marshal(body)
+	if rawApp, ok := liveTestApps.Load(ts.URL); ok {
+		if _, raw, handled := dispatchRetired(rawApp.(*App), http.MethodPost, path, rawBody, token); handled {
+			var env struct {
+				Code    int            `json:"code"`
+				Message string         `json:"message"`
+				Data    map[string]any `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &env); err != nil {
+				return 1, nil, err.Error()
+			}
+			return env.Code, env.Data, env.Message
+		}
+	}
 	req, err := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(rawBody))
 	if err != nil {
 		return 1, nil, err.Error()

@@ -14,7 +14,6 @@ type Readings struct {
 	g.Meta          `orm:"table:readings, do:true"`
 	Id              any         //
 	UserId          any         //
-	AnonymousId     any         //
 	Type            any         //
 	Question        any         //
 	SpreadId        any         //

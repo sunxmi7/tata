@@ -93,21 +93,16 @@ func TestNumerologyDrawMapsDeck(t *testing.T) {
 	if mode != "numerology" {
 		t.Fatalf("draw mode %s", mode)
 	}
-	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{
-		"mode": "numerology", "numbers": []int{1, 1, 3},
-	})
-	if !strings.Contains(msg, "不能重复") {
-		t.Fatalf("dup numbers: %s", msg)
+	_, dupRaw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/numerology", rid), map[string]any{"numbers": []int{1, 1, 3}})
+	if !strings.Contains(string(dupRaw), "已被使用") {
+		t.Fatalf("dup numbers: %s", dupRaw)
 	}
-	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{
-		"mode": "numerology", "numbers": []int{1, 9},
-	})
-	if !strings.Contains(msg, "牌阵张数") {
-		t.Fatalf("short draw: %s", msg)
+	_, shortRaw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/numerology", rid), map[string]any{"numbers": []int{1, 9}})
+	if !strings.Contains(string(shortRaw), "请再输入") {
+		t.Fatalf("short draw: %s", shortRaw)
 	}
-	drawn := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{
-		"mode": "numerology", "numbers": []int{1, 9, 12},
-	})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/numerology", rid), map[string]any{"numbers": []int{1, 9, 12}})
+	drawn := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
 	raw, _ := json.Marshal(drawn["cards"])
 	var cards []drawnCard
 	if err := json.Unmarshal(raw, &cards); err != nil {
@@ -169,7 +164,7 @@ func TestNumerologyDrawMapsDeck(t *testing.T) {
 	if mapAfter != mapRaw {
 		t.Fatal("redraw rewrote the map")
 	}
-	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/redraw", rid), map[string]any{
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/redraw", rid), map[string]any{
 		"number": 9,
 	})
 	if !strings.Contains(msg, "不能重复") {
@@ -615,7 +610,8 @@ func TestConversationShapesMatchOriginals(t *testing.T) {
 		t.Fatalf("option: %#v", option)
 	}
 	follow := got["followup"]
-	if follow["title"] != "继续解读" || follow["text"] != "那我下周要不要先谈" {
+	followOptions, _ := follow["options"].([]any)
+	if follow["title"] != "继续解读" || follow["text"] != "那我下周要不要先谈" || len(followOptions) != 1 {
 		t.Fatalf("followup: %#v", follow)
 	}
 	recommend := got["recommend"]
@@ -645,8 +641,12 @@ func TestConversationShapesMatchOriginals(t *testing.T) {
 	}
 	choose := got["choose"]
 	spreads, _ := choose["spreads"].([]any)
-	if choose["title"] != "先确认牌阵和张数" || len(spreads) != 2 || spreads[0].(map[string]any)["recommended"] != true {
+	if choose["title"] != "先确认牌阵和张数，再选择抽牌方式。" || len(spreads) != 2 || spreads[0].(map[string]any)["recommended"] != true {
 		t.Fatalf("choose: %#v", choose)
+	}
+	modes, _ := choose["draw_modes"].([]any)
+	if choose["more_spreads"] != "更多牌阵" || choose["draw_mode_label"] != "抽牌方式" || len(modes) != 2 {
+		t.Fatalf("choose draw modes: %#v", choose)
 	}
 }
 
@@ -830,6 +830,15 @@ func TestConventionalFlowCoversEveryType(t *testing.T) {
 		if item["style"] == "chip" && item["text"] == ownText {
 			t.Fatal("recommendation replaced the user's own question")
 		}
+		if item["style"] == "detect" && item["text"] != "你的问题涉及的范围比较广，明确你最关注的方向，可以帮助解读更聚焦，也更容易获得具体的建议。" {
+			t.Fatalf("detect: %#v", item)
+		}
+		if item["style"] == "followup" {
+			opts, _ := item["options"].([]any)
+			if item["title"] != "继续解读" || len(opts) == 0 {
+				t.Fatalf("followup: %#v", item)
+			}
+		}
 	}
 
 	spreadID, positions := timeFlowSpread(t, ts, token)
@@ -848,7 +857,14 @@ func TestConventionalFlowCoversEveryType(t *testing.T) {
 		reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": question, "type": "normal", "source": source})
 		id := asID(reading["id"])
 		choices := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/spread-choices", id))
-		note(messageList(t, choices))
+		choiceMsgs := messageList(t, choices)
+		note(choiceMsgs)
+		if len(choiceMsgs) != 1 || choiceMsgs[0]["style"] != "choose" || choiceMsgs[0]["title"] != "先确认牌阵和张数，再选择抽牌方式。" {
+			t.Fatalf("spread choices: %#v", choiceMsgs)
+		}
+		if _, ok := choiceMsgs[0]["draw_modes"].([]any); !ok {
+			t.Fatalf("spread choices missing draw_modes: %#v", choiceMsgs[0])
+		}
 		must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
 		view := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/interpret", id), map[string]any{"spread_id": spreadID, "cards": hand})
 		if view["reading_id"].(float64) != float64(id) {

@@ -398,7 +398,6 @@ ERRORS = {
     "出生日期不能是未来": ("Birth date cannot be in the future", "生年月日は未来にできません", "생년월일은 미래일 수 없습니다"),
     "出生日期格式应为 YYYY-MM-DD": ("Birth date must be YYYY-MM-DD", "生年月日は YYYY-MM-DD 形式です", "생년월일은 YYYY-MM-DD 형식이어야 합니다"),
     "刷新令牌无效": ("Refresh token is invalid", "リフレッシュトークンが無効です", "리프레시 토큰이 유효하지 않습니다"),
-    "匿名用户没有档案": ("Anonymous users have no profile", "匿名ユーザーにプロフィールはありません", "익명 사용자에게는 프로필이 없습니다"),
     "原始交易号不正确": ("Original transaction ID is invalid", "元取引番号が正しくありません", "원거래 번호가 올바르지 않습니다"),
     "反馈分类不正确": ("Feedback category is invalid", "フィードバック分類が正しくありません", "피드백 분류가 올바르지 않습니다"),
     "发送过于频繁": ("Sent too frequently", "送信が多すぎます", "너무 자주 보냈습니다"),

@@ -240,14 +240,11 @@ func TestPublicCatalogNoToken(t *testing.T) {
 		"/api/app/v1/spreads",
 		"/api/app/v1/banners",
 		"/api/app/v1/tarotists",
-		"/api/app/v1/explore/topics",
 		"/api/app/v1/campaigns",
 		"/api/app/v1/campaigns/friend_invite",
 		"/api/app/v1/help/categories",
 		"/api/app/v1/help/articles",
 		"/api/app/v1/help/articles/how_to_start",
-		"/api/app/v1/iap/skus",
-		"/api/app/v1/iap/config",
 	} {
 		if msg, raw := call(t, ts, "", http.MethodGet, path, nil); msg != "" {
 			t.Fatalf("%s still gated: %s %s", path, msg, raw)

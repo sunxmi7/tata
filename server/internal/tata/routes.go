@@ -130,11 +130,6 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/invites/open", a.h(a.appOpenInvite))
 	mux.HandleFunc("POST /api/app/v1/invites/accept", a.h(a.appAcceptInvite))
 	mux.HandleFunc("GET /api/app/v1/cards", a.h(a.appListCards))
-	mux.HandleFunc("GET /api/app/v1/custom-decks", a.h(a.appListCustomDecks))
-	mux.HandleFunc("POST /api/app/v1/custom-decks", a.h(a.appCreateCustomDeck))
-	mux.HandleFunc("GET /api/app/v1/custom-decks/{id}", a.h(a.appGetCustomDeck))
-	mux.HandleFunc("PUT /api/app/v1/custom-decks/{id}", a.h(a.appPutCustomDeck))
-	mux.HandleFunc("POST /api/app/v1/custom-decks/{id}/use", a.h(a.appUseCustomDeck))
 	mux.HandleFunc("GET /api/app/v1/spreads", a.h(a.appSpreads))
 	mux.HandleFunc("GET /api/app/v1/preset-questions", a.h(a.appPresetQuestions))
 	mux.HandleFunc("GET /api/app/v1/banners", a.h(a.appBanners))
@@ -142,22 +137,13 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/quota", a.h(a.appQuota))
 	mux.HandleFunc("POST /api/app/v1/question-suggestions", a.h(a.appQuestionSuggestions))
 	mux.HandleFunc("POST /api/app/v1/readings", a.h(a.appCreateReading))
-	mux.HandleFunc("PUT /api/app/v1/readings/{id}/question", a.h(a.appEditQuestion))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/detect", a.h(a.appDetect))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/recommend", a.h(a.appRecommend))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/detect/stream", a.h(a.appDetectStream))
 	mux.HandleFunc("GET /api/app/v1/readings/{id}/spread-choices", a.h(a.appSpreadChoices))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/spread", a.h(a.appSelectSpread))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/numerology", a.h(a.appNumerologyMessages))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/shuffle", a.h(a.appShuffle))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/cut", a.h(a.appCut))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/draw", a.h(a.appDraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/redraw", a.h(a.appRedraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret", a.h(a.appInterpret))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret/stream", a.h(a.appInterpretStream))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/confirm-quota", a.h(a.appConfirmQuota))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/use-reward", a.h(a.appUseReward))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/paywall", a.h(a.appCancelPaywall))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups", a.h(a.appFollowup))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/redraw", a.h(a.appFollowupRedraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/stream", a.h(a.appFollowupStream))
@@ -182,14 +168,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/deck-shop", a.h(a.appDeckShop))
 	mux.HandleFunc("GET /api/app/v1/deck-preference", a.h(a.appGetDeckPreference))
 	mux.HandleFunc("PUT /api/app/v1/deck-preference", a.h(a.appPutDeckPreference))
-	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
-	mux.HandleFunc("POST /api/app/v1/iap/restore", a.h(a.appIAPRestore))
-	mux.HandleFunc("GET /api/app/v1/iap/entitlements", a.h(a.appIAPEntitlements))
-	mux.HandleFunc("GET /api/app/v1/iap/skus", a.h(a.appIAPSKUs))
-	mux.HandleFunc("GET /api/app/v1/iap/config", a.h(a.appIAPConfig))
-	mux.HandleFunc("GET /api/app/v1/explore/topics", a.h(a.appExploreTopics))
 	mux.HandleFunc("POST /api/app/v1/redeem", a.h(a.appRedeem))
-	mux.HandleFunc("GET /api/app/v1/wallet/ledger", a.h(a.appWalletLedger))
 	mux.HandleFunc("POST /api/app/v1/uploads", a.h(a.appUploads))
 	mux.HandleFunc("GET /uploads/{name...}", a.serveUpload)
 	mux.HandleFunc("POST /api/app/v1/wishlist", a.h(a.appWishlist))
@@ -269,7 +248,7 @@ type actor struct {
 }
 
 func (a *App) adminActor(r *http.Request, write bool) (actor, error) {
-	id, _, role, err := a.parseAccess(r, "admin")
+	id, role, err := a.parseAccess(r, "admin")
 	if err != nil {
 		return actor{}, err
 	}
@@ -284,27 +263,30 @@ func (a *App) adminActor(r *http.Request, write bool) (actor, error) {
 	return actor{id: id, role: role}, nil
 }
 
-func (a *App) appActor(r *http.Request) (userID int64, anon string, err error) {
-	userID, anon, _, err = a.parseAccess(r, "app")
-	if err != nil || userID == 0 {
-		return userID, anon, err
+func (a *App) appActor(r *http.Request) (userID int64, err error) {
+	userID, _, err = a.parseAccess(r, "app")
+	if err != nil {
+		return 0, err
+	}
+	if userID == 0 {
+		return 0, authFail{}
 	}
 	var merged *int64
 	var cancelled *time.Time
 	scanErr := a.Store.QueryRow(r.Context(), `SELECT merged_into, cancelled_at FROM app_users WHERE id=$1`, userID).Scan(&merged, &cancelled)
 	if scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
-			return 0, "", authFail{}
+			return 0, authFail{}
 		}
-		return 0, "", scanErr
+		return 0, scanErr
 	}
 	if merged != nil {
-		return 0, "", authFail{}
+		return 0, authFail{}
 	}
 	if cancelled != nil {
-		return 0, "", biz("账号已注销")
+		return 0, biz("账号已注销")
 	}
-	return userID, anon, nil
+	return userID, nil
 }
 
 func (a *App) lockGen(id int64) (func(), error) {
@@ -348,7 +330,7 @@ func validBase(raw string) error {
 // The device id is how a later onboarding check finds this handset.
 func (a *App) divinationActor(r *http.Request) (userID int64, deviceID string, err error) {
 	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
-		userID, _, err = a.appActor(r)
+		userID, err = a.appActor(r)
 		if err != nil {
 			return 0, "", err
 		}
@@ -404,10 +386,9 @@ func peekDeviceID(r *http.Request) string {
 
 func (a *App) ownReading(ctx context.Context, id, userID int64, guest string) error {
 	var owner *int64
-	var anonID *string
 	var deviceID string
 	var deleted *time.Time
-	err := a.Store.QueryRow(ctx, `SELECT user_id, anonymous_id, COALESCE(device_id,''), deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &anonID, &deviceID, &deleted)
+	err := a.Store.QueryRow(ctx, `SELECT user_id, COALESCE(device_id,''), deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &deviceID, &deleted)
 	if err != nil {
 		return bizCode("reading_not_found", "记录不存在")
 	}
@@ -422,9 +403,6 @@ func (a *App) ownReading(ctx context.Context, id, userID int64, guest string) er
 	}
 	guest = strings.TrimSpace(guest)
 	if guest != "" && strings.EqualFold(deviceID, guest) {
-		return nil
-	}
-	if anonID != nil && guest != "" && *anonID == guest {
 		return nil
 	}
 	return bizCode("reading_forbidden", "记录不属于当前用户")

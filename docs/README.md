@@ -13,17 +13,17 @@
 2026-11-06 重启推送（Q-B1 作废）：新增 `POST /api/app/v1/push/register`（上报个推 CID）、`GET /api/app/v1/messages`（消息中心/站内信）、`POST /api/app/v1/messages/{id}/read`，以及管理端 `POST /api/admin/v1/push/broadcast`（群发）。今日/明日抽牌仍走 App 本地通知；优惠/活动走个推（GeTui）服务端下发，只推给 `messages_enabled=true` 的设备。个推凭证在 `server/manifest/config/config.yaml` 的 `getui`（`enabled=false` 时只落站内信、不真连）。
 
 2026-11-06 接口完善（进行中）：
-- **解读/追问 SSE 流式**：`POST /api/app/v1/readings/{id}/interpret/stream` 与 `.../followups/stream`。另有 `POST /daily/stream`、`POST /readings/{id}/detect/stream`、`POST /yearly-reports/{id}/generate/stream`。非流式 JSON 仍等完整结果；同一条 URL 也可带 `Accept: text/event-stream` 或 `?stream=1` 切到 SSE。事件为 `delta` / `done` / `error`。生成先落 `ai_jobs` 后台任务，SSE 断开不取消；App 再进用 `GET /readings/{id}` 取 INTERPRETING 片段或 COMPLETED 全文。
+- **解读/追问 SSE 流式**：`POST /api/app/v1/readings/{id}/interpret/stream` 与 `.../followups/stream`。另有 `POST /daily/stream`、`POST /yearly-reports/{id}/generate/stream`。非流式 JSON 仍等完整结果；同一条 URL 也可带 `Accept: text/event-stream` 或 `?stream=1` 切到 SSE。事件为 `delta` / `done` / `error`。生成先落 `ai_jobs` 后台任务，SSE 断开不取消；App 再进用 `GET /readings/{id}` 取 INTERPRETING 片段或 COMPLETED 全文。
 - **占卜列表分页**：`GET /api/app/v1/readings` 改为游标分页，支持 `limit`（默认 20、上限 100）、`before_id`（游标）、`type` 过滤，按 id 降序，返回 `ReadingPage`（`items/has_more/next_cursor/limit`）。
 - **错误码（有界）**：错误包络 `error_code` 供客户端按码分支，不随语言变化。`message` 按 `Accept-Language` / `X-Language` 读 `server/internal/tata/i18n/*.json`，缺省简体中文。已归类 `unauthorized`、`invalid_request_body`、`invalid_path_id`、`reading_not_found`、`reading_deleted`、`reading_forbidden`、`internal`；其余业务错误暂为空字符串，后续增量归类。
 
-App 路由现为 **86** 条（含公开 `GET /uploads/{name}`）、完整契约 **154** 条，与 `routes.go` 仍 1:1。管理端可查 `GET /api/admin/v1/wishlists`（功能心愿单）、`GET /api/admin/v1/feedback`（反馈意见）。
+App 路由现为 **76** 条（含公开 `GET /uploads/{name}`）、完整契约 **154** 条，与 `routes.go` 仍 1:1。管理端可查 `GET /api/admin/v1/wishlists`（功能心愿单）、`GET /api/admin/v1/feedback`（反馈意见）。
 
 管理端兑换码：`GET/POST /api/admin/v1/redeem-codes`、`PUT /redeem-codes/{id}`。付费模块可写才能生成或停用。空码自动生成 `XXXX-XXXX`，App 仍走 `POST /api/app/v1/redeem` 核销。
 
 下线塔塔币字段：人工执行 [sql/drop_tata_coin_2026-11-17.sql](./sql/drop_tata_coin_2026-11-17.sql)，不随服务启动自动跑。执行前备份。代码只读写 `quota_balance`。
 
-内容导入：`GET /api/app/v1/preset-questions` 读预设题库，**公开，不需要 token**。`featured` 为首屏默认 15 条（与 backup 分开返回，混合排列）；`backup` 为备用题库。`?scene=` 只传场景码（relationship/career/study/growth/social/life）。同样公开的还有牌阵、塔罗师、提示窗、探索目录、活动列表/详情、帮助中心、SKU 目录。创建占卜、额度、档案、今日一牌仍要登录或匿名令牌。78 张韦特单牌写入 `cards` 表（图文件在 `server/uploads/cards/`）。SQL 见 [sql/seed_content_v1.sql](./sql/seed_content_v1.sql)。管理端 `GET/POST /api/admin/v1/cards`、`PUT /cards/{id}`、`PUT /card-settings`。App 文案 i18n 见 `server/internal/tata/i18n/*.json`，请求头 `Accept-Language` / `X-Language`；牌名优先读 `cards` 表多语言列。
+内容导入：`GET /api/app/v1/preset-questions` 读预设题库，**公开，不需要 token**。`featured` 为首屏默认 15 条（与 backup 分开返回，混合排列）；`backup` 为备用题库。`?scene=` 只传场景码（relationship/career/study/growth/social/life）。同样公开的还有牌阵、塔罗师、提示窗、活动列表/详情、帮助中心。创建占卜、额度、档案、今日一牌仍要登录。78 张韦特单牌写入 `cards` 表（图文件在 `server/uploads/cards/`）。SQL 见 [sql/seed_content_v1.sql](./sql/seed_content_v1.sql)。管理端 `GET/POST /api/admin/v1/cards`、`PUT /cards/{id}`、`PUT /card-settings`。App 文案 i18n 见 `server/internal/tata/i18n/*.json`，请求头 `Accept-Language` / `X-Language`；牌名优先读 `cards` 表多语言列。
 
 首屏 15 条（`featured`，文档《塔塔_预设问题库_V1》02 节）：最近的我最需要关注什么；TA 对这段关系的真实态度；三个月事业新机会；情绪困扰背后隐藏着什么；和 TA 接下来一个月；为了实现这个愿望可以做些什么；最近值得留意的新机会；职业方向是否继续坚持；这段关系还没看清的事；三个月财务变化；如何改善人际关系；主动迈出一步会怎样；尚未被发现的优势；一个月生活新可能；最需要听见什么样的提醒。详细 id/scene 见 `docs/openapi-app.yaml` 该接口说明。
 
@@ -82,6 +82,6 @@ PRD 1.0.4 对照（2026-11-21）：权益差最大，年运 12+4 已对齐。接
 
 **分组口径（2026-11-06）：** `openapi-app.yaml` 的 tag 按 Pixso 定稿「手机界面」`619:7` 的 UI 模块划分。导入 Apifox 后文件夹即 UI 模块：登录注册、首页、探索、我的中心、抽牌、牌阵界面、历史记录、日历记录、塔塔币购买、会员中心、兑换码、参与活动、月度报告、年度运势、功能心愿单、帮助中心、反馈意见、通知设置、账号、语言、关于塔塔、我的小组件。共用接口（如 `GET /quota`、`POST /uploads`）会挂到多个模块下；`月度报告`、`年度运势` 已有专用 path，`语言`、`关于塔塔` 仍为空分组（Q-B2 + 客户端静态）。路径、方法、请求/响应形状与 `routes.go` 1:1。
 
-导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。公开目录（预设问题、牌阵、塔罗师、提示窗、探索、活动、帮助、SKU）不用带 token。其余需要登录（或匿名令牌）的接口在 **Headers** 加 `Authorization`，值 `Bearer <accessToken>`（登录/注册/匿名返回的 token）。不要把 token 放进请求体。
+导入后把环境的服务地址设为 `http://127.0.0.1:8080`（`server/manifest/config/config.yaml` 里 `server.address` 的默认值）。公开目录（预设问题、牌阵、塔罗师、提示窗、活动、帮助）不用带 token。其余需要登录（）的接口在 **Headers** 加 `Authorization`，值 `Bearer <accessToken>`（登录返回的 token）。不要把 token 放进请求体。
 
 管理端只出现在完整契约里。登录后同样在 Headers 加 `Authorization: Bearer <accessToken>`。本地种子：`admin` / `admin123`（全部模块可写，可给别人按模块授权），`readonly` / `readonly123`（五个模块只读）。无模块权限调用对应接口得到 `没有该模块权限`；有读无写调用写接口得到 `只读账号不能修改`。只有 `admin` 能新建/停用操作员并分配模块。

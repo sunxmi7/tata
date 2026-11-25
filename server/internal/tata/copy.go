@@ -124,7 +124,7 @@ func (a *App) loadYearlySections(ctx context.Context, year int) ([]map[string]an
 func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ...map[string]any) {
 	cfg := a.cardConfig(ctx)
 	if r != nil {
-		if uid, _, err := a.appActor(r); err == nil && uid > 0 {
+		if uid, err := a.appActor(r); err == nil && uid > 0 {
 			cfg = a.cardConfigForUser(ctx, uid)
 		}
 	}
@@ -147,7 +147,7 @@ func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[str
 	name := firstCardName(item["cards"])
 	cfg := a.cardConfig(ctx)
 	if r != nil {
-		if uid, _, err := a.appActor(r); err == nil && uid > 0 {
+		if uid, err := a.appActor(r); err == nil && uid > 0 {
 			cfg = a.cardConfigForUser(ctx, uid)
 		}
 	}

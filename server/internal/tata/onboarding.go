@@ -89,7 +89,7 @@ func (a *App) appGetOnboarding(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) onboardingView(r *http.Request, g deviceGuide) (map[string]any, error) {
 	view := guideView(g)
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		if _, ok := err.(authFail); ok {
 			return view, nil
@@ -182,7 +182,7 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appAbandonOnboarding(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -231,12 +231,9 @@ func (a *App) appAbandonOnboarding(w http.ResponseWriter, r *http.Request) error
 }
 
 func (a *App) appSyncOnboarding(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
-	}
-	if uid == 0 {
-		return biz(paywallNeedLogin)
 	}
 	var req struct {
 		DeviceID string          `json:"device_id"`
@@ -311,9 +308,9 @@ func (a *App) appSyncOnboarding(w http.ResponseWriter, r *http.Request) error {
 	}
 	onboard := !used
 	var id int64
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO readings(user_id, anonymous_id, type, question, spread_id, status, onboard_experience, device_id, cards, spread_name)
-		VALUES ($1,$2,'normal',$3,$4,$5,$6,$7,NULLIF($8,''), COALESCE((SELECT name FROM spreads WHERE id=$4), '')) RETURNING id`,
-		uid, nullStr(anon), question, spread, status, onboard, deviceID, cards).Scan(&id)
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, spread_id, status, onboard_experience, device_id, cards, spread_name)
+		VALUES ($1,'normal',$2,$3,$4,$5,$6,NULLIF($7,''), COALESCE((SELECT name FROM spreads WHERE id=$3), '')) RETURNING id`,
+		uid, question, spread, status, onboard, deviceID, cards).Scan(&id)
 	if err != nil {
 		return err
 	}

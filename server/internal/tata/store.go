@@ -127,7 +127,6 @@ CREATE TABLE IF NOT EXISTS banners (
 CREATE TABLE IF NOT EXISTS readings (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT,
-  anonymous_id TEXT,
   type TEXT NOT NULL,
   question TEXT NOT NULL DEFAULT '',
   spread_id BIGINT,
@@ -209,6 +208,7 @@ ALTER TABLE readings ADD COLUMN IF NOT EXISTS business_date TEXT NOT NULL DEFAUL
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS skip_detect BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS reward_consumed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS numerology_map TEXT NOT NULL DEFAULT '';
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS draw_mode TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS voice TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS banned TEXT NOT NULL DEFAULT '';
 ALTER TABLE tarotists ADD COLUMN IF NOT EXISTS ask_style TEXT NOT NULL DEFAULT '';
@@ -935,25 +935,22 @@ ALTER TABLE readings ADD COLUMN IF NOT EXISTS onboard_experience BOOLEAN NOT NUL
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS device_experiences (
   device_id TEXT PRIMARY KEY,
-  anonymous_id TEXT NOT NULL DEFAULT '',
   user_id BIGINT,
   reading_id BIGINT,
   consumed BOOLEAN NOT NULL DEFAULT FALSE,
   consumed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS device_experiences_anon_idx ON device_experiences(anonymous_id);
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS guide_completed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS explore_preferences TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS trial_forfeited BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE device_experiences SET guide_completed=TRUE WHERE consumed=TRUE AND guide_completed=FALSE;
-CREATE TABLE IF NOT EXISTS anon_devices (
-  anonymous_id TEXT PRIMARY KEY,
-  device_id TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+DROP INDEX IF EXISTS device_experiences_anon_idx;
+ALTER TABLE readings DROP COLUMN IF EXISTS anonymous_id;
+ALTER TABLE device_experiences DROP COLUMN IF EXISTS anonymous_id;
+DROP TABLE IF EXISTS anon_devices;
 DELETE FROM iap_skus WHERE kind='consumable_pack';
 UPDATE iap_skus SET enabled=FALSE, updated_at=now() WHERE code='sub_times';
 DO $$
@@ -1094,7 +1091,6 @@ COMMENT ON TABLE user_devices IS '账号登录时记下的设备。注销不删�
 COMMENT ON COLUMN app_users.cancelled_at IS '软删除时刻。行和占卜记录保留。邮箱、微信、苹果、手机号、设备写入 identity_claims 后不能再注册。';
 COMMENT ON TABLE quota_charges IS '单次解读扣费。entitlement=daily_free/invite_reward/admin_grant_free/member_quota/ai_trial/onboard_trial。';
 COMMENT ON TABLE device_experiences IS '设备只决定引导出不出现。解读资格在账号 reading_trial_used，每账号 1 次。';
-COMMENT ON TABLE anon_devices IS '匿名会话绑定的设备识别。';
 COMMENT ON COLUMN readings.onboard_experience IS '新人引导那一次解读。AI 成功后才扣账号资格，失败不扣。成功后可回看，不能再免费生成、追问或补抽。';
 COMMENT ON COLUMN readings.device_id IS '登录前的进度按设备保存。登录时把同一设备、尚未归属账号的记录挂到该账号。';
 COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume。';

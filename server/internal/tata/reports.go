@@ -180,7 +180,7 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 }
 
 func (a *App) requireAppUser(r *http.Request) (int64, error) {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return 0, err
 	}

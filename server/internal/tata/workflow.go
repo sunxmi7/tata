@@ -164,7 +164,7 @@ func (a *App) simulateOne(w http.ResponseWriter, r *http.Request, step, question
 }
 
 func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	var req struct {

@@ -178,7 +178,7 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		if err := store.QueryRow(t.Context(), `INSERT INTO app_users(wechat_openid) VALUES ($1) RETURNING id`, wechatA).Scan(&idA); err != nil {
 			t.Fatal(err)
 		}
-		tokenA, err := (&App{Store: store, JWTSecret: []byte("test-secret")}).signAccess("app", idA, "", "")
+		tokenA, err := (&App{Store: store, JWTSecret: []byte("test-secret")}).signAccess("app", idA, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -246,6 +246,7 @@ func newMergeApp(t *testing.T) (*Store, *App, *httptest.Server) {
 	protectLiveAIConfig(t, store)
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
+	rememberTestApp(ts.URL, app, t)
 	t.Cleanup(ts.Close)
 	return store, app, ts
 }

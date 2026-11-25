@@ -23,7 +23,6 @@ type ReadingsDao struct {
 type ReadingsColumns struct {
 	Id              string //
 	UserId          string //
-	AnonymousId     string //
 	Type            string //
 	Question        string //
 	SpreadId        string //
@@ -46,7 +45,6 @@ type ReadingsColumns struct {
 var readingsColumns = ReadingsColumns{
 	Id:              "id",
 	UserId:          "user_id",
-	AnonymousId:     "anonymous_id",
 	Type:            "type",
 	Question:        "question",
 	SpreadId:        "spread_id",

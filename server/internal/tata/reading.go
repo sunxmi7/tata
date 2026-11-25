@@ -23,7 +23,7 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	q := `SELECT id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE 1=1`
+	q := `SELECT id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE 1=1`
 	args := []any{}
 	add := func(cond string, v any) {
 		args = append(args, v)
@@ -152,7 +152,6 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email        string `json:"email"`
 		Code         string `json:"code"`
-		AnonymousID  string `json:"anonymous_id"`
 		InviteCode   string `json:"invite_code"`
 		InviteSource string `json:"invite_source"`
 		DeviceID     string `json:"device_id"`
@@ -201,7 +200,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
-	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID, req.AnonymousID); err != nil {
+	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID); err != nil {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
@@ -211,23 +210,17 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ensureProfileDefaults(r.Context(), id)
 	a.consumeEmailCode(r.Context(), "login", email)
-	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
+	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
 	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
-	access, _ := a.signAccess("app", id, "", "")
+	access, _ := a.signAccess("app", id, "")
 	settled := a.settleQuestionStart(r, id)
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "email", "reward_consumed": settled, "needs_confirm": false})
 }
 
-func (a *App) attachDeviceReadings(ctx context.Context, uid int64, anon, deviceID string) {
+func (a *App) attachDeviceReadings(ctx context.Context, uid int64, deviceID string) {
 	if uid <= 0 {
 		return
-	}
-	if strings.TrimSpace(anon) != "" {
-		_, _ = a.Store.Exec(ctx, `UPDATE readings SET user_id=$1 WHERE anonymous_id=$2 AND user_id IS NULL`, uid, anon)
-		if strings.TrimSpace(deviceID) == "" {
-			_ = a.Store.QueryRow(ctx, `SELECT device_id FROM anon_devices WHERE anonymous_id=$1`, anon).Scan(&deviceID)
-		}
 	}
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -292,12 +285,9 @@ func (a *App) settleQuestionStart(r *http.Request, uid int64) bool {
 }
 
 func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
-	}
-	if uid == 0 {
-		return biz("匿名用户没有档案")
 	}
 	var email, tz, name, bio, avatar, publicID, prefs string
 	var birth, gender, openid, apple *string
@@ -327,12 +317,9 @@ func (a *App) appGetProfile(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appPutProfile(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
-	}
-	if uid == 0 {
-		return biz("匿名用户没有档案")
 	}
 	var req struct {
 		BirthDate          string    `json:"birth_date"`
@@ -474,7 +461,7 @@ func (a *App) appTarotists(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appQuota(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -632,7 +619,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		boundDevice = device
 	}
-	view, err := a.createNormal(r.Context(), uid, "", req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", boundDevice, drawMode)
+	view, err := a.createNormal(r.Context(), uid, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", boundDevice, drawMode)
 	if err != nil {
 		_, _ = a.Store.Exec(r.Context(), `DELETE FROM idempotency WHERE scope=$1 AND key=$2`, scope, r.Header.Get("Idempotency-Key"))
 		return err
@@ -695,15 +682,15 @@ func storeNumerologyMap(ctx context.Context, ex execer, id int64) error {
 	return err
 }
 
-func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind string, tarotistID *int64, skip bool, deviceID, drawMode string) (map[string]any, error) {
+func (a *App) createNormal(ctx context.Context, uid int64, question, kind string, tarotistID *int64, skip bool, deviceID, drawMode string) (map[string]any, error) {
 	first := false
+	boundDevice := strings.TrimSpace(deviceID)
 	if uid == 0 {
-		deviceID = strings.TrimSpace(deviceID)
-		if !validDeviceID(deviceID) {
+		if !validDeviceID(boundDevice) {
 			return nil, biz("缺少设备标识")
 		}
 		var n int
-		if err := a.Store.QueryRow(ctx, `SELECT count(*) FROM readings WHERE user_id IS NULL AND lower(device_id)=lower($1)`, deviceID).Scan(&n); err != nil {
+		if err := a.Store.QueryRow(ctx, `SELECT count(*) FROM readings WHERE user_id IS NULL AND lower(device_id)=lower($1)`, boundDevice).Scan(&n); err != nil {
 			return nil, err
 		}
 		first = n == 0
@@ -713,17 +700,16 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	boundDevice := resolveDeviceID(ctx, tx, anon, deviceID)
 	onboard := false
 	if kind == "normal" {
-		onboard, err = a.prepareOnboard(ctx, tx, uid, anon, kind, boundDevice)
+		onboard, err = a.prepareOnboard(ctx, tx, uid, kind, boundDevice)
 		if err != nil {
 			return nil, err
 		}
 	}
 	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, anonymous_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode) VALUES ($1,$2,$3,$4,$5,'QUESTION_CREATED',$6,$7,$8,$9) RETURNING id`,
-		nullID(uid), nullStr(anon), kind, question, tarotistID, first, onboard, boundDevice, drawMode).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode) VALUES ($1,$2,$3,$4,'QUESTION_CREATED',$5,$6,$7,$8) RETURNING id`,
+		nullID(uid), kind, question, tarotistID, first, onboard, boundDevice, drawMode).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -790,23 +776,7 @@ func (a *App) createNormal(ctx context.Context, uid int64, anon, question, kind 
 	return item, nil
 }
 
-func resolveDeviceID(ctx context.Context, ex execer, anon, requested string) string {
-	requested = strings.TrimSpace(requested)
-	if requested != "" {
-		return requested
-	}
-	if anon == "" {
-		return ""
-	}
-	var stored string
-	_ = ex.QueryRow(ctx, `SELECT device_id FROM anon_devices WHERE anonymous_id=$1`, anon).Scan(&stored)
-	if strings.TrimSpace(stored) != "" {
-		return stored
-	}
-	return "anon:" + anon
-}
-
-func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, deviceID string) (bool, error) {
+func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, kind, deviceID string) (bool, error) {
 	if kind != "normal" {
 		return false, nil
 	}
@@ -824,14 +794,14 @@ func (a *App) prepareOnboard(ctx context.Context, tx Tx, uid int64, anon, kind, 
 		}
 		return open == 0, nil
 	}
-	deviceID = resolveDeviceID(ctx, tx, anon, deviceID)
+	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return false, nil
 	}
 	var consumed, forfeited bool
 	err := tx.QueryRow(ctx, `SELECT consumed, trial_forfeited FROM device_experiences WHERE device_id=$1 FOR UPDATE`, deviceID).Scan(&consumed, &forfeited)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.Exec(ctx, `INSERT INTO device_experiences(device_id, anonymous_id) VALUES ($1,$2)`, deviceID, anon)
+		_, err = tx.Exec(ctx, `INSERT INTO device_experiences(device_id) VALUES ($1)`, deviceID)
 		return err == nil, err
 	}
 	if err != nil {
@@ -1010,89 +980,22 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) appDraw(w http.ResponseWriter, r *http.Request) error {
-	stop, err := a.gatePlay(w, r, resumeDraw)
-	if err != nil || stop {
-		return err
-	}
-	_, id, _, err := a.beginReading(r)
+func (a *App) fixNumerologyCards(ctx context.Context, id int64, numbers []int, positions []position) error {
+	slots, err := a.readingNumerologyMap(ctx, id)
 	if err != nil {
 		return err
 	}
-	var req struct {
-		Mode    string `json:"mode"`
-		Numbers []int  `json:"numbers"`
-	}
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	if req.Mode != "normal" && req.Mode != "numerology" {
-		return biz("抽牌方式不正确")
-	}
-	var kind, storedMode string
-	if err := a.Store.QueryRow(r.Context(), `SELECT type, draw_mode FROM readings WHERE id=$1`, id).Scan(&kind, &storedMode); err != nil {
-		return err
-	}
-	if kind == "normal" {
-		if storedMode == "" {
-			return biz("请先选择抽牌方式")
-		}
-		if req.Mode != storedMode {
-			return biz("抽牌方式不正确")
-		}
-	}
-	var spreadID *int64
-	var status string
-	err = a.Store.QueryRow(r.Context(), `SELECT spread_id, status FROM readings WHERE id=$1`, id).Scan(&spreadID, &status)
-	if err != nil || spreadID == nil {
-		return biz("请先选择牌阵")
-	}
-	if status == "SHUFFLING" {
-		return biz("请先完成切牌并点击下一步")
-	}
-	if status != "SPREAD_SELECTED" && status != "CUTTING" {
-		return biz("请先选择牌阵")
-	}
-	var posRaw string
-	if err := a.Store.QueryRow(r.Context(), `SELECT positions FROM spreads WHERE id=$1`, *spreadID).Scan(&posRaw); err != nil {
-		return err
-	}
-	var positions []position
-	if err := json.Unmarshal([]byte(posRaw), &positions); err != nil {
-		return err
-	}
-	var cards []drawnCard
-	if req.Mode == "numerology" {
-		var cardCount int
-		if err := a.Store.QueryRow(r.Context(), `SELECT card_count FROM spreads WHERE id=$1`, *spreadID).Scan(&cardCount); err != nil {
-			return err
-		}
-		if len(req.Numbers) != cardCount {
-			return biz("灵数个数须等于牌阵张数")
-		}
-		slots, mapErr := a.readingNumerologyMap(r.Context(), id)
-		if mapErr != nil {
-			return mapErr
-		}
-		cards, err = cardsFromNumerologyMap(slots, req.Numbers, positions)
-	} else {
-		cards, err = drawCards(positions)
-	}
+	cards, err := cardsFromNumerologyMap(slots, numbers, positions)
 	if err != nil {
 		return err
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET cards=$1, status='CARDS_FIXED', updated_at=now() WHERE id=$2 AND status IN ('SPREAD_SELECTED','CUTTING')`, mustJSON(cards), id)
+	tag, err := a.Store.Exec(ctx, `UPDATE readings SET cards=$1, status='CARDS_FIXED', updated_at=now() WHERE id=$2 AND status IN ('SPREAD_SELECTED','SHUFFLING','CUTTING') AND deleted_at IS NULL`, mustJSON(cards), id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return biz("牌面已固定或状态已变化")
 	}
-	item, err := a.loadReadingAbs(r.Context(), r, id)
-	if err != nil {
-		return err
-	}
-	writeOK(w, item)
 	return nil
 }
 
@@ -1259,7 +1162,7 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if wantsSSE(r) {
 		return a.appInterpretStream(w, r)
 	}
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -1267,7 +1170,7 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	if err := a.takeClientCards(r, id); err != nil {
@@ -1353,7 +1256,7 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 		add("id<$%d", beforeID)
 	}
 	args = append(args, limit+1)
-	cols := `id, user_id, anonymous_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode`
+	cols := `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode`
 	query := "SELECT " + cols + " FROM readings WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args))
 	rows, err := a.Store.Query(r.Context(), query, args...)
 	if err != nil {
@@ -1413,7 +1316,7 @@ func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appDeleteReading(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -1424,7 +1327,7 @@ func (a *App) appDeleteReading(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	_, err = a.Store.Exec(r.Context(), `UPDATE readings SET deleted_at=now(), updated_at=now() WHERE id=$1 AND deleted_at IS NULL`, id)
@@ -1462,7 +1365,7 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id int64, target, business string, existing map[string]any, written bool, err error) {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return 0, "", "", nil, false, err
 	}

@@ -53,7 +53,6 @@ export interface Operator {
 export interface ReadingRow {
   id: number;
   user_id?: number | null;
-  anonymous_id?: string | null;
   type: string;
   question?: string | null;
   status: string;

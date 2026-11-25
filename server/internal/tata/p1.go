@@ -31,7 +31,7 @@ const (
 )
 
 func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func (a *App) appCampaign(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appCampaignParticipations(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func (a *App) appCampaignParticipations(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *App) appCampaignRewards(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}

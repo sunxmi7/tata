@@ -79,7 +79,7 @@ type rowQuery interface {
 }
 
 func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appIAPRestore(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func (a *App) appIAPRestore(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appIAPEntitlements(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func (a *App) appIAPSKUs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	uid, _, _ := a.appActor(r)
+	uid, _ := a.appActor(r)
 	member := false
 	if uid > 0 {
 		member, err = hasActiveMembership(r.Context(), a.Store, uid)

@@ -177,7 +177,7 @@ func (a *App) appDeckShop(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) optionalAppUser(r *http.Request) int64 {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return 0
 	}

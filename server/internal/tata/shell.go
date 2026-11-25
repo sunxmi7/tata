@@ -98,7 +98,7 @@ func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -234,7 +234,7 @@ func creditRedeemFree(ctx context.Context, tx Tx, uid int64, amount int) error {
 }
 
 func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func ledgerNote(reason string) string {
 }
 
 func (a *App) appUploads(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -569,7 +569,7 @@ func randomHex(n int) (string, error) {
 }
 
 func (a *App) appWishlist(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -605,7 +605,7 @@ func (a *App) appWishlist(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appFeedback(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -650,7 +650,7 @@ func (a *App) appFeedback(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appGetNotificationPrefs(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -666,7 +666,7 @@ func (a *App) appGetNotificationPrefs(w http.ResponseWriter, r *http.Request) er
 }
 
 func (a *App) appPutNotificationPrefs(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}

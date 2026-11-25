@@ -29,7 +29,7 @@ func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "用户名或密码错误")
 		return
 	}
-	access, err := a.signAccess("admin", id, "", role)
+	access, err := a.signAccess("admin", id, role)
 	if err != nil {
 		writeErr(w, r, http.StatusOK, "内部错误")
 		return
@@ -88,7 +88,7 @@ func (a *App) adminRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusUnauthorized, "账号已停用")
 		return
 	}
-	access, err := a.signAccess("admin", sub, "", role)
+	access, err := a.signAccess("admin", sub, role)
 	if err != nil {
 		writeErr(w, r, http.StatusOK, "内部错误")
 		return

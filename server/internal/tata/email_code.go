@@ -56,7 +56,7 @@ func (a *App) appSendEmailCode(w http.ResponseWriter, r *http.Request) error {
 		return biz("验证码场景不正确")
 	}
 	if scene == "bind" {
-		uid, _, err := a.appActor(r)
+		uid, err := a.appActor(r)
 		if err != nil {
 			return err
 		}

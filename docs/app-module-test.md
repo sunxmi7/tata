@@ -8,7 +8,7 @@
 
 **包络：** 成功 `code=0`；业务失败仍是 HTTP 200、`code=1`、看 `message`；需要令牌却没带是 HTTP 401「未登录或令牌无效」。
 
-公开目录（预设问题、牌阵、塔罗师、提示窗、探索、活动列表/详情、帮助、SKU）**不带 token 就能过**。创建占卜、额度、档案要先调 `POST /api/app/v1/auth/anonymous` 拿匿名令牌。写档案、今日一牌、兑换、年运必须换成登录令牌。
+公开目录（预设问题、牌阵、塔罗师、提示窗、活动列表/详情、帮助）**不带 token 就能过**。未登录占卜不带令牌，请求里带 `device_id`。额度、档案、今日一牌、兑换、年运必须登录。没有匿名登录。
 
 ---
 
@@ -49,19 +49,9 @@
 
 ## 1. 登录注册
 
-匿名令牌后面标 ANON，登录令牌标 USER。把返回值记在文末表格里。
+登录令牌标 USER。未登录占卜用设备号 DEVICE。把返回值记在文末表格里。没有匿名登录，也没有 `POST /auth/anonymous`。
 
-### 1.1 匿名进入
-
-`POST /api/app/v1/auth/anonymous`
-
-无请求体、无令牌。
-
-- [ ] `code=0`，有 `data.accessToken`、`data.anonymous_id`
-- [ ] 没有 refresh
-- [ ] 记下来：ANON = accessToken，ANON_ID = anonymous_id
-
-### 1.2 发码（登录）
+### 1.1 发码（登录）
 
 `POST /api/app/v1/auth/email/code`
 
@@ -76,9 +66,9 @@
 - [ ] 邮箱格式不对，应「邮箱不正确」
 - [ ] 已有账号的邮箱也可以发 login 码，不会「邮箱已注册」
 
-### 1.3 邮箱验证码登录（首次即创建账号）
+### 1.2 邮箱验证码登录（首次即创建账号）
 
-可先用 ANON 走第 4 节建一条占卜，再登录；也可以先登录再抽。没有 `POST /auth/register`。
+可先用 DEVICE 走第 4 节建一条占卜，再登录；也可以先登录再抽。没有 `POST /auth/register`。
 
 `POST /api/app/v1/auth/login`
 
@@ -86,76 +76,78 @@
 {
   "email": "你的邮箱",
   "code": "邮件里的6位码",
-  "anonymous_id": "上一步的 ANON_ID"
+  "device_id": "这台设备的 DEVICE"
 }
 ```
 
 - [ ] `code=0`，有 accessToken、id、login=email
-- [ ] 首次会发注册奖励，有 `registration_reward_expires_at`
 - [ ] 记 USER = accessToken，UID = id
-- [ ] 带了 anonymous_id 时，之前匿名占卜会出现在登录后的历史里
+- [ ] 带了 device_id 时，该设备上尚未归属的占卜会出现在登录后的历史里
+- [ ] 多传 anonymous_id，应「请求字段不正确」
 - [ ] 验证码填错，应「验证码不正确或已过期」
 - [ ] 漏填验证码，应「邮箱和验证码必填」
 - [ ] 多传 password，应「请求字段不正确」
 
-### 1.4 已有账号再登录
+### 1.3 已有账号再登录
 
 等 60 秒冷却后再发一次 login 码，或换邮箱。`POST /api/app/v1/auth/login`
 
 ```json
 {
   "email": "你的邮箱",
-  "code": "新的6位码"
+  "code": "新的6位码",
+  "device_id": "这台设备的 DEVICE"
 }
 ```
 
 - [ ] 成功拿到新的 USER 令牌，login=email
-- [ ] 不会再发一份注册奖励
 - [ ] 验证码用过即作废，再用应「验证码不正确或已过期」
 
-### 1.5 微信 / 苹果（可选）
+### 1.4 微信 / 苹果（可选）
 
-客户端把微信 SDK 的 `code`、苹果 `identity_token` 交给服务端校验。微信 iOS/Android 共用一套 AppID；苹果登录仅 iOS，安卓没有。`config.yaml` 的 `wechat` / `apple` 未配时接口返回「微信登录未配置」或「苹果登录未配置」，不必等凭证也能测这条错误。凭证到了把 `enabled` 设为 true 再测真登录。
+客户端把微信 SDK 的 `code`、苹果 `identity_token` 交给服务端校验。微信 iOS/Android 共用一套 AppID；苹果登录仅 iOS，安卓没有。`config.yaml` 的 `wechat` / `apple` 未配时接口返回「微信登录未配置」或「苹果登录未配置」，不必等凭证也能测这条错误。凭证到了把 `enabled` 设为 true 再测真登录。请求体可带 `device_id`，用来挂设备上的占卜。
 
 `POST /api/app/v1/auth/wechat`
 
 ```json
-{ "code": "微信SDK返回的code" }
+{ "code": "微信SDK返回的code", "device_id": "这台设备的 DEVICE" }
 ```
 
 `POST /api/app/v1/auth/apple`
 
 ```json
-{ "identity_token": "苹果identity_token" }
+{ "identity_token": "苹果identity_token", "device_id": "这台设备的 DEVICE" }
 ```
 
 - [ ] 未配置时「微信登录未配置」/「苹果登录未配置」
-- [ ] 配置后首次会建用户并发注册奖励
-- [ ] 同一微信 / 苹果身份再调是登录，不是再发一份注册奖励
+- [ ] 配置后首次会建用户
+- [ ] 同一微信 / 苹果身份再调是登录
+- [ ] 多传 anonymous_id，应「请求字段不正确」
 
 ---
 
 ## 2. 首页
 
-`banners` / `tarotists` / `spreads` 公开，可不带令牌。`quota` / `deck-preference` / `daily` 要 ANON 或 USER。
+`banners` / `tarotists` / `spreads` 公开，可不带令牌。`quota` / `deck-preference` / `daily` 必须登录。
 
 - [ ] `GET /api/app/v1/banners`：当前有效提示窗，没有就空数组；不带 token 也能过
 - [ ] `GET /api/app/v1/tarotists`：至少有知晚 / 明序 / 隐川 / 照野；记下要用的 id（种子知晚一般是 9）
 - [ ] `GET /api/app/v1/spreads`：有「时间流」，recommended=true，card_count=3；记下 spread_id（一般是 1）
-- [ ] `GET /api/app/v1/quota`：匿名次数/钻石为 0；登录用户能看到注册奖励或今日免费
+- [ ] `GET /api/app/v1/quota` 不带令牌：HTTP 401
+- [ ] `GET /api/app/v1/quota` 用登录令牌：能看到今日免费或会员额度
 - [ ] `GET /api/app/v1/deck-preference`：当前 code=rider-waite，available 含莱德韦特
 - [ ] `PUT /api/app/v1/deck-preference` body `{"code":"rider-waite"}`；未上架 code 应被拒绝
-- [ ] `POST /api/app/v1/daily` 用匿名令牌：应「登录后才能抽今日一牌」
+- [ ] `POST /api/app/v1/daily` 不带令牌：应「登录后才能抽今日一牌」或 HTTP 401
 - [ ] `POST /api/app/v1/daily` 用登录令牌，body `{"target":"today"}`：首次成功或额度拦截；同一天再抽应 code=1 且 data.reused=true
 
 ---
 
 ## 3. 探索
 
-目录公开。开局 `POST /readings` 要令牌。
+这期没有 `GET /explore/topics`。开局直接 `POST /readings`，未登录带 `device_id`，已登录带令牌。
 
-- [ ] `GET /api/app/v1/explore/topics`：11 个主题、22 套牌阵（Yes or No 1 套，关系走向 3 套，其余各 2 套）；不带 token 也能过
-- [ ] 条目里 spread.spread_id 应对时间流
+- [ ] `GET /api/app/v1/explore/topics`：应 404
+- [ ] 探索主题下的牌阵仍可从 `GET /spreads` 或运营配置里认
 
 点进主题后开局走抽牌，不要另找探索专用创建接口。
 
@@ -196,43 +188,31 @@
 
 ### 4.2 改问题（抽牌前）
 
-`PUT /api/app/v1/readings/{id}/question`
+这期没有 `PUT /readings/{id}/question`。问题在创建时一次定好；创建前可用 `POST /question-suggestions` 换更清晰的问法。
 
-```json
-{ "question": "我最近的感情运势如何？" }
-```
+### 4.3 选阵 → 客户端抽牌 → 解读
 
-- [ ] 抽牌前可以改；抽完再改应「抽牌后不能修改问题」
+服务端没有 detect / shuffle / cut / draw。洗牌、切牌、抽牌在客户端完成。
 
-### 4.3 检测 → 选阵 → 洗牌 → 切牌 → 抽牌
+1. `GET /api/app/v1/readings/{id}/spread-choices`（未登录带 `?device_id=`）
+2. `POST /api/app/v1/readings/{id}/spread` `{"spread_id":1,"draw_mode":"normal"}`
+3. 客户端抽好牌后，`POST /api/app/v1/readings/{id}/interpret` 带上牌面（必须登录）
 
-顺序不要跳：
+灵数：`draw_mode` 为 `numerology` 后，`POST /api/app/v1/readings/{id}/numerology` 交 `numbers`，个数等于牌阵张数，1–78 不重复。
 
-1. `POST /api/app/v1/readings/{id}/detect` 无 body（探索/跳过检测的可以不过这步）
-2. `POST /api/app/v1/readings/{id}/spread` `{"spread_id":1}` → SPREAD_SELECTED
-3. `POST /api/app/v1/readings/{id}/shuffle` 无 body → SHUFFLING
-4. `POST /api/app/v1/readings/{id}/cut` 无 body → CUTTING
-5. `POST /api/app/v1/readings/{id}/draw` `{"mode":"normal"}` → CARDS_FIXED，3 张牌
-
-- [ ] 没选阵就洗牌，应提示先选阵
-- [ ] 没洗牌就切牌，应提示先洗牌
-- [ ] 灵数：`{"mode":"numerology","numbers":[1,2,3]}`，三个不重复、1–78，张数=牌阵牌位
+- [ ] 普通占卜没选 `draw_mode` 就提交牌阵，应「请先选择抽牌方式」
+- [ ] 灵数数字不齐或重复时，返回类型九 / 十，不落牌
 
 ### 4.4 解读
 
-`POST /api/app/v1/readings/{id}/interpret` 无 body
+`POST /api/app/v1/readings/{id}/interpret` 必须登录，body 带 `spread_id` 和 `cards`。
 
-- [ ] 供应商已绑：出解读，状态完成
+- [ ] 供应商已绑：`data.messages` 含类型二、一、三
 - [ ] 未绑：失败可重试，不重复扣费
-- [ ] 流式（可选）：`POST /api/app/v1/readings/{id}/interpret/stream`，响应 text/event-stream
+- [ ] 流式（可选）：`POST /api/app/v1/readings/{id}/interpret/stream`
 
-### 4.5 额度 / 付费墙 / 追问
+### 4.5 追问
 
-额度不够或单价未配置时，创建/抽牌/解读可能带着 paywall，不要当成 500。
-
-- [ ] `POST /api/app/v1/readings/{id}/confirm-quota` `{"consume":true}`
-- [ ] `POST /api/app/v1/readings/{id}/use-reward` 无 body
-- [ ] `POST /api/app/v1/readings/{id}/paywall` `{"action":"cancel"}` 或 `"resume"`
 - [ ] 解读成功后再追问：`POST /api/app/v1/readings/{id}/followups`
 
 ```json
@@ -241,6 +221,7 @@
 
 - [ ] `GET /api/app/v1/readings/{id}/messages` 能看到追问对话
 - [ ] continuation=false 会另开一条普通占卜
+- [ ] 没有 `confirm-quota` / `use-reward` / `paywall` 这些公开接口
 
 ---
 
@@ -249,8 +230,8 @@
 与抽牌共用接口，重点看选阵屏数据。
 
 - [ ] `GET /api/app/v1/spreads`：推荐角标、示意图 thumbnail（没配则默认牌背）
-- [ ] `POST /api/app/v1/readings/{id}/spread`：只接受启用中的牌阵
-- [ ] `POST /api/app/v1/readings/{id}/draw`：张数必须等于该阵 card_count
+- [ ] `GET /api/app/v1/readings/{id}/spread-choices`：一条类型十六，含抽牌方式
+- [ ] `POST /api/app/v1/readings/{id}/spread`：只接受启用中的牌阵，并带 `draw_mode`
 
 ---
 
@@ -262,7 +243,7 @@
 - [ ] 列表项有 short_text / card_name / status_label（没有牌则缩略图走默认）
 - [ ] `GET /api/app/v1/readings/{id}`：自己的记录能读；别人的或不存在为业务错误
 - [ ] `GET /api/app/v1/readings/{id}/messages`
-- [ ] `DELETE /api/app/v1/readings/{id}`：匿名不能删（「登录后才能删除」）；登录后软删，再读应当不存在
+- [ ] `DELETE /api/app/v1/readings/{id}`：未登录不能删（「登录后才能删除」）；登录后软删，再读应当不存在
 
 ---
 
@@ -511,7 +492,7 @@ JSON 示例（1×1 png）：
 
 无 path。客户端本地保存。
 
-- [ ] 任意已登录/匿名接口带 `Accept-Language: zh-Hans`（或 zh-Hant / en / ja / ko）
+- [ ] 任意已登录接口带 `Accept-Language: zh-Hans`（或 zh-Hant / en / ja / ko）
 - [ ] 也可带 `X-Language`，语义相同
 - [ ] 不带头时按简体；本轮业务文案多半仍是中文，只要接口不 500 即可
 
@@ -529,8 +510,7 @@ JSON 示例（1×1 png）：
 
 | 项 | 值 |
 | --- | --- |
-| 匿名 token |  |
-| anonymous_id |  |
+| device_id |  |
 | 登录 token |  |
 | user id |  |
 | 时间流 spread_id |  |

@@ -36,9 +36,12 @@ func TestRetryDoesNotDoubleChargeOrRedraw(t *testing.T) {
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "要不要换工作", "type": "normal"})
 	rid := int64(reading["id"].(float64))
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
-	drawn := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
-	cards := fmt.Sprint(drawn["cards"])
-	_, _ = store.Exec(t.Context(), `UPDATE readings SET status='FAILED_RETRYABLE' WHERE id=$1`, rid)
+	clientCards := `[{"position":1,"position_name":"过去","name":"愚者","orientation":"upright","card_id":0},{"position":2,"position_name":"现在","name":"魔术师","orientation":"reversed","card_id":1},{"position":3,"position_name":"未来","name":"女祭司","orientation":"upright","card_id":2}]`
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET cards=$2, status='FAILED_RETRYABLE' WHERE id=$1`, rid, clientCards); err != nil {
+		t.Fatal(err)
+	}
+	before := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
+	cards := fmt.Sprint(before["cards"])
 	DemoHold.Store(int64(400 * time.Millisecond))
 	t.Cleanup(func() { DemoHold.Store(0) })
 	var wg sync.WaitGroup

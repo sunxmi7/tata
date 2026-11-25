@@ -122,11 +122,12 @@ func TestAcceptance(t *testing.T) {
 	setDiamondCost(t, store, 1)
 	setQuota(t, store, uid, 5)
 	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
-	drawn := create(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
-	cardsBefore, _ := json.Marshal(drawn["cards"])
-	if !strings.Contains(string(cardsBefore), "过去") || !strings.Contains(string(cardsBefore), "正义") && !strings.Contains(string(cardsBefore), "力量") {
-		// cards are random; positions must be present
+	clientCards := `[{"position":1,"position_name":"过去","name":"愚者","orientation":"upright","card_id":0},{"position":2,"position_name":"现在","name":"魔术师","orientation":"reversed","card_id":1},{"position":3,"position_name":"未来","name":"女祭司","orientation":"upright","card_id":2}]`
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET cards=$2, status='CARDS_FIXED' WHERE id=$1`, rid, clientCards); err != nil {
+		t.Fatal(err)
 	}
+	before := listOne(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d", rid))
+	cardsBefore, _ := json.Marshal(before["cards"])
 	if !strings.Contains(string(cardsBefore), "过去") || !strings.Contains(string(cardsBefore), "现在") || !strings.Contains(string(cardsBefore), "未来") {
 		t.Fatalf("positions: %s", cardsBefore)
 	}
@@ -319,10 +320,29 @@ func get(t *testing.T, ts *httptest.Server, token, path string) []byte {
 
 func call(t *testing.T, ts *httptest.Server, token, method, path string, body any) (string, []byte) {
 	t.Helper()
-	var rdr io.Reader
+	var bodyBytes []byte
 	if body != nil {
-		b, _ := json.Marshal(body)
-		rdr = bytes.NewReader(b)
+		bodyBytes, _ = json.Marshal(body)
+	}
+	if rawApp, ok := liveTestApps.Load(ts.URL); ok {
+		if status, raw, handled := dispatchRetired(rawApp.(*App), method, path, bodyBytes, token); handled {
+			if status == http.StatusUnauthorized {
+				return "401", raw
+			}
+			var env struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(raw, &env)
+			if env.Code != 0 {
+				return env.Message, raw
+			}
+			return "", raw
+		}
+	}
+	var rdr io.Reader
+	if bodyBytes != nil {
+		rdr = bytes.NewReader(bodyBytes)
 	}
 	req, err := http.NewRequest(method, ts.URL+path, rdr)
 	if err != nil {

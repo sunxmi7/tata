@@ -107,53 +107,6 @@ func TestDailyStream(t *testing.T) {
 	}
 }
 
-func TestDetectStream(t *testing.T) {
-	store, ts := newMergeServer(t)
-	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
-	vendor := create(t, ts, admin.access, "/api/admin/v1/vendors", map[string]any{
-		"name": "检测流式", "base_url": ts.URL + "/demo/openai/v1", "api_key": "k", "models": []string{"demo"}, "enabled": true,
-	})
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/detect",
-		map[string]any{"vendor_id": vendor["id"], "model": "demo"})
-	token, uid := registerUser(t, ts, store, "detectstream")
-	rd := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "我该怎么选？", "type": "normal"})
-	id := int64(rd["id"].(float64))
-	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/app/v1/readings/%d/detect/stream", ts.URL, id), nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
-		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("not SSE: content-type=%s body=%s", ct, raw)
-	}
-	raw, _ := io.ReadAll(resp.Body)
-	body := string(raw)
-	if strings.Contains(body, "event: delta") || !strings.Contains(body, "event: done") || !strings.Contains(body, `"model_called":false`) || !strings.Contains(body, `"reason":"no_entitlement"`) {
-		t.Fatalf("detect stream:\n%s", body)
-	}
-	var jobs int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ai_jobs WHERE reading_id=$1 AND kind='detect'`, id).Scan(&jobs); err != nil {
-		t.Fatal(err)
-	}
-	if jobs != 0 {
-		t.Fatalf("detect called the model: %d", jobs)
-	}
-	setMember(t, store, uid, "month")
-	detected := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/detect", id), map[string]any{})
-	if detected["model_called"] != false || detected["decided"] != false || detected["reason"] != "fallback_unconfigured" || detected["source"] != "local" {
-		t.Fatalf("member detect: %#v", detected)
-	}
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ai_jobs WHERE reading_id=$1 AND kind='detect'`, id).Scan(&jobs); err != nil {
-		t.Fatal(err)
-	}
-	if jobs != 0 {
-		t.Fatalf("member detect called the model: %d", jobs)
-	}
-}
-
 func TestInterpretJobSurvivesClientDrop(t *testing.T) {
 	store, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})

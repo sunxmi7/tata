@@ -22,9 +22,9 @@ info:
     经 `decode` 的 JSON 会拒绝未知字段，失败文案为「请求字段不正确」。
 
     ## 鉴权
-    公开目录不需要 token：`GET /preset-questions`、`/spreads`、`/banners`、`/tarotists`、`/explore/topics`、`/campaigns`、`/campaigns/{id}`、`/help/*`、`/iap/skus`、`/iap/config`。创建占卜、额度、档案、今日一牌等仍要登录或匿名令牌。其余需要登录（或匿名令牌）的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。不要放进请求体。
+    公开目录不需要 token：`GET /preset-questions`、`/spreads`、`/banners`、`/tarotists`、`/explore/topics`、`/campaigns`、`/campaigns/{id}`、`/help/*`、`/iap/skus`、`/iap/config`。创建占卜、额度、档案、今日一牌等仍要登录。其余需要登录（）的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。不要放进请求体。
     Access token 为 HS256 JWT，`typ=access`，约 2 小时过期。
-    - App：`aud=app`。登录用户 `sub` 为 `app_users.id`，`anon` 为空。匿名令牌 `sub=0`，`anon` 为 anonymous_id。`role` 为空。
+    - App：`aud=app`。登录用户 `sub` 为 `app_users.id`。`role` 为空。
     - 管理端：`aud=admin`。`sub` 为 `operators.id`，`role` 为 `admin` 或 `readonly`。
     两种令牌不能互换。已合并账号（`merged_into` 非空）、不存在的用户、已停用的操作员会被拒绝。
     App 登录接口不签发 refresh token。管理端 refresh token 是库存的不透明字符串（约 7 天），不是 JWT。
@@ -53,7 +53,7 @@ tags:
   - name: 登录绑定
     description: App 登录、绑定、合并确认、注销。除绑定 / 合并 / 注销外不需要 Bearer。
   - name: 用户档案
-    description: 登录用户档案。改头像先 POST /uploads（folder=misc）再 PUT /profile 的 avatar_url。昵称与姓名同一列，PUT 可传 name 或 nickname。匿名令牌会得到「匿名用户没有档案」。
+    description: 登录用户档案。改头像先 POST /uploads（folder=misc）再 PUT /profile 的 avatar_url。昵称与姓名同一列，PUT 可传 name 或 nickname。必须登录。
   - name: 占卜解读
     description: 占卜记录与仪式流程（检测、牌阵、洗牌、切牌、抽牌、解读、追问、工作流）。
   - name: 额度钻石
@@ -96,7 +96,7 @@ components:
       required: true
       description: |
         填 `Bearer ` + accessToken。Bearer 后面有一个空格。放在 Headers，不要放进请求体。
-        App 用登录/匿名返回的 token；管理端用管理端登录返回的 token。两种不能混用。
+        App 用登录返回的 token；管理端用管理端登录返回的 token。两种不能混用。
       schema:
         type: string
         example: Bearer eyJhbGciOiJIUzI1NiJ9
@@ -132,7 +132,7 @@ components:
       required: false
       description: |
         可选。空则不去重。同一 scope 下：首次插入 pending；完成后原样重放当时的 JSON 包络；仍为 pending 时 HTTP 200、code=1、「重复请求处理中」。
-        `POST /api/app/v1/readings` 的 scope 为 `user:{id}` 或 `anon:{anonymous_id}`。
+        `POST /api/app/v1/readings` 的 scope 为 `user:{id}` 或 `device:{device_id 小写}`。
         `POST /api/app/v1/readings/{id}/followups` 的 scope 为 `followup:{readingId}`。
       schema:
         type: string
@@ -260,10 +260,7 @@ components:
           type: integer
           format: int64
           nullable: true
-          description: 归属用户。匿名占卜为 null。
-        anonymous_id:
-          type: string
-          description: 无匿名 id 时为空字符串，不是 null。
+          description: 归属用户。未登录为 null。
         type:
           type: string
           description: normal、tarotist、explore、daily。
@@ -365,7 +362,7 @@ components:
     ReadingCreated:
       description: |
         创建占卜在 Reading 之上附加的额度结果。成功包络仍是 code=0。
-        登录用户的普通 / 塔罗师占卜在这一步就按共享优先级扣费；explore 推迟到仪式门槛；匿名不预扣。
+        登录用户的普通 / 塔罗师占卜在这一步就按共享优先级扣费；explore 推迟到仪式门槛；未登录不预扣。
         额度用尽时记录仍保留（kept=true，generated=false），不会编造钻石单价。
       allOf:
         - $ref: "#/components/schemas/Reading"
@@ -386,7 +383,7 @@ components:
             quota_outcome:
               type: string
               enum: [charged, already, paywall, quota_cost_unconfigured, anonymous, deferred]
-              description: 额度结算结果。charged 已扣、already 此前已扣、paywall 待付费、anonymous 匿名不预扣、deferred 推迟到仪式门槛。
+              description: 额度结算结果。charged 已扣、already 此前已扣、paywall 待付费、anonymous 未登录不预扣、deferred 推迟到仪式门槛。
             entitlement:
               type: string
               description: |
@@ -1268,7 +1265,7 @@ components:
         id:
           type: integer
           format: int64
-          description: 登录用户数字 id。匿名进入不返回此字段。
+          description: 登录用户数字 id。未登录不返回此字段。
         reward_consumed:
           type: boolean
           description: 登录后尝试结算未扣费占卜时，是否扣了注册奖励。
@@ -1288,9 +1285,6 @@ components:
         login:
           type: string
           description: 邮箱登录为 email，苹果登录为 apple。微信登录可不出现。
-        anonymous_id:
-          type: string
-          description: 仅匿名进入返回。把尚未归属的占卜挂到这个 id。
     AnonymousAuthOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -1305,9 +1299,6 @@ components:
                 accessToken:
                   type: string
                   description: 匿名 App JWT。sub=0，anon 为 anonymous_id。
-                anonymous_id:
-                  type: string
-                  description: 匿名会话 id。注册/登录时传入可把占卜转到正式用户。
     AdminLoginOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -1651,7 +1642,7 @@ components:
           type: integer
           format: int64
           nullable: true
-          description: 归属用户。匿名为 null。
+          description: 归属用户。未登录为 null。
         type:
           type: string
           description: normal、tarotist、explore、daily。
@@ -2323,9 +2314,6 @@ components:
         code:
           type: string
           description: 必填。邮箱验证码，6 位数字，5 分钟有效。先调 POST /auth/email/code 且 scene=login。不对或过期返回「验证码不正确或已过期」。
-        anonymous_id:
-          type: string
-          description: 选填。传入匿名进入拿到的 anonymous_id 时，把该 id 下尚未归属的占卜转到此用户。
         invite_code:
           type: string
           description: 选填。邀请人 6 位 public_id。校验失败不挡登录；成功则给邀请人 +3 次并写入奖励记录。同一账号只能绑定一次。
@@ -4304,21 +4292,6 @@ paths:
             text/html:
               schema:
                 type: string
-  /api/app/v1/auth/anonymous:
-    post:
-      tags: [登录绑定]
-      operationId: appAnonymous
-      summary: 匿名进入
-      description: 不需要令牌，也不读取请求体。签发 aud=app、sub=0 的 access JWT。不签发 refresh。
-      responses:
-        "200":
-          description: 成功为 AnonymousAuthOK。内部错误为 code=1、「内部错误」。
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/AnonymousAuthOK"
-                  - $ref: "#/components/schemas/ErrorEnvelope"
   /api/app/v1/auth/email/code:
     post:
       tags: [登录绑定]
@@ -4381,7 +4354,7 @@ paths:
         邮箱和验证码必填。没有单独注册接口：未注册邮箱首次用验证码登录会创建账号；已有账号则登录。不再发放注册奖励。
         先调 POST /auth/email/code，scene=login。已注册邮箱也可以发码。验证码不对或过期返回「验证码不正确或已过期」。
         该邮箱曾注销过则「该邮箱已注销，不能重复注册」。账号已注销返回「账号已注销」。
-        若带 anonymous_id，会把匿名占卜转给此用户。若该用户已有未结算占卜，会按共享优先级立刻扣一次。
+        带 device_id 时，把该设备上尚未归属的占卜挂到此用户。若该用户已有未结算占卜，会按共享优先级立刻扣一次。
         已有账号成功时 needs_confirm 恒为 false。若未在登录时扣掉未结算占卜，且本周期已用过免费次数，quota_prompt 为「今日免费体验额度已用完，本次记录已保存到历史记录」。
         不签发 refresh。
       requestBody:
@@ -4649,7 +4622,7 @@ paths:
         - $ref: "#/components/parameters/Authorization"
       responses:
         "200":
-          description: 匿名用户为业务错误「匿名用户没有档案」。
+          description: 必须登录。
           content:
             application/json:
               schema:
@@ -4961,7 +4934,7 @@ paths:
       operationId: appListSpreads
       summary: 可用牌阵
       description: |
-        只返回 enabled=true。recommended=true 的排前面，其余按 id。公开，不需要登录或匿名令牌。
+        只返回 enabled=true。recommended=true 的排前面，其余按 id。公开，不需要登录。
         recommended 对应选阵屏「推荐牌阵」角标。thumbnail 为牌阵示意图完整 URL（相对 /uploads/... 会拼当前请求的 scheme://host）；未配则为内置默认牌背。已是 http(s) 的 CDN 地址不改。
       responses:
         "200":
@@ -4991,7 +4964,7 @@ paths:
             enum: [relationship, career, study, growth, social, life]
           description: 按场景筛选。只传 scene 码，不传中文。非法值返回「场景不正确」。
       description: |
-        来源《塔塔_预设问题库_V1》。点击后填入输入框，不直接提交。公开，不需要登录或匿名令牌。按场景查询只传 ?scene= 码。
+        来源《塔塔_预设问题库_V1》。点击后填入输入框，不直接提交。公开，不需要登录。按场景查询只传 ?scene= 码。
 
         **featured（首屏默认 15 条，单独数组，混合排列，UI 可不展示分类标签）：**
         1. featured_01 growth 最近的我，最需要关注什么？
@@ -5028,7 +5001,7 @@ paths:
       tags: [占卜解读]
       operationId: appListBanners
       summary: 当前首页提示窗
-      description: 公开，不需要登录或匿名令牌。只返回 start_at <= now < end_at，按 priority、id 降序。
+      description: 公开，不需要登录。只返回 start_at <= now < end_at，按 priority、id 降序。
       responses:
         "200":
           description: data 为提示窗数组。
@@ -5048,7 +5021,7 @@ paths:
       tags: [占卜解读]
       operationId: appListTarotists
       summary: 可用塔罗师
-      description: 公开，不需要登录或匿名令牌。只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
+      description: 公开，不需要登录。只返回启用中的塔罗师。首页卡字段：name、title/tags、blurb、avatar_url（可空）。不返回人设/禁止项正文。
       responses:
         "200":
           description: data 为塔罗师数组。
@@ -5071,7 +5044,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        匿名与免费用户返回今日免费 / 邀请次数，不返回额度余额。
+        未登录或免费用户返回今日免费 / 邀请次数，不返回额度余额。
         会员返回 is_member、membership、quota_remaining。
         quota_cost / quota_cost 未配置时为 null。
         display_label 与 paid_label 均为「额度」。
@@ -5095,7 +5068,7 @@ paths:
       operationId: appListReadings
       summary: 我的占卜列表
       description: |
-        登录用户按 user_id，匿名按 anonymous_id。不含已删除。按 id 降序。
+        已登录按 user_id。未登录用 device_id。不含已删除。按 id 降序。
         游标分页：limit 默认 20、上限 100；用 next_cursor 作为下一页的 before_id。可按 type 过滤。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -5141,7 +5114,7 @@ paths:
       description: |
         状态从 QUESTION_CREATED 开始。问题最长 200 个码点。
         登录用户的 normal / tarotist 在此按共享优先级扣 play；塔罗师首次可走 ai_trial。
-        explore 不在此扣费（quota_outcome=deferred）。匿名不预扣（quota_outcome=anonymous）。
+        explore 不在此扣费（quota_outcome=deferred）。未登录不预扣（quota_outcome=anonymous）。
         额度不足时仍 code=0，记录保留，paywall 或 quota_cost_unconfigured 在 data 里，不编造单价。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -5192,7 +5165,7 @@ paths:
       tags: [占卜解读]
       operationId: appDeleteReading
       summary: 删除占卜
-      description: 软删除。匿名用户返回「登录后才能删除」。
+      description: 软删除。未登录返回「登录后才能删除」。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -5327,7 +5300,7 @@ paths:
       summary: 洗牌
       description: |
         登录用户先过 play 额度门槛，不够则返回 QuotaBlockEnvelope（code=1），状态不变。
-        匿名不预扣。成功把 SPREAD_SELECTED 改为 SHUFFLING。无请求体。
+        未登录不预扣。成功把 SPREAD_SELECTED 改为 SHUFFLING。无请求体。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -5454,7 +5427,7 @@ paths:
       operationId: appConfirmQuota
       summary: 确认是否扣额度
       description: |
-        匿名用户拒绝。已经扣过则 code=0，message「已经扣过，不再扣」，不再扣。
+        未登录拒绝。已经扣过则 code=0，message「已经扣过，不再扣」，不再扣。
         consume 不为 true 时不扣，记录保留。
         consume=true 时按共享优先级扣 play；不够则 QuotaBlockEnvelope。
       parameters:
@@ -5563,7 +5536,7 @@ paths:
       description: |
         continuation 必填。false 时新建 normal 占卜。
         true 时记录类型须为 normal、explore、daily、tarotist，且解读已完成、牌面已固定。
-        匿名用户在延续追问时被拒绝。登录后按 followup:{turn} 扣费，不够则 QuotaBlockEnvelope，并把追问文本记在 resume_payload。
+        未登录在延续追问时被拒绝。登录后按 followup:{turn} 扣费，不够则 QuotaBlockEnvelope，并把追问文本记在 resume_payload。
         每条解读追问次数受 quota_settings.followup_limit 限制（种子 5，null 不限制）；超限返回「本条解读追问已达上限」。
         含「别这样说」或「不舒服」会关掉照野调侃。模型失败不重复扣费。气泡最多 4 条。
       parameters:
@@ -5938,7 +5911,7 @@ paths:
       operationId: appIAPSKUs
       summary: 已启用的 SKU
       description: |
-        公开，不需要登录或匿名令牌。登录后按身份过滤：consumable_pack 永不返回；quota_pack 仅会员可见。
+        公开，不需要登录。登录后按身份过滤：consumable_pack 永不返回；quota_pack 仅会员可见。
         只返回 enabled=true。kind 可按类型过滤：month_subscription、year_subscription、quota_pack、yearly_unlock。
         种子已填设计价与 App Store 占位商品号；管理员可改。订阅 SKU 带 benefits。 unit=quota。
       parameters:
@@ -5967,7 +5940,7 @@ paths:
       tags: [内购]
       operationId: appIAPConfig
       summary: 恢复购买开关
-      description: 公开，不需要登录或匿名令牌。
+      description: 公开，不需要登录。
       responses:
         "200":
           description: data 为 IAPConfig。
@@ -5985,7 +5958,7 @@ paths:
       tags: [探索]
       operationId: appExploreTopics
       summary: 探索目录
-      description: 返回 11 个探索主题，每个主题下是该主题的牌阵。公开，不需要登录或匿名令牌。普通占卜的 19 套不在这里，走 GET /spreads。
+      description: 返回 11 个探索主题，每个主题下是该主题的牌阵。公开，不需要登录。普通占卜的 19 套不在这里，走 GET /spreads。
       responses:
         "200":
           description: data.themes 为探索主题列表。
@@ -6386,7 +6359,7 @@ paths:
       operationId: appCampaigns
       summary: 参与活动列表
       description: |
-        公开，不需要登录或匿名令牌。条目含标题、副文、状态、角标和入口。
+        公开，不需要登录。条目含标题、副文、状态、角标和入口。
         status=ongoing 时 entry_label=查看活动；status=ended 时角标为「已结束」、entry_label=活动已结束、entry_enabled=false。
         无启用活动时 items 为空，empty_title=暂时没有可参与的活动。不返回奖励数额。
         加载失败沿用 code=1，客户端展示「加载失败，请重试」并重试本接口。
@@ -6460,7 +6433,7 @@ paths:
       operationId: appCampaign
       summary: 活动详情
       description: |
-        公开，不需要登录或匿名令牌。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
+        公开，不需要登录。详情不在本次交付范围。body 为占位文案，detail_delivered=false。
         不预写奖励、条件、有效期数字、会员时长或领取门槛。未知 id 的 message=活动不存在。
       parameters:
         - name: id
@@ -6489,7 +6462,7 @@ paths:
       operationId: appHelpCategories
       summary: 帮助中心分类
       description: |
-        公开，不需要登录或匿名令牌。当前两类：使用与占卜、账号与设置，articles_status=ready。
+        公开，不需要登录。当前两类：使用与占卜、账号与设置，articles_status=ready。
       responses:
         "200":
           description: data 为 HelpCategoryList。
@@ -6508,7 +6481,7 @@ paths:
       operationId: appHelpArticles
       summary: 帮助文章列表与搜索
       description: |
-        公开，不需要登录或匿名令牌。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
+        公开，不需要登录。category 省略时返回全部分类下已有标题。q 按标题子串过滤。
         搜索无结果时 empty_title=暂时没有找到相关问题，empty_hint=换个关键词，或向我们反馈。
         未搜索且分类 articles_status=pending 时，category_note 使用该分类 empty_note。
         列表不含正文。未知分类 message=问题分类不正确。
@@ -6545,7 +6518,7 @@ paths:
       operationId: appHelpArticle
       summary: 帮助文章详情
       description: |
-        公开，不需要登录或匿名令牌。返回标题与正文。当前两类正文 body_status=ready。
+        公开，不需要登录。返回标题与正文。当前两类正文 body_status=ready。
         不编写额度、退款或会员规则。反馈入口走已有 POST /api/app/v1/feedback，不在本文返回规则。
         未知 id 的 message=问题不存在。
       parameters:

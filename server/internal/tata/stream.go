@@ -49,7 +49,7 @@ func sseStart(w http.ResponseWriter) func(event string, payload any) {
 // 额度门槛与非流式一致（拦截时走普通 JSON 的 QuotaBlock），通过后以 SSE 逐段下发解读。
 // 事件：delta（{text}）多次、done（{reading}）或 error（{message}）。
 func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	if err := a.takeClientCards(r, id); err != nil {
@@ -84,7 +84,7 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 // 额度/轮次/扣费与非流式一致；拦截时走普通 JSON 的 QuotaBlock，通过后以 SSE 逐段下发。
 // 事件：delta（{text}）多次、done（{followup}）或 error（{message}）。
 func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	var req struct {
@@ -241,25 +241,6 @@ func asInt64(v any) int64 {
 	default:
 		return 0
 	}
-}
-
-func (a *App) appDetectStream(w http.ResponseWriter, r *http.Request) error {
-	uid, id, _, err := a.beginReading(r)
-	if err != nil {
-		return err
-	}
-	item, err := a.loadReadingAbs(r.Context(), r, id)
-	if err != nil {
-		return err
-	}
-	question, _ := item["question"].(string)
-	payload, err := a.localDetect(r.Context(), uid, question)
-	if err != nil {
-		return err
-	}
-	send := sseStart(w)
-	send("done", payload)
-	return nil
 }
 
 func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) error {

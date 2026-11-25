@@ -47,13 +47,8 @@ func canonicalDevice(raw string) string {
 	return raw
 }
 
-func (a *App) rememberLoginDevice(ctx context.Context, uid int64, deviceID, anonymousID string) error {
+func (a *App) rememberLoginDevice(ctx context.Context, uid int64, deviceID string) error {
 	deviceID = canonicalDevice(deviceID)
-	if deviceID == "" && strings.TrimSpace(anonymousID) != "" {
-		var stored string
-		_ = a.Store.QueryRow(ctx, `SELECT device_id FROM anon_devices WHERE anonymous_id=$1`, strings.TrimSpace(anonymousID)).Scan(&stored)
-		deviceID = canonicalDevice(stored)
-	}
 	if uid <= 0 || deviceID == "" {
 		return nil
 	}
@@ -124,7 +119,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
-	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID, req.AnonymousID); err != nil {
+	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID); err != nil {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
@@ -134,10 +129,10 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	}
 	a.applyWeChatProfile(r, id, prof)
 	a.ensureProfileDefaults(r.Context(), id)
-	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
+	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
 	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
-	access, _ := a.signAccess("app", id, "", "")
+	access, _ := a.signAccess("app", id, "")
 	settled := a.settleQuestionStart(r, id)
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": T(r.Context(), wechatQuotaNote)})
 }
@@ -148,7 +143,6 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 		InviteCode    string `json:"invite_code"`
 		InviteSource  string `json:"invite_source"`
 		DeviceID      string `json:"device_id"`
-		AnonymousID   string `json:"anonymous_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, r, http.StatusOK, "请求字段不正确")
@@ -179,7 +173,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "账号已注销")
 		return
 	}
-	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID, req.AnonymousID); err != nil {
+	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID); err != nil {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
@@ -188,10 +182,10 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.ensureProfileDefaults(r.Context(), id)
-	a.attachDeviceReadings(r.Context(), id, req.AnonymousID, req.DeviceID)
+	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
 	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
-	access, _ := a.signAccess("app", id, "", "")
+	access, _ := a.signAccess("app", id, "")
 	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "apple"})
 }
 
@@ -245,7 +239,7 @@ func (a *App) appBindWechat(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appCancel(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -317,28 +311,6 @@ func (a *App) appEditQuestion(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, item)
-	return nil
-}
-
-func (a *App) appDetect(w http.ResponseWriter, r *http.Request) error {
-	if wantsSSE(r) {
-		return a.appDetectStream(w, r)
-	}
-	uid, id, _, err := a.beginReading(r)
-	if err != nil {
-		return err
-	}
-	item, err := a.loadReadingAbs(r.Context(), r, id)
-	if err != nil {
-		return err
-	}
-	question, _ := item["question"].(string)
-	payload, err := a.localDetect(r.Context(), uid, question)
-	if err != nil {
-		return err
-	}
-	a.rememberRecommendation(r.Context(), id, payload)
-	writeOK(w, payload)
 	return nil
 }
 
@@ -440,38 +412,6 @@ func (a *App) localDetect(ctx context.Context, uid int64, question string) (map[
 	return out, nil
 }
 
-func (a *App) appShuffle(w http.ResponseWriter, r *http.Request) error {
-	stop, err := a.gatePlay(w, r, resumeShuffle)
-	if err != nil || stop {
-		return err
-	}
-	return a.moveRitual(w, r, "SPREAD_SELECTED", "SHUFFLING", "请先选择牌阵")
-}
-
-func (a *App) appCut(w http.ResponseWriter, r *http.Request) error {
-	return a.moveRitual(w, r, "SHUFFLING", "CUTTING", "请先洗牌")
-}
-
-func (a *App) moveRitual(w http.ResponseWriter, r *http.Request, from, to, wrong string) error {
-	_, id, _, err := a.beginReading(r)
-	if err != nil {
-		return err
-	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET status=$1, updated_at=now() WHERE id=$2 AND status=$3`, to, id, from)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return biz(wrong)
-	}
-	item, err := a.loadReadingAbs(r.Context(), r, id)
-	if err != nil {
-		return err
-	}
-	writeOK(w, item)
-	return nil
-}
-
 func rejectFreeFollowup(ctx context.Context, q *Store, uid, readingID int64, kind string) error {
 	var onboard bool
 	if err := q.QueryRow(ctx, `SELECT onboard_experience FROM readings WHERE id=$1`, readingID).Scan(&onboard); err != nil {
@@ -517,7 +457,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	if wantsSSE(r) {
 		return a.appFollowupStream(w, r)
 	}
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -525,7 +465,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	scope := "followup:" + fmtID(id)
@@ -553,7 +493,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 			a.clearPendingIdem(r, scope, idemKey)
 			return biz("问题超过 200 个码点，正式计数口径尚未确认")
 		}
-		view, err := a.createNormal(r.Context(), uid, anon, strings.TrimSpace(req.Text), "normal", nil, false, "", "")
+		view, err := a.createNormal(r.Context(), uid, strings.TrimSpace(req.Text), "normal", nil, false, "", "")
 		if err != nil {
 			a.clearPendingIdem(r, scope, idemKey)
 			return err
@@ -865,7 +805,7 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	messages := []map[string]any{{
 		"kind": "interpretation", "from": "server", "style": "detect",
 		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？",
-		"text": "可以改用下面的问法，也可以继续用你输入的问题。",
+		"text": "你的问题涉及的范围比较广，明确你最关注的方向，可以帮助解读更聚焦，也更容易获得具体的建议。",
 	}}
 	if len(presets) > 0 {
 		messages = append(messages, map[string]any{
@@ -873,10 +813,12 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 		})
 	}
 	options := make([]map[string]any, 0, len(presets))
+	followupOptions := make([]map[string]any, 0, len(presets))
 	for i, item := range presets {
 		selected := false
 		option := map[string]any{"text": item.body, "hint": item.category, "selected": selected}
 		options = append(options, option)
+		followupOptions = append(followupOptions, map[string]any{"text": item.body})
 		if i == 1 || (i == 0 && len(presets) == 1) {
 			messages = append(messages, map[string]any{
 				"kind": "suggestion", "from": "server", "style": "option",
@@ -887,7 +829,7 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	if len(presets) > 0 {
 		messages = append(messages, map[string]any{
 			"kind": "suggestion", "from": "server", "style": "followup",
-			"title": "继续解读", "text": presets[0].body,
+			"title": "继续解读", "options": followupOptions,
 		})
 		messages = append(messages, map[string]any{
 			"kind": "suggestion", "from": "server", "style": "recommend",
@@ -908,7 +850,7 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id FROM readings WHERE id=$1`, id).Scan(&selected); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, card_count, recommended FROM spreads
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail FROM spreads
 		WHERE enabled=true AND theme_key='' ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
@@ -917,15 +859,17 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	spreads := []map[string]any{}
 	for rows.Next() {
 		var sid int64
-		var name string
+		var name, desc, short, thumb string
 		var count int
 		var recommended bool
-		if err := rows.Scan(&sid, &name, &count, &recommended); err != nil {
+		if err := rows.Scan(&sid, &name, &desc, &short, &count, &recommended, &thumb); err != nil {
 			return err
 		}
 		spreads = append(spreads, map[string]any{
-			"id": sid, "name": name, "card_count": count,
+			"id": sid, "name": T(r.Context(), name), "description": T(r.Context(), desc),
+			"short_sentence": short, "card_count": count,
 			"recommended": recommended, "selected": selected.Valid && selected.Int64 == sid,
+			"thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -937,12 +881,29 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	writeOK(w, map[string]any{
 		"reading_id": id,
 		"has_more":   false,
-		"messages": []map[string]any{{
-			"kind": "cards", "from": "server", "style": "choose",
-			"title": "先确认牌阵和张数", "spreads": spreads,
-		}},
+		"messages":   []map[string]any{spreadChoiceMessage(spreads)},
 	})
 	return nil
+}
+
+func spreadChoiceTitle() string {
+	return "先确认牌阵和张数，再选择抽牌方式。"
+}
+
+func conversationDrawModes() []map[string]any {
+	return []map[string]any{
+		{"id": "normal", "label": "常规抽牌", "hint": "通过感应抽牌，开启你的塔罗探索。"},
+		{"id": "numerology", "label": "灵数抽牌", "hint": "输入专属数字，揭晓属于你的塔罗牌。"},
+	}
+}
+
+func spreadChoiceMessage(spreads []map[string]any) map[string]any {
+	return map[string]any{
+		"kind": "cards", "from": "server", "style": "choose",
+		"title": spreadChoiceTitle(), "more_spreads": "更多牌阵",
+		"draw_mode_label": "抽牌方式", "draw_modes": conversationDrawModes(),
+		"spreads": spreads,
+	}
 }
 
 func numerologyGuide(cardCount int) map[string]any {
@@ -1046,6 +1007,13 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 			"numbers": numbers,
 		})
 	}
+	duplicate := false
+	for _, count := range counts {
+		if count > 1 {
+			duplicate = true
+			break
+		}
+	}
 	for n, count := range counts {
 		if count > 1 {
 			messages = append(messages, map[string]any{
@@ -1054,6 +1022,11 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 				"numbers": numbers,
 			})
 			break
+		}
+	}
+	if validCount == cardCount && !duplicate {
+		if err := a.fixNumerologyCards(r.Context(), id, req.Numbers, positions); err != nil {
+			return err
 		}
 	}
 	writeOK(w, map[string]any{"reading_id": id, "messages": messages, "has_more": false})
@@ -1268,14 +1241,34 @@ func structuredConversationMessage(turn int64, style, content string) map[string
 		}
 	case "followup":
 		var body struct {
-			Text string `json:"text"`
+			Text    string `json:"text"`
+			Options []struct {
+				Text string `json:"text"`
+			} `json:"options"`
 		}
-		if json.Unmarshal([]byte(content), &body) != nil || strings.TrimSpace(body.Text) == "" {
+		if json.Unmarshal([]byte(content), &body) != nil {
 			return nil
+		}
+		options := make([]map[string]any, 0, len(body.Options))
+		for _, option := range body.Options {
+			text := strings.TrimSpace(option.Text)
+			if text != "" {
+				options = append(options, map[string]any{"text": text})
+			}
+		}
+		text := strings.TrimSpace(body.Text)
+		if text != "" && len(options) == 0 {
+			options = append(options, map[string]any{"text": text})
+		}
+		if len(options) == 0 {
+			return nil
+		}
+		if text == "" {
+			text = options[0]["text"].(string)
 		}
 		return map[string]any{
 			"kind": "suggestion", "from": "server", "style": "followup", "turn_id": turn,
-			"title": "继续解读", "text": strings.TrimSpace(body.Text),
+			"title": "继续解读", "text": text, "options": options,
 		}
 	case "recommend":
 		var body struct {
@@ -1391,10 +1384,9 @@ func structuredConversationMessage(turn int64, style, content string) map[string
 				"recommended": spread.Recommended, "selected": spread.Selected,
 			})
 		}
-		return map[string]any{
-			"kind": "cards", "from": "server", "style": "choose", "turn_id": turn,
-			"title": "先确认牌阵和张数", "spreads": spreads,
-		}
+		item := spreadChoiceMessage(spreads)
+		item["turn_id"] = turn
+		return item
 	default:
 		return nil
 	}
@@ -1415,7 +1407,7 @@ func (a *App) conversationCards(r *http.Request, raw string) []map[string]any {
 func (a *App) conversationCardItems(r *http.Request, cards []drawnCard) []map[string]any {
 	cfg := a.cardConfig(r.Context())
 	if r != nil {
-		if uid, _, err := a.appActor(r); err == nil && uid > 0 {
+		if uid, err := a.appActor(r); err == nil && uid > 0 {
 			cfg = a.cardConfigForUser(r.Context(), uid)
 		}
 	}
@@ -1577,7 +1569,7 @@ func (a *App) markPendingRedraws(ctx context.Context, items []map[string]any) er
 }
 
 func (a *App) appFollowupRedraw(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -1585,7 +1577,7 @@ func (a *App) appFollowupRedraw(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	var req struct {
@@ -1680,7 +1672,7 @@ func appendClarifier(raw string) (drawnCard, []drawnCard, error) {
 }
 
 func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -1745,7 +1737,7 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 }
 
 func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -1756,7 +1748,7 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	already, ent, err := playAlready(r.Context(), a.Store, id)
@@ -1791,7 +1783,7 @@ func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appUseReward(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}

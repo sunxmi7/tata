@@ -1153,14 +1153,14 @@ func markPaywallResumed(ctx context.Context, tx Tx, readingID int64, key string)
 }
 
 func (a *App) chargeOwned(r *http.Request, readingID int64, key, action string) (quotaDecision, error) {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return quotaDecision{}, err
 	}
 	if uid == 0 {
 		return quotaDecision{Status: quotaAnon, Message: paywallNeedLogin}, nil
 	}
-	if err := a.ownReading(r.Context(), readingID, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), readingID, uid, ""); err != nil {
 		return quotaDecision{}, err
 	}
 	tx, err := a.Store.Begin(r.Context())
@@ -1277,7 +1277,7 @@ func hasPlayCredit(ctx context.Context, tx Tx, opts chargeOpts) (bool, error) {
 // chargeAtSpread bills a covered play after the spread is stored and before shuffle.
 // A short member pool stops here. A user with no entitlement is left for interpretation.
 func (a *App) chargeAtSpread(w http.ResponseWriter, r *http.Request, readingID int64) (bool, error) {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return false, err
 	}
@@ -1320,7 +1320,7 @@ func (a *App) gatePlay(w http.ResponseWriter, r *http.Request, action string) (b
 	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
 		return false, nil
 	}
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return false, err
 	}
@@ -1582,7 +1582,7 @@ func nextBusinessDate(cycle string) (string, error) {
 }
 
 func (a *App) appCancelPaywall(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -1593,7 +1593,7 @@ func (a *App) appCancelPaywall(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	var req struct {

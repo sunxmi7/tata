@@ -77,7 +77,6 @@ func TestAnonymousReadingFollowsDevice(t *testing.T) {
 	}
 	spreadID := ensureTimeFlow(t, store)
 	must(t, ts, "", http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread?device_id=%s", rid, deviceID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
-	must(t, ts, "", http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle?device_id=%s", rid, deviceID), map[string]any{})
 	if msg, _ := call(t, ts, "", http.MethodGet, fmt.Sprintf("/api/app/v1/readings/%d?device_id=%s", rid, deviceID+"-other"), nil); msg != "记录不属于当前用户" {
 		t.Fatalf("other device: %s", msg)
 	}

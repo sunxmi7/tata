@@ -119,7 +119,7 @@ func consumeMergedDaily(ctx context.Context, ex execer, uid int64, cycle string)
 }
 
 func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindSpec) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func (s *Store) auditActor(ctx context.Context, operatorID int64, actorKind, act
 }
 
 func (a *App) appMergeConfirm(w http.ResponseWriter, r *http.Request) error {
-	if _, _, err := a.appActor(r); err != nil {
+	if _, err := a.appActor(r); err != nil {
 		return err
 	}
 	return biz("不提供账号合并")
