@@ -498,6 +498,111 @@ func TestAdminExploreThemeFields(t *testing.T) {
 	}
 }
 
+func TestAdminSpreadQuickQuestions(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	token := register(t, ts, fmt.Sprintf("qq_%d@example.com", time.Now().UnixNano()))
+
+	var yesID int64
+	var seeded []any
+	for _, item := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if item["theme_key"] == "yes_or_no" && item["name"] == "单张是非牌阵" {
+			yesID = asID(item["id"])
+			seeded, _ = item["quick_questions"].([]any)
+			break
+		}
+	}
+	if yesID == 0 || len(seeded) == 0 {
+		t.Fatalf("seeded yes_or_no questions missing")
+	}
+
+	custom := []any{"运营改过的第一问？", "运营改过的第二问？"}
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", yesID), map[string]any{
+		"name": "单张是非牌阵", "description": "看一个明确、范围较小的二元问题，当前倾向是什么。", "card_count": 1,
+		"positions":       []map[string]any{{"index": 1, "name": "当前问题的答案倾向与核心影响因素", "meaning": "当前问题的答案倾向与核心影响因素"}},
+		"theme_key":       "yes_or_no",
+		"theme_title":     "Yes or No",
+		"theme_subtitle":  "听听此刻的倾向",
+		"short_sentence":  "快速看清当下倾向",
+		"quick_questions": custom,
+	})
+
+	var adminRow map[string]any
+	for _, item := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if asID(item["id"]) == yesID {
+			adminRow = item
+			break
+		}
+	}
+	got, _ := adminRow["quick_questions"].([]any)
+	if len(got) != 2 || got[0] != custom[0] || got[1] != custom[1] {
+		t.Fatalf("admin quick_questions: %#v", adminRow["quick_questions"])
+	}
+
+	yes := listOne(t, ts, token, "/api/app/v1/explore/topics?theme_key=yes_or_no")
+	spreads, _ := yes["spreads"].([]any)
+	if len(spreads) != 1 {
+		t.Fatalf("yes spreads: %#v", yes)
+	}
+	appQ, _ := spreads[0].(map[string]any)["quick_questions"].([]any)
+	if len(appQ) != 2 || appQ[0] != custom[0] {
+		t.Fatalf("app quick_questions: %#v", spreads[0])
+	}
+
+	if err := store.seedExploreSpreads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if asID(item["id"]) == yesID {
+			adminRow = item
+			break
+		}
+	}
+	afterSeed, _ := adminRow["quick_questions"].([]any)
+	if len(afterSeed) != 2 || afterSeed[0] != custom[0] {
+		t.Fatalf("seed overwrote ops questions: %#v", adminRow["quick_questions"])
+	}
+
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", yesID), map[string]any{
+		"name": "单张是非牌阵", "description": "看一个明确、范围较小的二元问题，当前倾向是什么。", "card_count": 1,
+		"positions":       []map[string]any{{"index": 1, "name": "当前问题的答案倾向与核心影响因素", "meaning": "当前问题的答案倾向与核心影响因素"}},
+		"theme_key":       "yes_or_no",
+		"theme_title":     "Yes or No",
+		"theme_subtitle":  "听听此刻的倾向",
+		"short_sentence":  "快速看清当下倾向",
+		"quick_questions": []any{},
+	})
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%d", yesID), map[string]any{
+		"name": "单张是非牌阵", "description": "看一个明确、范围较小的二元问题，当前倾向是什么。", "card_count": 1,
+		"positions":      []map[string]any{{"index": 1, "name": "当前问题的答案倾向与核心影响因素", "meaning": "当前问题的答案倾向与核心影响因素"}},
+		"theme_key":      "yes_or_no",
+		"theme_title":    "Yes or No",
+		"theme_subtitle": "听听此刻的倾向",
+		"short_sentence": "快速看清当下倾向",
+	})
+	for _, item := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if asID(item["id"]) == yesID {
+			cleared, _ := item["quick_questions"].([]any)
+			if len(cleared) != 0 {
+				t.Fatalf("omit should keep empty: %#v", item["quick_questions"])
+			}
+			break
+		}
+	}
+	if err := store.seedExploreSpreads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range list(t, ts, admin.access, "/api/admin/v1/spreads") {
+		if asID(item["id"]) == yesID {
+			refilled, _ := item["quick_questions"].([]any)
+			if len(refilled) == 0 {
+				t.Fatalf("empty should refill from seed: %#v", item["quick_questions"])
+			}
+			break
+		}
+	}
+}
+
 func seedIAPCode(code string) bool {
 	switch code {
 	case "sub_month", "sub_year", "sub_times", "pack_quota_20", "pack_quota_60", "pack_quota_100", "unlock_yearly":

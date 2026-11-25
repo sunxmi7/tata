@@ -199,22 +199,37 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 }
 
 type spreadBody struct {
-	Name          string     `json:"name"`
-	NameEN        *string    `json:"name_en"`
-	Description   string     `json:"description"`
-	CardCount     int        `json:"card_count"`
-	Positions     []position `json:"positions"`
-	Enabled       *bool      `json:"enabled"`
-	Charged       *bool      `json:"charged"`
-	Recommended   *bool      `json:"recommended"`
-	Thumbnail     *string    `json:"thumbnail"`
-	ThemeKey      *string    `json:"theme_key"`
-	ThemeTitle    *string    `json:"theme_title"`
-	ThemeSubtitle *string    `json:"theme_subtitle"`
-	ShortSentence *string    `json:"short_sentence"`
-	DepthGroup    *string    `json:"depth_group"`
-	QuotaPriced   *bool      `json:"quota_priced"`
-	QuotaCost     *int       `json:"quota_cost"`
+	Name           string     `json:"name"`
+	NameEN         *string    `json:"name_en"`
+	Description    string     `json:"description"`
+	CardCount      int        `json:"card_count"`
+	Positions      []position `json:"positions"`
+	QuickQuestions *[]string  `json:"quick_questions"`
+	Enabled        *bool      `json:"enabled"`
+	Charged        *bool      `json:"charged"`
+	Recommended    *bool      `json:"recommended"`
+	Thumbnail      *string    `json:"thumbnail"`
+	ThemeKey       *string    `json:"theme_key"`
+	ThemeTitle     *string    `json:"theme_title"`
+	ThemeSubtitle  *string    `json:"theme_subtitle"`
+	ShortSentence  *string    `json:"short_sentence"`
+	DepthGroup     *string    `json:"depth_group"`
+	QuotaPriced    *bool      `json:"quota_priced"`
+	QuotaCost      *int       `json:"quota_cost"`
+}
+
+func spreadQuestionsJSON(v *[]string) string {
+	if v == nil {
+		return "[]"
+	}
+	items := make([]string, 0, len(*v))
+	for _, q := range *v {
+		q = strings.TrimSpace(q)
+		if q != "" {
+			items = append(items, q)
+		}
+	}
+	return mustJSON(items)
 }
 
 func (b spreadBody) enabled() bool {
@@ -240,7 +255,7 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, name_en, description, card_count, positions, enabled, charged, recommended, thumbnail,
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, name_en, description, card_count, positions, quick_questions, enabled, charged, recommended, thumbnail,
 		theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost, sort_order
 		FROM spreads ORDER BY recommended DESC, sort_order, id`)
 	if err != nil {
@@ -250,16 +265,20 @@ func (a *App) adminListSpreads(w http.ResponseWriter, r *http.Request) error {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, nameEN, desc, pos, thumb, themeKey, themeTitle, themeSub, short, depth string
+		var name, nameEN, desc, pos, questions, thumb, themeKey, themeTitle, themeSub, short, depth string
 		var count, sort int
 		var enabled, charged, recommended bool
 		var quota sql.NullInt64
-		if err := rows.Scan(&id, &name, &nameEN, &desc, &count, &pos, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota, &sort); err != nil {
+		if err := rows.Scan(&id, &name, &nameEN, &desc, &count, &pos, &questions, &enabled, &charged, &recommended, &thumb, &themeKey, &themeTitle, &themeSub, &short, &depth, &quota, &sort); err != nil {
 			return err
+		}
+		if strings.TrimSpace(questions) == "" {
+			questions = "[]"
 		}
 		list = append(list, map[string]any{
 			"id": id, "name": name, "name_en": nameEN, "description": desc, "card_count": count,
-			"positions": json.RawMessage(pos), "enabled": enabled, "charged": charged, "recommended": recommended,
+			"positions": json.RawMessage(pos), "quick_questions": json.RawMessage(questions),
+			"enabled": enabled, "charged": charged, "recommended": recommended,
 			"thumbnail": nullableConfig(thumb), "preview": spreadDiagramURL(thumb),
 			"theme_key": themeKey, "theme_title": themeTitle, "theme_subtitle": themeSub, "short_sentence": short,
 			"depth_group": depth, "depth_label": depthLabel(depth), "sort_order": sort,
@@ -299,9 +318,10 @@ func (a *App) adminCreateSpread(w http.ResponseWriter, r *http.Request) error {
 	if req.Thumbnail != nil {
 		thumb = strings.TrimSpace(*req.Thumbnail)
 	}
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, name_en, description, card_count, positions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
-		req.Name, spreadText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO spreads(name, name_en, description, card_count, positions, quick_questions, enabled, charged, recommended, thumbnail, theme_key, theme_title, theme_subtitle, short_sentence, depth_group, quota_cost)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+		req.Name, spreadText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), spreadQuestionsJSON(req.QuickQuestions),
+		req.enabled(), req.charged(), rec, thumb,
 		spreadText(req.ThemeKey), spreadText(req.ThemeTitle), spreadText(req.ThemeSubtitle), spreadText(req.ShortSentence),
 		group, quota).Scan(&id)
 	if err != nil {
@@ -336,10 +356,10 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var oldCount int
-	var oldPos, oldThumb, oldDepth string
+	var oldPos, oldQuestions, oldThumb, oldDepth string
 	var oldRec bool
 	var oldQuota sql.NullInt64
-	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, recommended, thumbnail, depth_group, quota_cost FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldRec, &oldThumb, &oldDepth, &oldQuota)
+	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, quick_questions, recommended, thumbnail, depth_group, quota_cost FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldQuestions, &oldRec, &oldThumb, &oldDepth, &oldQuota)
 	if err != nil {
 		return biz("牌阵不存在")
 	}
@@ -371,11 +391,18 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, name_en=COALESCE($2, name_en), description=$3, card_count=$4, positions=$5, enabled=$6, charged=$7, recommended=$8, thumbnail=$9,
-		theme_key=COALESCE($10, theme_key), theme_title=COALESCE($11, theme_title), theme_subtitle=COALESCE($12, theme_subtitle), short_sentence=COALESCE($13, short_sentence),
-		depth_group=$14, quota_cost=$15
-		WHERE id=$16`,
-		req.Name, spreadNullText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), req.enabled(), req.charged(), rec, thumb,
+	questions := oldQuestions
+	if strings.TrimSpace(questions) == "" {
+		questions = "[]"
+	}
+	if req.QuickQuestions != nil {
+		questions = spreadQuestionsJSON(req.QuickQuestions)
+	}
+	tag, err := a.Store.Exec(r.Context(), `UPDATE spreads SET name=$1, name_en=COALESCE($2, name_en), description=$3, card_count=$4, positions=$5, quick_questions=$6, enabled=$7, charged=$8, recommended=$9, thumbnail=$10,
+		theme_key=COALESCE($11, theme_key), theme_title=COALESCE($12, theme_title), theme_subtitle=COALESCE($13, theme_subtitle), short_sentence=COALESCE($14, short_sentence),
+		depth_group=$15, quota_cost=$16
+		WHERE id=$17`,
+		req.Name, spreadNullText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), questions, req.enabled(), req.charged(), rec, thumb,
 		spreadNullText(req.ThemeKey), spreadNullText(req.ThemeTitle), spreadNullText(req.ThemeSubtitle), spreadNullText(req.ShortSentence),
 		depth, quota, id)
 	if err != nil {

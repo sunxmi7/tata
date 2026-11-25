@@ -116,6 +116,16 @@ const [Form, formApi] = useVbenForm({
       rules: 'required',
     },
     {
+      component: 'Textarea',
+      componentProps: {
+        placeholder: '每行一条；探索牌阵问题页点击后填入输入框，不直接提交',
+        rows: 4,
+      },
+      defaultValue: '',
+      fieldName: 'quickQuestionsText',
+      label: '快捷问题',
+    },
+    {
       component: 'Switch',
       defaultValue: true,
       fieldName: 'enabled',
@@ -155,6 +165,10 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
       message.error('牌位 JSON 不正确');
       return;
     }
+    const quick_questions = String(data.quickQuestionsText ?? '')
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .filter(Boolean);
     modalApi.lock();
     try {
       const body = {
@@ -163,6 +177,7 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         description: data.description,
         card_count: data.card_count,
         positions,
+        quick_questions,
         enabled: data.enabled,
         charged: data.charged,
         recommended: data.recommended,
@@ -200,6 +215,7 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         description: data.description,
         card_count: data.card_count,
         positionsText: JSON.stringify(data.positions, null, 2),
+        quickQuestionsText: (data.quick_questions ?? []).join('\n'),
         enabled: data.enabled,
         charged: data.charged,
         recommended: data.recommended ?? false,

@@ -857,6 +857,12 @@ components:
         short_sentence:
           type: string
           description: 牌阵短句。未填为空串，不编造。
+        quick_questions:
+          type: array
+          description: 探索牌阵问题页快捷问题。点击后填入输入框，不直接提交。普通占卜可为空数组。
+          items:
+            type: string
+            example: 他近期会主动联系我吗？
     SpreadBody:
       type: object
       additionalProperties: false
@@ -909,6 +915,12 @@ components:
           type: string
           nullable: true
           description: 牌阵短句。新建省略为空。更新省略保持原值。
+        quick_questions:
+          type: array
+          nullable: true
+          description: 探索快捷问题。新建省略为空数组。更新省略保持原值；传数组（含空数组）则覆盖。
+          items:
+            type: string
     Card:
       type: object
       properties:
@@ -6931,7 +6943,7 @@ paths:
       tags: [管理端内容]
       operationId: adminUpdateSpread
       summary: 更新牌阵
-      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、启用、是否计费、推荐标记和示意图。recommended=true 时取消其他牌阵的推荐。
+      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、快捷问题、启用、是否计费、推荐标记和示意图。recommended=true 时取消其他牌阵的推荐。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"

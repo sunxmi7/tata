@@ -7,6 +7,7 @@ export interface Spread {
   description: string;
   card_count: number;
   positions: Array<{ index: number; name: string; meaning: string }>;
+  quick_questions?: string[];
   enabled: boolean;
   charged: boolean;
   recommended?: boolean;

@@ -25,6 +25,7 @@ const columns = [
   { title: '英文名', dataIndex: 'name_en', width: 220 },
   { title: '含义说明', dataIndex: 'description' },
   { title: '主题', dataIndex: 'theme_title', width: 120 },
+  { title: '快捷问题', dataIndex: 'quick_questions', width: 88 },
   { title: '牌数', dataIndex: 'card_count', width: 72 },
   { title: '分组', dataIndex: 'depth_label', width: 110 },
   { title: '额度扣次', dataIndex: 'quota_cost', width: 100 },
@@ -56,7 +57,7 @@ onMounted(load);
 
 <template>
   <Page
-    description="普通占卜按快速指引、进阶分析、深度全景分组，可改英文名和含义说明。探索牌阵在同一张表里改主题键、主题名、副标题和一句说明。推荐只是角标，不会按问题自动选牌阵。扣次是额度，探索扣次没标就不填。收费是旧开关，结算不读。"
+    description="普通占卜按快速指引、进阶分析、深度全景分组，可改英文名和含义说明。探索牌阵在同一张表里改主题键、主题名、副标题、一句说明和快捷问题。推荐只是角标，不会按问题自动选牌阵。扣次是额度，探索扣次没标就不填。收费是旧开关，结算不读。"
     title="牌阵"
   >
     <template #extra>
@@ -94,6 +95,9 @@ onMounted(load);
         </template>
         <template v-else-if="column.dataIndex === 'theme_title'">
           {{ record.theme_title || '—' }}
+        </template>
+        <template v-else-if="column.dataIndex === 'quick_questions'">
+          {{ Array.isArray(record.quick_questions) && record.quick_questions.length ? `${record.quick_questions.length} 条` : '—' }}
         </template>
         <template v-else-if="column.dataIndex === 'depth_label'">
           {{ record.depth_label || '—' }}

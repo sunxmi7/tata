@@ -124,7 +124,10 @@ func (s *Store) seedExploreSpreads(ctx context.Context) error {
 			}
 			continue
 		}
-		if _, err := s.Exec(ctx, `UPDATE spreads SET description=$1, card_count=$2, positions=$3, quick_questions=$4, theme_title=$5, theme_subtitle=$6, short_sentence=$7, sort_order=$8, enabled=true
+		// 快捷问题交给后台管理：仅在库里仍为空时用 PRD 默认值补齐，不覆盖运营已改内容。
+		if _, err := s.Exec(ctx, `UPDATE spreads SET description=$1, card_count=$2, positions=$3,
+			quick_questions = CASE WHEN COALESCE(NULLIF(BTRIM(quick_questions), ''), '[]') = '[]' THEN $4 ELSE quick_questions END,
+			theme_title=$5, theme_subtitle=$6, short_sentence=$7, sort_order=$8, enabled=true
 			WHERE theme_key=$9 AND name=$10`,
 			item.Desc, item.Cards, positions, questions, item.Title, item.Subtitle, item.Short, item.Sort, item.Key, item.Name); err != nil {
 			return err
