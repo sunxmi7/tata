@@ -19,7 +19,7 @@
 | 我的中心 | `565:1551` | 无独立 path，复用 profile / quota / 各入口 | 已确认 |
 | 抽牌 / 灵数 | `595:868`…`595:637` | `POST /readings` 及子资源；`draw` 接受 `mode=numerology` | 已确认 |
 | 牌阵 | `595:95` / `595:5054` | `GET /spreads` 含 recommended / thumbnail；`POST /readings/{id}/spread` | 已确认 |
-| 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label）`GET/DELETE /readings/{id}` | 已确认 |
+| 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label；`conversation_type`=`daily`/`moment`/`theme` + `stage`/`stage_label`；explore 可传 `theme_key`）`GET/DELETE /readings/{id}` | 已确认 |
 | 日历筛选 | `574:306` | `GET /calendar?type=` | 已确认 |
 | 日历日详情 | `574:2` | `GET /calendar` 项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at | 已确认 |
 | 今日一牌 | 首页 / `POST /daily` | `card_name` / `yi` / `card_thumbnail` / `short_text`；没配图出默认牌背 | 已确认 |

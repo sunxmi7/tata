@@ -33,9 +33,32 @@
 
 创建占卜之前没有占卜 ID，预设列表和问题推荐不会写进后来的历史。洗牌、抽牌还没随解读请求交上来时，服务端只停在「问题加已选牌阵」。
 
+## 历史对话类型
+
+历史列表 `GET /api/app/v1/readings` 与详情 `GET /api/app/v1/readings/{id}` 都带三类对话字段。续做 UI 按 `conversation_type` + `stage` 选屏；底层仍保留 `status` / `progress` / `continue`。
+
+| conversation_type | conversation_label | 来源 |
+|---|---|---|
+| `daily` | 今日运势 / 明日运势 | `type=daily`；`target` 为 `today` 或 `tomorrow` |
+| `moment` | 普通占卜 / 占卜师 / 此刻抉择 | `normal`、`tarotist`，或 explore 且 `theme_key` 为 `yes_or_no` / `either_or` |
+| `theme` | 主题占卜 | explore 且其余主题键 |
+| `""` | 空 | explore 尚未有 `theme_key`（创建未传、也未选阵） |
+
+探索创建可带 `theme_key`。未带时，选阵后从牌阵回填并写入记录。
+
+三种对话流程不同，`stage` / `stage_label` 也不同：
+
+| conversation_type | status 示例 | stage | stage_label |
+|---|---|---|---|
+| `daily` | `QUESTION_CREATED`…`CUTTING` | `pending_draw` | 待抽牌 |
+| `daily` | `CARDS_FIXED` | `pending_interpret` | 待解读 |
+| `moment` | `QUESTION_CREATED` | `question_submitted` | 问题已提交 |
+| `theme` | `QUESTION_CREATED` | `pending_spread` | 待选牌阵 |
+| 共用 | `SPREAD_SELECTED` / `SHUFFLING` / `CUTTING` / `CARDS_FIXED` / `INTERPRETING` / `COMPLETED` / `FAILED_RETRYABLE` | `spread_selected` 等 | 牌阵已选择 / 洗牌中 / 切牌中 / 牌面已固定 / 解读生成中 / 已完成 / 失败可重试 |
+
 ## 进度
 
-`GET /api/app/v1/readings/{id}` 是这条占卜的记录，用来判断停在哪一步。`progress` 是给界面看的进度文案。对话内容以 `GET /api/app/v1/readings/{id}/messages` 为准。
+`GET /api/app/v1/readings/{id}` 是这条占卜的记录。新客户端优先看 `conversation_type` + `stage`；`progress` 仍按 `status` 给旧文案。对话内容以 `GET /api/app/v1/readings/{id}/messages` 为准。
 
 | 状态 | progress | 已经记下的内容 |
 |---|---|---|
@@ -217,9 +240,17 @@
 { "question": "最近的我，最需要关注什么？", "type": "normal", "source": "preset", "draw_mode": "normal" }
 ```
 
+探索此刻抉择 / 主题占卜：
+
+```json
+{ "type": "explore", "source": "explore", "theme_key": "yes_or_no" }
+```
+
+`theme_key` 仅 explore 可传。`yes_or_no` / `either_or` → `conversation_type=moment`（此刻抉择）；其余主题 → `theme`（主题占卜）。可空，选阵后回填。
+
 `draw_mode` 是抽牌方式：`normal` 常规抽牌，`numerology` 灵数抽牌。还没选可以不传，记录上先是空字符串。`type` 仍是占卜种类，灵数也是 `normal`。探索、塔罗师、今日运势不要带这个字段。
 
-自己输入的问题不要带 `source: "preset"`。返回的记录里有 `id` 和 `draw_mode`，后面的路径都用这个 ID。占卜详情和历史列表同样返回 `draw_mode`。
+自己输入的问题不要带 `source: "preset"`。返回的记录里有 `id`、`draw_mode`，以及 `conversation_type` / `stage`；后面的路径都用这个 ID。占卜详情和历史列表同样返回这些字段。
 
 第一次写成 `numerology` 时，服务端生成这套 78 张的数字和正逆位。之后改回常规再改回灵数，仍用这一套。这个映射不返回给 App。
 

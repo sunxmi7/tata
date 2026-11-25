@@ -933,6 +933,7 @@ END $$;
 ALTER TABLE rewards ADD COLUMN IF NOT EXISTS invite_remaining INT NOT NULL DEFAULT 0;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS onboard_experience BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS theme_key TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS device_experiences (
   device_id TEXT PRIMARY KEY,
   user_id BIGINT,
@@ -1025,7 +1026,8 @@ COMMENT ON TABLE bindings IS '任务到供应商+模型的绑定。task=detect/r
 COMMENT ON TABLE banners IS '运营 Banner。对应 GET /banners 与管理端 /admin/v1/banners。可触发个推。';
 COMMENT ON TABLE campaigns IS '探索「参与活动」。对应 GET /campaigns；detail_status=pending 时正文未定稿。';
 COMMENT ON TABLE readings IS '一次解读。对应 /readings*。type=normal/tarotist/explore/daily。';
-COMMENT ON COLUMN readings.type IS 'normal 普通、tarotist 占卜师、explore 主题、daily 今日一牌。';
+COMMENT ON COLUMN readings.type IS 'normal 普通、tarotist 占卜师、explore 探索、daily 今日一牌。';
+COMMENT ON COLUMN readings.theme_key IS '探索主题键。创建时可写；选阵后若为空则从 spreads.theme_key 回填。yes_or_no/either_or 为此刻抉择，其余为主题占卜。';
 COMMENT ON COLUMN readings.status IS '流程状态：QUESTION_CREATED → … → INTERPRETING → COMPLETED。INTERPRETING 时 interpretation 可能是未完成片段。';
 COMMENT ON COLUMN readings.interpretation IS '解读正文。任务进行中为已生成片段，完成后为全文。App 退出再进用 GET /readings/{id} 取。';
 COMMENT ON TABLE ai_jobs IS 'AI 生成任务。HTTP/SSE 断开后仍在跑；结果写入 readings 或 yearly_reports。';

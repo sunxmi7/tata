@@ -1,0 +1,115 @@
+package tata
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestConversationTypeOf(t *testing.T) {
+	cases := []struct {
+		kind, theme, want string
+	}{
+		{"daily", "", "daily"},
+		{"normal", "", "moment"},
+		{"tarotist", "", "moment"},
+		{"explore", "yes_or_no", "moment"},
+		{"explore", "either_or", "moment"},
+		{"explore", "relationship", "theme"},
+		{"explore", "", ""},
+	}
+	for _, c := range cases {
+		if got := conversationTypeOf(c.kind, c.theme); got != c.want {
+			t.Fatalf("%s/%s: got %q want %q", c.kind, c.theme, got, c.want)
+		}
+	}
+}
+
+func TestConversationLabelAndStage(t *testing.T) {
+	if got := conversationLabelOf("daily", "", "tomorrow"); got != "明日运势" {
+		t.Fatalf("daily tomorrow: %q", got)
+	}
+	if got := conversationLabelOf("explore", "yes_or_no", ""); got != "此刻抉择" {
+		t.Fatalf("moment explore: %q", got)
+	}
+	if got := conversationLabelOf("explore", "career", ""); got != "主题占卜" {
+		t.Fatalf("theme: %q", got)
+	}
+	stage, label := stageOf("daily", "QUESTION_CREATED")
+	if stage != "pending_draw" || label != "待抽牌" {
+		t.Fatalf("daily stage: %s %s", stage, label)
+	}
+	stage, label = stageOf("theme", "QUESTION_CREATED")
+	if stage != "pending_spread" || label != "待选牌阵" {
+		t.Fatalf("theme stage: %s %s", stage, label)
+	}
+	stage, label = stageOf("moment", "QUESTION_CREATED")
+	if stage != "question_submitted" || label != "问题已提交" {
+		t.Fatalf("moment stage: %s %s", stage, label)
+	}
+}
+
+func TestHistoryConversationFields(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, uid := registerUser(t, ts, store, "histconv")
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, theme_key, cards, interpretation)
+		VALUES ($1,'explore','会联系我吗','COMPLETED','yes_or_no','[{"name":"愚者"}]','倾向是会的。')`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, theme_key)
+		VALUES ($1,'explore','','QUESTION_CREATED','relationship')`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date)
+		VALUES ($1,'daily','明日运势','CARDS_FIXED',$2)`, uid, "2099-01-02"); err != nil {
+		t.Fatal(err)
+	}
+	page := listOne(t, ts, token, "/api/app/v1/readings?limit=10")
+	items, _ := page["items"].([]any)
+	if len(items) < 3 {
+		t.Fatalf("items: %#v", page)
+	}
+	byType := map[string]map[string]any{}
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		byType[fmtString(item["conversation_type"])+"|"+fmtString(item["conversation_label"])] = item
+	}
+	moment := byType["moment|此刻抉择"]
+	if moment == nil || moment["stage"] != "completed" {
+		t.Fatalf("moment: %#v", byType)
+	}
+	theme := byType["theme|主题占卜"]
+	if theme == nil || theme["stage"] != "pending_spread" || theme["stage_label"] != "待选牌阵" {
+		t.Fatalf("theme: %#v", theme)
+	}
+	daily := byType["daily|明日运势"]
+	if daily == nil || daily["target"] != "tomorrow" || daily["stage"] != "pending_interpret" {
+		t.Fatalf("daily: %#v", daily)
+	}
+}
+
+func TestCreateExploreThemeKeyAndSpreadBackfill(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "themekey")
+	created := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"type": "explore", "source": "explore", "theme_key": "yes_or_no",
+	})
+	if created["conversation_type"] != "moment" || created["conversation_label"] != "此刻抉择" {
+		t.Fatalf("created: %#v", created)
+	}
+	var spreadID int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE theme_key='relationship' AND enabled=true ORDER BY id LIMIT 1`).Scan(&spreadID); err != nil {
+		t.Fatal(err)
+	}
+	blank := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"type": "explore", "source": "explore",
+	})
+	if blank["conversation_type"] != "" {
+		t.Fatalf("blank explore should wait for theme: %#v", blank)
+	}
+	id := asID(blank["id"])
+	must(t, ts, token, "POST", fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID})
+	item := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", id))
+	if item["theme_key"] != "relationship" || item["conversation_type"] != "theme" || item["conversation_label"] != "主题占卜" {
+		t.Fatalf("backfill: %#v", item)
+	}
+}

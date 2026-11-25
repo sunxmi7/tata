@@ -23,7 +23,7 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	q := `SELECT id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE 1=1`
+	q := `SELECT ` + readingSelectCols + ` FROM readings WHERE 1=1`
 	args := []any{}
 	add := func(cond string, v any) {
 		args = append(args, v)
@@ -51,8 +51,13 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer rows.Close()
 	items := scanReadings(rows)
+	if err := a.fillThemeKeyFromSpread(r.Context(), items...); err != nil {
+		return err
+	}
+	today := cycleOf(time.Now())
 	a.applyCardThumbnails(r.Context(), r, items...)
 	for _, item := range items {
+		attachConversationMeta(item, today)
 		a.localizeReading(r.Context(), item)
 	}
 	writeOK(w, items)
@@ -564,6 +569,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		TarotistID *int64 `json:"tarotist_id"`
 		DeviceID   string `json:"device_id"`
 		DrawMode   string `json:"draw_mode"`
+		ThemeKey   string `json:"theme_key"`
 	}
 	if err := decode(r, &req); err != nil {
 		return err
@@ -577,8 +583,14 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 	if req.Type != "normal" && req.Type != "tarotist" && req.Type != "explore" {
 		return biz("记录类型不正确")
 	}
+	req.ThemeKey = strings.TrimSpace(req.ThemeKey)
 	if req.Type == "explore" {
 		req.SkipDetect = true
+		if err := validateExploreThemeKey(req.ThemeKey); err != nil {
+			return err
+		}
+	} else if req.ThemeKey != "" {
+		return biz("主题键不正确")
 	}
 	drawMode := strings.TrimSpace(req.DrawMode)
 	if drawMode != "" {
@@ -619,7 +631,7 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		boundDevice = device
 	}
-	view, err := a.createNormal(r.Context(), uid, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", boundDevice, drawMode)
+	view, err := a.createNormal(r.Context(), uid, req.Question, req.Type, req.TarotistID, req.SkipDetect || req.Source == "explore" || req.Source == "preset", boundDevice, drawMode, req.ThemeKey)
 	if err != nil {
 		_, _ = a.Store.Exec(r.Context(), `DELETE FROM idempotency WHERE scope=$1 AND key=$2`, scope, r.Header.Get("Idempotency-Key"))
 		return err
@@ -682,7 +694,7 @@ func storeNumerologyMap(ctx context.Context, ex execer, id int64) error {
 	return err
 }
 
-func (a *App) createNormal(ctx context.Context, uid int64, question, kind string, tarotistID *int64, skip bool, deviceID, drawMode string) (map[string]any, error) {
+func (a *App) createNormal(ctx context.Context, uid int64, question, kind string, tarotistID *int64, skip bool, deviceID, drawMode, themeKey string) (map[string]any, error) {
 	first := false
 	boundDevice := strings.TrimSpace(deviceID)
 	if uid == 0 {
@@ -708,8 +720,8 @@ func (a *App) createNormal(ctx context.Context, uid int64, question, kind string
 		}
 	}
 	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode) VALUES ($1,$2,$3,$4,'QUESTION_CREATED',$5,$6,$7,$8) RETURNING id`,
-		nullID(uid), kind, question, tarotistID, first, onboard, boundDevice, drawMode).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode, theme_key) VALUES ($1,$2,$3,$4,'QUESTION_CREATED',$5,$6,$7,$8,$9) RETURNING id`,
+		nullID(uid), kind, question, tarotistID, first, onboard, boundDevice, drawMode, themeKey).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -925,8 +937,12 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 	}
 	var enabled bool
 	var cardCount int
-	err = a.Store.QueryRow(r.Context(), `SELECT enabled, card_count FROM spreads WHERE id=$1`, req.SpreadID).Scan(&enabled, &cardCount)
+	var spreadTheme string
+	err = a.Store.QueryRow(r.Context(), `SELECT enabled, card_count, COALESCE(theme_key,'') FROM spreads WHERE id=$1`, req.SpreadID).Scan(&enabled, &cardCount, &spreadTheme)
 	if err != nil || !enabled {
+		return biz("牌阵不可用")
+	}
+	if kind == "explore" && strings.TrimSpace(spreadTheme) == "" {
 		return biz("牌阵不可用")
 	}
 	if uid > 0 {
@@ -941,8 +957,9 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 		return biz("开通会员后可使用超过三张牌的牌阵")
 	}
 	tag, err := a.Store.Exec(r.Context(), `UPDATE readings SET spread_id=$1, spread_name=(SELECT name FROM spreads WHERE id=$1), draw_mode=$2, status='SPREAD_SELECTED',
+		theme_key=CASE WHEN theme_key='' THEN $4 ELSE theme_key END,
 		spread_selection=CASE WHEN (SELECT recommended FROM spreads WHERE id=$1) THEN 'system_recommendation' ELSE 'manual_selection' END,
-		updated_at=now() WHERE id=$3 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, resolved, id)
+		updated_at=now() WHERE id=$3 AND status='QUESTION_CREATED' AND deleted_at IS NULL`, req.SpreadID, resolved, id, spreadTheme)
 	if err != nil {
 		return err
 	}
@@ -1176,13 +1193,6 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if err := a.takeClientCards(r, id); err != nil {
 		return err
 	}
-	var kind, question string
-	if err := a.Store.QueryRow(r.Context(), `SELECT type, question FROM readings WHERE id=$1`, id).Scan(&kind, &question); err != nil {
-		return err
-	}
-	if kind == "explore" && strings.TrimSpace(question) == "" {
-		return biz("请先填写问题")
-	}
 	if uid == 0 {
 		return biz(paywallNeedLogin)
 	}
@@ -1268,8 +1278,7 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 		add("id<$%d", beforeID)
 	}
 	args = append(args, limit+1)
-	cols := `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode`
-	query := "SELECT " + cols + " FROM readings WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args))
+	query := "SELECT " + readingSelectCols + " FROM readings WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args))
 	rows, err := a.Store.Query(r.Context(), query, args...)
 	if err != nil {
 		return err
@@ -1279,8 +1288,18 @@ func (a *App) appListReadings(w http.ResponseWriter, r *http.Request) error {
 	if err := a.markPendingRedraws(r.Context(), items); err != nil {
 		return err
 	}
+	if err := a.fillThemeKeyFromSpread(r.Context(), items...); err != nil {
+		return err
+	}
+	today := ""
+	if uid > 0 {
+		today = a.userCycle(r, uid)
+	} else {
+		today = cycleOf(time.Now())
+	}
 	a.applyCardThumbnails(r.Context(), r, items...)
 	for _, item := range items {
+		attachConversationMeta(item, today)
 		a.localizeReading(r.Context(), item)
 	}
 	hasMore := false

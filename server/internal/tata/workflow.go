@@ -223,9 +223,12 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 			kind := "normal"
 			if task == "tarotist" || item["type"] == "tarotist" {
 				kind = "tarotist"
+			} else if typ, _ := item["type"].(string); typ != "" {
+				kind = typ
 			}
+			themeTitle, spreadName, _ := a.interpretThemeContext(r.Context(), id)
 			saved, genErr := a.generate(r.Context(), id, false)
-			step := flowStep{Task: task, Input: buildPrompt(kind, question, cards), Persisted: genErr == nil}
+			step := flowStep{Task: task, Input: buildInterpretPrompt(kind, question, themeTitle, spreadName, cards), Persisted: genErr == nil}
 			if genErr != nil {
 				step.Error = genErr.Error()
 			} else {

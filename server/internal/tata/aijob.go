@@ -370,14 +370,15 @@ func (a *App) executeInterpret(id int64) {
 	}
 	run.jobID = a.insertAIJob(bg, "interpret", id, *userID, 0, 0)
 
-	prompt := buildPrompt(kind, deref(question), *cards)
+	themeTitle, spreadName, _ := a.interpretThemeContext(bg, id)
+	prompt := buildInterpretPrompt(kind, deref(question), themeTitle, spreadName, *cards)
 	if kind == "tarotist" {
 		var tid *int64
 		_ = a.Store.QueryRow(bg, `SELECT tarotist_id FROM readings WHERE id=$1`, id).Scan(&tid)
 		if tid != nil {
 			var name, persona, voice, banned, ask string
 			_ = a.Store.QueryRow(bg, `SELECT name, persona, voice, banned, ask_style FROM tarotists WHERE id=$1`, *tid).Scan(&name, &persona, &voice, &banned, &ask)
-			prompt = "共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n人设：" + name + "。" + persona + "\n语音：" + voice + "。禁止：" + banned + "。追问：" + ask + "\n" + buildPrompt(kind, deref(question), *cards)
+			prompt = "共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n人设：" + name + "。" + persona + "\n语音：" + voice + "。禁止：" + banned + "。追问：" + ask + "\n" + buildInterpretPrompt(kind, deref(question), themeTitle, spreadName, *cards)
 		}
 	}
 

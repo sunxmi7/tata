@@ -447,12 +447,19 @@ func TestExploreChargesBeforeRitual(t *testing.T) {
 	if n := chargeCount(t, store, id); n != 0 {
 		t.Fatalf("explore charged before interpret %d", n)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE readings SET question='探索一下' WHERE id=$1`, id); err != nil {
-		t.Fatal(err)
-	}
 	msg, raw := call(t, ts, token, http.MethodPost, httpPath(id, "interpret"), map[string]any{})
+	if msg == "请先填写问题" {
+		t.Fatalf("explore empty question should be allowed: %s %s", msg, raw)
+	}
 	if !strings.Contains(msg, "开通会员") {
 		t.Fatalf("explore interpret paywall: %s %s", msg, raw)
+	}
+	var keptQuestion string
+	if err := store.QueryRow(t.Context(), `SELECT question FROM readings WHERE id=$1`, id).Scan(&keptQuestion); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(keptQuestion) != "" {
+		t.Fatalf("empty explore question must stay empty, got %q", keptQuestion)
 	}
 	var kept string
 	if err := store.QueryRow(t.Context(), `SELECT cards FROM readings WHERE id=$1`, id).Scan(&kept); err != nil {
@@ -462,6 +469,40 @@ func TestExploreChargesBeforeRitual(t *testing.T) {
 		t.Fatal("draw was cleared")
 	}
 	_ = uid
+}
+
+func TestExploreEmptyQuestionUsesThemeContext(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "exploretheme")
+	var spreadID int64
+	var themeTitle, spreadName string
+	if err := store.QueryRow(t.Context(), `SELECT id, theme_title, name FROM spreads WHERE theme_key='yes_or_no' AND enabled=true LIMIT 1`).
+		Scan(&spreadID, &themeTitle, &spreadName); err != nil {
+		t.Fatal(err)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"type": "explore", "source": "explore"})
+	id := asID(reading["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID})
+
+	app := &App{Store: store}
+	gotTheme, gotSpread, err := app.interpretThemeContext(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotTheme != themeTitle || gotSpread != spreadName {
+		t.Fatalf("theme context: got %q/%q want %q/%q", gotTheme, gotSpread, themeTitle, spreadName)
+	}
+	prompt := buildInterpretPrompt("explore", "", gotTheme, gotSpread, `[{"position":1,"name":"愚者","orientation":"upright"}]`)
+	if !strings.Contains(prompt, "主题："+themeTitle) || !strings.Contains(prompt, "牌阵："+spreadName) {
+		t.Fatalf("prompt missing theme context: %s", prompt)
+	}
+	var question string
+	if err := store.QueryRow(t.Context(), `SELECT question FROM readings WHERE id=$1`, id).Scan(&question); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(question) != "" {
+		t.Fatalf("question should stay empty, got %q", question)
+	}
 }
 
 func TestInterpretIgnoresCardsWhenAlreadyFixed(t *testing.T) {

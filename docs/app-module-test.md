@@ -241,6 +241,8 @@
 
 - [ ] `GET /api/app/v1/readings`：分页，limit 默认 20，可用 before_id 翻下一页
 - [ ] 列表项有 short_text / card_name / status_label（没有牌则缩略图走默认）
+- [ ] 列表项有 conversation_type（daily/moment/theme）与 stage/stage_label；daily 有 target 今日/明日
+- [ ] 探索创建带 theme_key=yes_or_no → moment/此刻抉择；relationship → theme/主题占卜；未带 theme_key 选阵后能回填
 - [ ] `GET /api/app/v1/readings/{id}`：自己的记录能读；别人的或不存在为业务错误
 - [ ] `GET /api/app/v1/readings/{id}/messages`
 - [ ] `DELETE /api/app/v1/readings/{id}`：未登录不能删（「登录后才能删除」）；登录后软删，再读应当不存在

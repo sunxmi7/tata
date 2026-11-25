@@ -65,3 +65,34 @@ func TestBuildPromptTarotistStillHasMeanings(t *testing.T) {
 		t.Fatalf("missing sun meaning: %s", out)
 	}
 }
+
+func TestBuildInterpretPromptExploreUsesTheme(t *testing.T) {
+	cards := `[{"position":1,"position_name":"当前问题的答案倾向与核心影响因素","card_id":0,"name":"愚者","orientation":"upright"}]`
+	out := buildInterpretPrompt("explore", "", "Yes or No", "单张是非牌阵", cards)
+	if strings.Contains(out, "问题：") {
+		t.Fatalf("should not fake a user question: %s", out)
+	}
+	if !strings.Contains(out, "用户未填写问题") {
+		t.Fatalf("missing empty-question hint: %s", out)
+	}
+	if !strings.Contains(out, "主题：Yes or No") {
+		t.Fatalf("missing theme: %s", out)
+	}
+	if !strings.Contains(out, "牌阵：单张是非牌阵") {
+		t.Fatalf("missing spread: %s", out)
+	}
+	if !strings.Contains(out, "牌面：") {
+		t.Fatalf("missing cards: %s", out)
+	}
+}
+
+func TestBuildInterpretPromptKeepsRealQuestion(t *testing.T) {
+	cards := `[{"position":1,"name":"愚者","orientation":"upright"}]`
+	out := buildInterpretPrompt("explore", "他近期会主动联系我吗？", "Yes or No", "单张是非牌阵", cards)
+	if !strings.Contains(out, "问题：他近期会主动联系我吗？") {
+		t.Fatalf("expected real question: %s", out)
+	}
+	if strings.Contains(out, "主题：") {
+		t.Fatalf("theme should not override real question: %s", out)
+	}
+}

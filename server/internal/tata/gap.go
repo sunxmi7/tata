@@ -493,7 +493,7 @@ func (a *App) appFollowup(w http.ResponseWriter, r *http.Request) error {
 			a.clearPendingIdem(r, scope, idemKey)
 			return biz("问题超过 200 个码点，正式计数口径尚未确认")
 		}
-		view, err := a.createNormal(r.Context(), uid, strings.TrimSpace(req.Text), "normal", nil, false, "", "")
+		view, err := a.createNormal(r.Context(), uid, strings.TrimSpace(req.Text), "normal", nil, false, "", "", "")
 		if err != nil {
 			a.clearPendingIdem(r, scope, idemKey)
 			return err
@@ -1684,7 +1684,7 @@ func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
 	if typ != "" && typ != "normal" && typ != "tarotist" && typ != "explore" && typ != "daily" {
 		return biz("type 不正确")
 	}
-	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(t.name,''), COALESCE(t.avatar_url,'')
+	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(r.theme_key,''), COALESCE(t.name,''), COALESCE(t.avatar_url,'')
 FROM readings r
 LEFT JOIN tarotists t ON t.id = r.tarotist_id
 WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
@@ -1705,27 +1705,29 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 	defer rows.Close()
 	list := []map[string]any{}
 	cfg := a.cardConfigForUser(r.Context(), uid)
+	cycle := a.userCycle(r, uid)
 	for rows.Next() {
 		var id int64
-		var typ, question, status, day string
+		var typ, question, status, day, themeKey string
 		var updated, created time.Time
 		var cards, interp *string
 		var tarotistID *int64
 		var tarotistName, tarotistAvatar string
-		if err := rows.Scan(&id, &typ, &question, &status, &day, &updated, &created, &cards, &interp, &tarotistID, &tarotistName, &tarotistAvatar); err != nil {
+		if err := rows.Scan(&id, &typ, &question, &status, &day, &updated, &created, &cards, &interp, &tarotistID, &themeKey, &tarotistName, &tarotistAvatar); err != nil {
 			return err
 		}
 		label, next := progressOf(status)
 		item := map[string]any{
 			"id": id, "type": typ, "question": question, "status": status, "business_date": day,
+			"theme_key": themeKey,
 			"has_result": status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE",
 			"progress":   label, "continue": next, "updated_at": updated, "created_at": created,
 			"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,
 		}
+		attachConversationMeta(item, cycle)
 		attachCalendarPreview(r, item, cfg, tarotistName, tarotistAvatar)
 		list = append(list, item)
 	}
-	cycle := a.userCycle(r, uid)
 	tomorrow, err := nextBusinessDate(cycle)
 	if err != nil {
 		return err

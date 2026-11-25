@@ -263,7 +263,31 @@ components:
           description: 归属用户。未登录为 null。
         type:
           type: string
-          description: normal、tarotist、explore、daily。
+          description: normal、tarotist、explore、daily。底层业务类型，与 conversation_type 不同。
+        theme_key:
+          type: string
+          description: |
+            探索主题键。创建 explore 时可写；选阵后若为空从牌阵回填。
+            空字符串表示尚未绑定主题（仅 explore 未选阵且未传 theme_key）。
+        conversation_type:
+          type: string
+          enum: ['', daily, moment, theme]
+          description: |
+            历史对话三类：daily=今日/明日；moment=普通占卜与探索此刻抉择（yes_or_no/either_or）；
+            theme=主题占卜。explore 尚未有 theme_key 时为空字符串。
+        conversation_label:
+          type: string
+          description: |
+            展示名。daily 为「今日运势」或「明日运势」；moment 为「普通占卜」「此刻抉择」或「占卜师」；
+            theme 为「主题占卜」。conversation_type 为空时为空。
+        stage:
+          type: string
+          description: |
+            按 conversation_type 区分的阶段键（如 pending_draw、question_submitted、pending_spread）。
+            与 status 并存；客户端续做应按 conversation_type + stage 选 UI。
+        stage_label:
+          type: string
+          description: 阶段中文文案，随 conversation_type 变化（如待抽牌 / 问题已提交 / 待选牌阵）。
         question:
           type: string
           description: 用户问题原文。未填写时为空字符串。
@@ -281,7 +305,7 @@ components:
           type: string
           enum: [QUESTION_CREATED, SPREAD_SELECTED, SHUFFLING, CUTTING, CARDS_FIXED, INTERPRETING, COMPLETED,
             FAILED_RETRYABLE]
-          description: 占卜状态机。COMPLETED 已解读，FAILED_RETRYABLE 可重试。
+          description: 底层状态机（三类对话共用）。COMPLETED 已解读，FAILED_RETRYABLE 可重试。
         cards:
           type: array
           nullable: true
@@ -325,7 +349,7 @@ components:
           description: 软删时间。未删除为 null。
         progress:
           type: string
-          description: 给客户端看的进度文案，例如「待选牌阵」。
+          description: 旧进度文案（按 status，三类共用）。新客户端优先用 stage_label。
         continue:
           type: string
           description: 建议的下一步动作名；完成时为空字符串。
@@ -337,7 +361,7 @@ components:
           description: 从 interpretation 截取的一句预览，无解读时为空，不编造。
         status_label:
           type: string
-          description: COMPLETED 为「已解读」，其余为「待继续」。
+          description: COMPLETED 为「已解读」，其余为「待继续」。粗粒度；细阶段看 stage_label。
         yi:
           type: string
           nullable: true
@@ -352,10 +376,10 @@ components:
           description: 牌面缩略图完整 URL。优先 cards.thumbnail，否则 card.thumbnail_template（{id}/{name}），再否则 card.thumbnail_default；都未配置则返回当前服务地址下的内置默认牌背。相对 /uploads/... 会拼 scheme://host。无牌名时为 null。
         target:
           type: string
-          description: today 或 tomorrow。仅 daily 响应。
+          description: today 或 tomorrow。仅 daily；由 business_date 与用户当日业务日比较得出。
         business_date:
           type: string
-          description: 业务日 YYYY-MM-DD。仅 daily 响应。
+          description: 业务日 YYYY-MM-DD。列表与详情对 daily 返回；其他类型也可能有值但不作 target 依据展示。
         has_result:
           type: boolean
           description: 已有牌名时为 true。
@@ -2191,6 +2215,13 @@ components:
             explore：把 normal/explore 记为 explore，并跳过检测。
             preset：跳过检测。
             其他字符串没有额外效果。
+        theme_key:
+          type: string
+          description: |
+            仅 explore 可传。写入 readings.theme_key，用于历史区分「此刻抉择」与「主题占卜」。
+            yes_or_no / either_or → conversation_type=moment（此刻抉择）；其余已知主题 → theme（主题占卜）。
+            创建时可空，选阵后若为空则从 spreads.theme_key 回填。非法键返回「探索主题不存在」；非 explore 传了返回「主题键不正确」。
+          enum: ['', yes_or_no, either_or, relationship, communication, career, study, interpersonal, shopping, outfit, wellbeing, inner]
         skip_detect:
           type: boolean
         tarotist_id:
@@ -5105,6 +5136,8 @@ paths:
       description: |
         已登录按 user_id。未登录用 device_id。不含已删除。按 id 降序。
         游标分页：limit 默认 20、上限 100；用 next_cursor 作为下一页的 before_id。可按 type 过滤。
+        每条带 conversation_type（daily / moment / theme）与 conversation_label，以及按对话类型区分的 stage / stage_label；
+        同时保留原 status / progress / continue / status_label。daily 另带 target（today/tomorrow）与 business_date。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: limit
@@ -5412,7 +5445,7 @@ paths:
       operationId: appInterpret
       summary: 生成解读
       description: |
-        explore 且问题为空会拒绝。登录用户先过 play 门槛。
+        explore 允许问题为空（主题占卜无提问环节）；空问题时按所选主题分类与牌阵解读，不回写 question。登录用户先过 play 门槛。
         生成前必须已登录、牌面已固定、额度已结算。未绑定供应商会把状态写成 FAILED_RETRYABLE。
         失败文案「解读失败，可重试，未重新扣费」。无请求体。
         生成会先落成 ai_jobs 任务，不绑 HTTP 连接。App 退出后任务继续；再进来用 GET /readings/{id}：INTERPRETING 为进行中（interpretation 可能是片段），COMPLETED 为全文。未完成可再调 `/interpret/stream` 续听，不会重扣费。

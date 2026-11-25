@@ -2,7 +2,9 @@ package tata
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -45,6 +47,12 @@ func (a *App) binding(ctx context.Context, task string) (name, model, base, key 
 }
 
 func buildPrompt(kind, question, cards string) string {
+	return buildInterpretPrompt(kind, question, "", "", cards)
+}
+
+// buildInterpretPrompt 组装解读提示词。
+// explore 且用户未提问时，用主题分类与牌阵名作为场景，不伪造用户问题。
+func buildInterpretPrompt(kind, question, themeTitle, spreadName, cards string) string {
 	var b strings.Builder
 	b.WriteString("你只解读，不得改牌、牌位或正逆位。\n")
 	if kind == "tarotist" {
@@ -52,11 +60,36 @@ func buildPrompt(kind, question, cards string) string {
 	} else {
 		b.WriteString("不要套用塔罗师人设。逐张解释后给总评。\n")
 	}
-	fmt.Fprintf(&b, "问题：%s\n牌面：%s\n", question, cards)
+	q := strings.TrimSpace(question)
+	themeTitle = strings.TrimSpace(themeTitle)
+	spreadName = strings.TrimSpace(spreadName)
+	if q != "" {
+		fmt.Fprintf(&b, "问题：%s\n", q)
+	} else if kind == "explore" && (themeTitle != "" || spreadName != "") {
+		b.WriteString("用户未填写问题，请按主题与牌阵解读。\n")
+		if themeTitle != "" {
+			fmt.Fprintf(&b, "主题：%s\n", themeTitle)
+		}
+		if spreadName != "" {
+			fmt.Fprintf(&b, "牌阵：%s\n", spreadName)
+		}
+	} else {
+		fmt.Fprintf(&b, "问题：%s\n", q)
+	}
+	fmt.Fprintf(&b, "牌面：%s\n", cards)
 	if block := formatMajorMeaningsBlock(cards); block != "" {
 		b.WriteString(block)
 	}
 	return b.String()
+}
+
+func (a *App) interpretThemeContext(ctx context.Context, id int64) (themeTitle, spreadName string, err error) {
+	err = a.Store.QueryRow(ctx, `SELECT COALESCE(s.theme_title, ''),
+		COALESCE(NULLIF(r.spread_name, ''), s.name, '')
+		FROM readings r
+		LEFT JOIN spreads s ON s.id = r.spread_id
+		WHERE r.id = $1`, id).Scan(&themeTitle, &spreadName)
+	return themeTitle, spreadName, err
 }
 
 func deref(s *string) string {
@@ -89,8 +122,8 @@ func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 	var quota, first bool
 	var created, updated time.Time
 	var deleted *time.Time
-	var drawMode string
-	err := sc.Scan(&id, &userID, &typ, &question, &spreadID, &tarotistID, &status, &cards, &interpretation, &vendor, &model, &fail, &quota, &first, &created, &updated, &deleted, &drawMode)
+	var drawMode, themeKey, businessDate string
+	err := sc.Scan(&id, &userID, &typ, &question, &spreadID, &tarotistID, &status, &cards, &interpretation, &vendor, &model, &fail, &quota, &first, &created, &updated, &deleted, &drawMode, &themeKey, &businessDate)
 	if err != nil {
 		return nil, err
 	}
@@ -104,9 +137,11 @@ func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 		"spread_id": spreadID, "tarotist_id": tarotistID, "status": status, "cards": cardsJSON,
 		"interpretation": interpretation, "vendor_name": vendor, "model_name": model, "fail_reason": fail,
 		"quota_consumed": quota, "first_experience": first, "created_at": created, "updated_at": updated, "deleted_at": deleted,
-		"draw_mode": drawMode, "progress": label, "continue": next,
+		"draw_mode": drawMode, "theme_key": themeKey, "business_date": businessDate,
+		"progress": label, "continue": next,
 	}
 	attachReadingPreview(item)
+	attachConversationMeta(item, "")
 	return item, nil
 }
 
@@ -115,12 +150,75 @@ func (a *App) loadReading(ctx context.Context, id int64) (map[string]any, error)
 }
 
 func (a *App) loadReadingAbs(ctx context.Context, r *http.Request, id int64) (map[string]any, error) {
-	row := a.Store.QueryRow(ctx, `SELECT id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode FROM readings WHERE id=$1`, id)
+	row := a.Store.QueryRow(ctx, `SELECT `+readingSelectCols+` FROM readings WHERE id=$1`, id)
 	item, err := scanReading(row)
 	if err != nil {
 		return nil, biz("记录不存在")
 	}
+	if err := a.fillThemeKeyFromSpread(ctx, item); err != nil {
+		return nil, err
+	}
+	today := ""
+	if r != nil {
+		if uid, _ := a.appActor(r); uid > 0 {
+			today = a.userCycle(r, uid)
+		} else {
+			today = cycleOf(time.Now())
+		}
+	}
+	attachConversationMeta(item, today)
 	a.applyCardThumbnails(ctx, r, item)
 	a.localizeReading(ctx, item)
 	return item, nil
+}
+
+func readingSpreadID(item map[string]any) int64 {
+	switch v := item["spread_id"].(type) {
+	case *int64:
+		if v != nil {
+			return *v
+		}
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
+// fillThemeKeyFromSpread backfills readings.theme_key from the selected spread when create omitted it.
+func (a *App) fillThemeKeyFromSpread(ctx context.Context, items ...map[string]any) error {
+	cache := map[int64]string{}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if key, _ := item["theme_key"].(string); strings.TrimSpace(key) != "" {
+			continue
+		}
+		sid := readingSpreadID(item)
+		if sid <= 0 {
+			continue
+		}
+		key, ok := cache[sid]
+		if !ok {
+			if err := a.Store.QueryRow(ctx, `SELECT COALESCE(theme_key,'') FROM spreads WHERE id=$1`, sid).Scan(&key); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					cache[sid] = ""
+					continue
+				}
+				return err
+			}
+			cache[sid] = key
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		item["theme_key"] = key
+		if readingID, ok := item["id"].(int64); ok && readingID > 0 {
+			_, _ = a.Store.Exec(ctx, `UPDATE readings SET theme_key=$1 WHERE id=$2 AND theme_key=''`, key, readingID)
+		}
+	}
+	return nil
 }

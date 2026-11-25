@@ -1,0 +1,201 @@
+package tata
+
+import "strings"
+
+// readingSelectCols is the column list scanned by scanReading.
+const readingSelectCols = `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode, theme_key, business_date`
+
+// momentThemeKeys are explore themes that share the「普通占卜 / 此刻抉择」conversation flow.
+var momentThemeKeys = map[string]bool{
+	"yes_or_no": true,
+	"either_or": true,
+}
+
+var knownExploreThemeKeys = map[string]bool{
+	"yes_or_no": true, "either_or": true, "relationship": true, "communication": true,
+	"career": true, "study": true, "interpersonal": true, "shopping": true,
+	"outfit": true, "wellbeing": true, "inner": true,
+}
+
+func validateExploreThemeKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	if !knownExploreThemeKeys[key] {
+		return biz("探索主题不存在")
+	}
+	return nil
+}
+
+// conversationTypeOf maps storage fields to the three history conversation kinds.
+// daily → 今日/明日；moment → 普通占卜 + 探索此刻抉择；theme → 主题占卜。
+// Explore without theme_key yet returns "" until create/spread fills it.
+func conversationTypeOf(kind, themeKey string) string {
+	switch kind {
+	case "daily":
+		return "daily"
+	case "normal", "tarotist":
+		return "moment"
+	case "explore":
+		key := strings.TrimSpace(themeKey)
+		if key == "" {
+			return ""
+		}
+		if momentThemeKeys[key] {
+			return "moment"
+		}
+		return "theme"
+	default:
+		return ""
+	}
+}
+
+func conversationLabelOf(kind, themeKey, target string) string {
+	switch conversationTypeOf(kind, themeKey) {
+	case "daily":
+		if target == "tomorrow" {
+			return "明日运势"
+		}
+		return "今日运势"
+	case "moment":
+		if kind == "explore" && momentThemeKeys[strings.TrimSpace(themeKey)] {
+			return "此刻抉择"
+		}
+		if kind == "tarotist" {
+			return "占卜师"
+		}
+		return "普通占卜"
+	case "theme":
+		return "主题占卜"
+	default:
+		return ""
+	}
+}
+
+func dailyTargetOf(kind, businessDate, todayCycle string) string {
+	if kind != "daily" {
+		return ""
+	}
+	businessDate = strings.TrimSpace(businessDate)
+	if businessDate == "" {
+		return "today"
+	}
+	if todayCycle != "" && businessDate > todayCycle {
+		return "tomorrow"
+	}
+	return "today"
+}
+
+// stageOf returns a client-stable stage key and Chinese label for the conversation kind.
+// status / progress stay unchanged for backward compatibility.
+func stageOf(conversationType, status string) (stage, label string) {
+	switch conversationType {
+	case "daily":
+		return dailyStage(status)
+	case "theme":
+		return themeStage(status)
+	case "moment":
+		return momentStage(status)
+	default:
+		return momentStage(status)
+	}
+}
+
+func dailyStage(status string) (string, string) {
+	switch status {
+	case "QUESTION_CREATED", "SPREAD_SELECTED", "SHUFFLING", "CUTTING":
+		return "pending_draw", "待抽牌"
+	case "CARDS_FIXED":
+		return "pending_interpret", "待解读"
+	case "INTERPRETING":
+		return "interpreting", "解读生成中"
+	case "COMPLETED":
+		return "completed", "已完成"
+	case "FAILED_RETRYABLE":
+		return "failed_retryable", "失败可重试"
+	default:
+		return strings.ToLower(status), status
+	}
+}
+
+func momentStage(status string) (string, string) {
+	switch status {
+	case "QUESTION_CREATED":
+		return "question_submitted", "问题已提交"
+	case "SPREAD_SELECTED":
+		return "spread_selected", "牌阵已选择"
+	case "SHUFFLING":
+		return "shuffling", "洗牌中"
+	case "CUTTING":
+		return "cutting", "切牌中"
+	case "CARDS_FIXED":
+		return "cards_fixed", "牌面已固定"
+	case "INTERPRETING":
+		return "interpreting", "解读生成中"
+	case "COMPLETED":
+		return "completed", "已完成"
+	case "FAILED_RETRYABLE":
+		return "failed_retryable", "失败可重试"
+	default:
+		return strings.ToLower(status), status
+	}
+}
+
+func themeStage(status string) (string, string) {
+	switch status {
+	case "QUESTION_CREATED":
+		return "pending_spread", "待选牌阵"
+	case "SPREAD_SELECTED":
+		return "spread_selected", "牌阵已选择"
+	case "SHUFFLING":
+		return "shuffling", "洗牌中"
+	case "CUTTING":
+		return "cutting", "切牌中"
+	case "CARDS_FIXED":
+		return "cards_fixed", "牌面已固定"
+	case "INTERPRETING":
+		return "interpreting", "解读生成中"
+	case "COMPLETED":
+		return "completed", "已完成"
+	case "FAILED_RETRYABLE":
+		return "failed_retryable", "失败可重试"
+	default:
+		return strings.ToLower(status), status
+	}
+}
+
+func attachConversationMeta(item map[string]any, todayCycle string) {
+	if item == nil {
+		return
+	}
+	kind, _ := item["type"].(string)
+	themeKey, _ := item["theme_key"].(string)
+	business, _ := item["business_date"].(string)
+	target := dailyTargetOf(kind, business, todayCycle)
+	conv := conversationTypeOf(kind, themeKey)
+	label := conversationLabelOf(kind, themeKey, target)
+	stage, stageLabel := stageOf(conv, fmtString(item["status"]))
+	item["conversation_type"] = conv
+	item["conversation_label"] = label
+	item["stage"] = stage
+	item["stage_label"] = stageLabel
+	if kind == "daily" {
+		item["target"] = target
+		if business != "" {
+			item["business_date"] = business
+		}
+	}
+}
+
+func fmtString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case *string:
+		if t != nil {
+			return *t
+		}
+	}
+	return ""
+}

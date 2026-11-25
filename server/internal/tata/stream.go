@@ -63,13 +63,6 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 	if err := a.takeClientCards(r, id); err != nil {
 		return err
 	}
-	var kind, question string
-	if err := a.Store.QueryRow(r.Context(), `SELECT type, question FROM readings WHERE id=$1`, id).Scan(&kind, &question); err != nil {
-		return err
-	}
-	if kind == "explore" && strings.TrimSpace(question) == "" {
-		return biz("请先填写问题")
-	}
 	if uid == 0 {
 		return biz(paywallNeedLogin)
 	}
