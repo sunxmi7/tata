@@ -2278,6 +2278,29 @@ components:
           type: string
           description: 省略或 today 为今日一牌；tomorrow 为明日运势。其他值拒绝。
           enum: ['', today, tomorrow]
+        cards:
+          type: array
+          description: |
+            可选。App 本地抽好的牌面；传了就按这张牌生成解读，不再服务端重抽。
+            今日/明日只收 1 张。每项至少 name、orientation（upright|reversed）；position_name 可省略。
+            不传或空数组时由服务端抽一张。
+          maxItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, orientation]
+            properties:
+              position:
+                type: integer
+              position_name:
+                type: string
+              card_id:
+                type: integer
+              name:
+                type: string
+              orientation:
+                type: string
+                enum: [upright, reversed]
     EmailCodeBody:
       type: object
       additionalProperties: false
@@ -5680,7 +5703,8 @@ paths:
       description: |
         必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
         否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置、额度不足或请开通会员为 QuotaBlockEnvelope。
-        扣费成功后抽一张牌并生成解读。生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
+        扣费成功后：请求带了 `cards`（1 张）则用 App 交上的牌；否则服务端抽一张，再生成解读。
+        生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
         成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、has_result。不编造宜忌文案。
@@ -5695,6 +5719,16 @@ paths:
                 summary: 今日一牌
                 value:
                   target: today
+              客户端交牌:
+                summary: App 抽好后上传牌面
+                value:
+                  target: today
+                  cards:
+                    - name: 愚者
+                      orientation: upright
+                      position: 1
+                      position_name: 今日
+                      card_id: 0
       responses:
         "200":
           description: 新结果、复用或额度拦截。

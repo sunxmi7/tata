@@ -1373,7 +1373,8 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 		return 0, "", "", nil, false, biz("登录后才能抽今日一牌")
 	}
 	var req struct {
-		Target string `json:"target"`
+		Target string      `json:"target"`
+		Cards  []drawnCard `json:"cards"`
 	}
 	if err := decode(r, &req); err != nil {
 		return 0, "", "", nil, false, err
@@ -1396,6 +1397,10 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 		meaning = "明日运势"
 	default:
 		return 0, "", "", nil, false, biz("目标日期不正确")
+	}
+	clientCards, err := normalizeDailyCards(req.Cards, slotName)
+	if err != nil {
+		return 0, "", "", nil, false, err
 	}
 	var usedSlots int
 	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings
@@ -1463,9 +1468,12 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 		writeQuotaBlock(w, r, decision, id)
 		return id, target, business, nil, true, nil
 	}
-	cards, err := drawCards([]position{{Index: 1, Name: slotName, Meaning: meaning}})
-	if err != nil {
-		return 0, target, business, nil, false, err
+	cards := clientCards
+	if len(cards) == 0 {
+		cards, err = drawCards([]position{{Index: 1, Name: slotName, Meaning: meaning}})
+		if err != nil {
+			return 0, target, business, nil, false, err
+		}
 	}
 	if _, err := tx.Exec(r.Context(), `UPDATE readings SET cards=$1, status='CARDS_FIXED', question=$2, business_date=$3, updated_at=now() WHERE id=$4`,
 		mustJSON(cards), question, business, id); err != nil {
@@ -1475,4 +1483,35 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 		return 0, target, business, nil, false, err
 	}
 	return id, target, business, nil, false, nil
+}
+
+// normalizeDailyCards accepts the single card App drew for today/tomorrow.
+// Empty means the server draws. More than one card is rejected.
+func normalizeDailyCards(in []drawnCard, slotName string) ([]drawnCard, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) != 1 {
+		return nil, biz("今日一牌只收一张牌")
+	}
+	name := strings.TrimSpace(in[0].Name)
+	card, ok := cardByName(name)
+	if !ok {
+		return nil, biz("牌面不正确")
+	}
+	ori := strings.TrimSpace(in[0].Orientation)
+	if ori != "upright" && ori != "reversed" {
+		return nil, biz("正逆位不正确")
+	}
+	posName := strings.TrimSpace(in[0].PositionName)
+	if posName == "" {
+		posName = slotName
+	}
+	return []drawnCard{{
+		Position:     1,
+		PositionName: posName,
+		CardID:       card.ID,
+		Name:         card.Name,
+		Orientation:  ori,
+	}}, nil
 }

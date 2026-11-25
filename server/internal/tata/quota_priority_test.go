@@ -464,6 +464,47 @@ func TestExploreChargesBeforeRitual(t *testing.T) {
 	_ = uid
 }
 
+func TestDailyAcceptsClientCard(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	token, uid := registerUser(t, ts, store, "dailycard")
+	seedInvite(t, store, uid, 1)
+	msg, raw := call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{
+		"target": "today",
+		"cards": []map[string]any{
+			{"name": "女皇", "orientation": "reversed", "position": 1, "position_name": "今日", "card_id": 3},
+		},
+	})
+	if msg != "" {
+		t.Fatalf("daily client card: %s %s", msg, raw)
+	}
+	item := decodeData(t, raw)
+	if item["card_name"] != "女皇" {
+		t.Fatalf("card_name: %#v", item["card_name"])
+	}
+	var cardsRaw string
+	if err := store.QueryRow(t.Context(), `SELECT cards FROM readings WHERE id=$1`, asID(item["id"])).Scan(&cardsRaw); err != nil {
+		t.Fatal(err)
+	}
+	var cards []drawnCard
+	if err := json.Unmarshal([]byte(cardsRaw), &cards); err != nil || len(cards) != 1 {
+		t.Fatalf("stored cards: %s err=%v", cardsRaw, err)
+	}
+	if cards[0].Name != "女皇" || cards[0].Orientation != "reversed" {
+		t.Fatalf("stored card: %#v", cards[0])
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{
+		"target": "today",
+		"cards": []map[string]any{
+			{"name": "愚者", "orientation": "upright"},
+			{"name": "魔术师", "orientation": "upright"},
+		},
+	})
+	if !strings.Contains(msg, "一张") {
+		t.Fatalf("two cards: %s", msg)
+	}
+}
+
 func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
