@@ -464,6 +464,41 @@ func TestExploreChargesBeforeRitual(t *testing.T) {
 	_ = uid
 }
 
+func TestInterpretIgnoresCardsWhenAlreadyFixed(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	token, uid := registerUser(t, ts, store, "refix")
+	setMember(t, store, uid, "month")
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 10)
+	spreadID := ensureTimeFlow(t, store)
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "牌面已固定再交牌", "type": "normal"})
+	id := asID(reading["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	fixed := `[{"position":1,"position_name":"过去","name":"愚者","orientation":"upright","card_id":0},{"position":2,"position_name":"现在","name":"魔术师","orientation":"reversed","card_id":1},{"position":3,"position_name":"未来","name":"女祭司","orientation":"upright","card_id":2}]`
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET cards=$2, status='CARDS_FIXED' WHERE id=$1`, id, fixed); err != nil {
+		t.Fatal(err)
+	}
+	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", id), map[string]any{
+		"spread_id": spreadID,
+		"cards": []map[string]any{
+			{"position": 1, "name": "隐者", "orientation": "upright"},
+			{"position": 2, "name": "恋人", "orientation": "upright"},
+			{"position": 3, "name": "星币骑士", "orientation": "reversed"},
+		},
+	})
+	if strings.Contains(msg, "牌面已固定") {
+		t.Fatalf("interpret rejected fixed cards: %s %s", msg, raw)
+	}
+	var cardsRaw string
+	if err := store.QueryRow(t.Context(), `SELECT cards FROM readings WHERE id=$1`, id).Scan(&cardsRaw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cardsRaw, "愚者") || strings.Contains(cardsRaw, "隐者") {
+		t.Fatalf("fixed cards should stay: %s", cardsRaw)
+	}
+}
+
 func TestDailyAcceptsClientCard(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
