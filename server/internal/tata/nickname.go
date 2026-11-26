@@ -93,15 +93,21 @@ func nicknameFromEmailLocal(email string) string {
 			b.WriteRune(r)
 		}
 	}
-	nick := strings.Trim(b.String(), "-_")
-	if nick == "" {
+	local := strings.Trim(b.String(), "-_")
+	if local == "" {
 		return ""
 	}
-	runes := []rune(nick)
-	if len(runes) > 32 {
-		nick = string(runes[:32])
+	// "Tarot" + local-part; keep total within profile nickname limit (32 runes).
+	const prefix = "Tarot"
+	maxLocal := 32 - len([]rune(prefix))
+	runes := []rune(local)
+	if maxLocal < 1 {
+		return prefix
 	}
-	return nick
+	if len(runes) > maxLocal {
+		local = string(runes[:maxLocal])
+	}
+	return prefix + local
 }
 
 func (a *App) ensureProfileDefaults(ctx context.Context, uid int64) {

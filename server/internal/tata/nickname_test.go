@@ -24,10 +24,10 @@ func TestRandomNicknameRules(t *testing.T) {
 }
 
 func TestNicknameFromEmailLocal(t *testing.T) {
-	if got := nicknameFromEmailLocal("Demo.User+tag@tata.local"); got != "demousertag" {
+	if got := nicknameFromEmailLocal("Demo.User+tag@tata.local"); got != "Tarotdemousertag" {
 		t.Fatalf("sanitize: %q", got)
 	}
-	if got := nicknameFromEmailLocal("alice_bob-1@tata.local"); got != "alice_bob-1" {
+	if got := nicknameFromEmailLocal("alice_bob-1@tata.local"); got != "Tarotalice_bob-1" {
 		t.Fatalf("keep _-: %q", got)
 	}
 	if got := nicknameFromEmailLocal("!!!@tata.local"); got != "" {
@@ -37,7 +37,8 @@ func TestNicknameFromEmailLocal(t *testing.T) {
 		t.Fatalf("missing local: %q", got)
 	}
 	long := strings.Repeat("a", 40) + "@tata.local"
-	if got := nicknameFromEmailLocal(long); utf8.RuneCountInString(got) != 32 {
+	got := nicknameFromEmailLocal(long)
+	if !strings.HasPrefix(got, "Tarot") || utf8.RuneCountInString(got) != 32 {
 		t.Fatalf("truncate: %q len=%d", got, utf8.RuneCountInString(got))
 	}
 }
