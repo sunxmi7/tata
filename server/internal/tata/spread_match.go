@@ -34,20 +34,20 @@ type intentCoverage struct {
 }
 
 type spreadCatalogEntry struct {
-	Code             string                    `json:"code"`
-	Names            []string                  `json:"names"`
-	Recommendable    bool                      `json:"recommendable"`
-	StructuresMatch  []string                  `json:"structures_match"`
-	Intents          map[string]intentCoverage `json:"intents"`
+	Code            string                    `json:"code"`
+	Names           []string                  `json:"names"`
+	Recommendable   bool                      `json:"recommendable"`
+	StructuresMatch []string                  `json:"structures_match"`
+	Intents         map[string]intentCoverage `json:"intents"`
 }
 
 type spreadMatchConfig struct {
-	Version              string              `json:"version"`
-	MappingStatus        string              `json:"mapping_status"`
-	PriorityStatus       string              `json:"priority_status"`
-	PriorityByStructure  map[string][]string `json:"priority_by_structure"`
-	Spreads              []spreadCatalogEntry `json:"spreads"`
-	byName               map[string]*spreadCatalogEntry
+	Version             string               `json:"version"`
+	MappingStatus       string               `json:"mapping_status"`
+	PriorityStatus      string               `json:"priority_status"`
+	PriorityByStructure map[string][]string  `json:"priority_by_structure"`
+	Spreads             []spreadCatalogEntry `json:"spreads"`
+	byName              map[string]*spreadCatalogEntry
 }
 
 type questionMatchSnapshot struct {
@@ -61,14 +61,14 @@ type questionMatchSnapshot struct {
 }
 
 type dbSpreadRow struct {
-	ID       int64
-	Name     string
-	Desc     string
-	Short    string
-	Count    int
-	Thumb    string
-	Depth    string
-	DBRec    bool
+	ID    int64
+	Name  string
+	Desc  string
+	Short string
+	Count int
+	Thumb string
+	Depth string
+	DBRec bool
 }
 
 type matchCandidate struct {
@@ -159,25 +159,25 @@ func inferIntentStructure(q string) (intent, structure string, dual bool) {
 		return "I05A", "S03", false
 	case containsAny(q, "怎么办", "如何提升", "怎么提升", "如何改善", "怎么改善", "该怎么", "建议"):
 		return "I10A", "S04", false
-	case containsAny(q, "会怎样", "接下来", "未来", "发展趋势", "走向"):
+	case containsAny(q, "过去现在未来", "过去·现在·未来", "会怎样", "接下来", "未来", "发展趋势", "走向"):
 		if containsAny(q, "结果", "结局", "最终") {
 			return "I04B", "S02", false
 		}
 		return "I04A", "S02", false
 	case containsAny(q, "对我什么感觉", "对我是什么感觉", "对我的感觉", "对我的态度", "怎么看我", "怎么想我", "真实态度"):
 		return "I12B", "S06", false
-	case containsAny(q, "关系", "他", "她", "对方", "男友", "女友", "对象", "伴侣"):
-		return "I13A", "S06", false
-	case containsAny(q, "要不要", "该不该", "应不应该", "能不能", "会不会", "能否") ||
-		(strings.HasSuffix(strings.TrimRight(q, "？?！!。."), "吗") && containsAny(q, "应该", "接受", "辞", "买", "去", "留")):
+	case containsAny(q, "要不要", "该不该", "应不应该", "能不能", "会不会", "能否", "适合吗", "联系我吗", "表白吗", "分手吗", "复合吗") ||
+		(strings.HasSuffix(strings.TrimRight(q, "？?！!。．.、 "), "吗") && containsAny(q, "应该", "接受", "辞", "买", "去", "留", "会", "能", "适合", "联系", "表白", "分手", "复合", "值得")):
 		return "I01", "S01", false
+	case containsAny(q, "关系", "他", "她", "对方", "男友", "女友", "对象", "伴侣", "感情"):
+		return "I13A", "S06", false
 	default:
 		return "I01", "S01", false
 	}
 }
 
 func hasDualOptionHints(q, lower string) bool {
-	if containsAny(q, "选A还是B", "选a还是b", "两个选项", "选项A", "选项B", "A还是B", "a还是b") {
+	if containsAny(q, "选A还是B", "选a还是b", "两个选项", "选项A", "选项B", "A还是B", "a还是b", "选哪个", "哪个更好", "二选一") {
 		return true
 	}
 	if strings.Contains(q, "还是") && containsAny(q, "还是选", "还是去", "还是留", "还是换", "还是继续") {

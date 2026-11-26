@@ -112,15 +112,16 @@ func isInvalidQuestion(q string) bool {
 
 func isSpecificQuestion(q string) bool {
 	specificHints := []string{
-		"要不要", "该不该", "应不应该", "能不能", "会不会", "能否",
-		"选a还是b", "选A还是B", "选一还是", "还是选",
-		"接受这份", "辞掉", "辞职", "跳槽吗",
-		"通过吗", "成功吗", "顺利吗",
+		"要不要", "该不该", "应不应该", "能不能", "会不会", "能否", "可不可以", "有没有可能",
+		"选a还是b", "选A还是B", "选一还是", "还是选", "选哪个", "哪个更好", "二选一",
+		"接受这份", "辞掉", "辞职", "跳槽吗", "分手吗", "复合吗",
+		"通过吗", "成功吗", "顺利吗", "适合吗", "联系我吗", "表白吗",
 		"对我什么感觉", "对我是什么感觉", "对我的感觉", "对我的态度", "怎么看我", "怎么想我",
 		"真实态度", "心里怎么想", "什么感觉",
-		"如何提升", "怎么提升", "该如何提升", "如何改善", "怎么改善",
+		"如何提升", "怎么提升", "该如何提升", "如何改善", "怎么改善", "该怎么办", "怎么办",
 		"有没有新工作", "会有新的工作机会", "有没有机会",
 		"该买吗", "要不要买", "该不该买",
+		"过去现在未来", "过去·现在·未来", "发展趋势", "会怎样",
 	}
 	lower := strings.ToLower(q)
 	for _, h := range specificHints {
@@ -128,8 +129,15 @@ func isSpecificQuestion(q string) bool {
 			return true
 		}
 	}
-	if strings.Contains(q, "还是") && (strings.Contains(q, "还是选") || strings.Contains(q, "还是去") || strings.Contains(q, "还是留")) {
+	if strings.Contains(q, "还是") && (strings.Contains(q, "还是选") || strings.Contains(q, "还是去") || strings.Contains(q, "还是留") || strings.Contains(q, "还是继续") || strings.Contains(q, "还是换")) {
 		return true
+	}
+	// Yes/no style: clear ask ending with 吗/麼 and a decision verb.
+	trimmed := strings.TrimRight(q, "？?！!。．.、 ")
+	if strings.HasSuffix(trimmed, "吗") || strings.HasSuffix(trimmed, "麼") || strings.HasSuffix(trimmed, "么") {
+		if containsAny(q, "会", "能", "该", "要", "适合", "应该", "可以", "愿意", "想", "敢", "值得", "联系", "表白", "分手", "复合", "接受", "去", "留", "买", "换", "表白") {
+			return true
+		}
 	}
 	return false
 }

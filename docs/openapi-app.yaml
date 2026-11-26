@@ -722,12 +722,13 @@ paths:
       operationId: appQuestionSuggestions
       summary: 按用户输入做问题检测并推荐问法
       description: |
-        创建占卜之前调用，没有占卜 ID。请求体是用户自己输入的句子。
+        用户手输问题后调用（预设问题不要走这里，应直接 POST /readings 且 source=preset）。
         本地分流：无效 / 具体 / 宽泛，不调用模型。
-        无效或具体：只返回类型六（detect），文案随结论变化；具体不生成推荐。
+        无效或具体：只返回类型六（detect），文案与 reason_title 随结论变化；具体不生成推荐问法。
         宽泛：messages 顺序是类型六、十二、十四、四、五；推荐按输入关键词匹配 preset_questions 的 scene/category，
         有时间词时优先保留时间范围生成相关问法，再用同场景题库补满，默认 3 条。不是固定取 featured 前三条。
-        用户不选推荐，仍用自己输入的那句去创建。data 只有 has_more 和 messages，没有 reading_id。
+        登录用户：会 upsert 一条 skip_detect=false 的普通占卜写入历史，data 带回 reading_id、continue=detect。
+        未登录：data 只有 has_more 与 messages。
       requestBody:
         required: true
         content:
@@ -1520,7 +1521,8 @@ paths:
       description: |
         请求体带 spread_id 和客户端已经抽好的牌。牌已经落库时可以不带 body。
         牌名必须是牌库里的名字，orientation 只能是 upright 或 reversed，张数必须等于牌阵张数，同一张牌不能出现两次。
-        成功 data 为 reading_id、has_more、messages。messages 从类型二、类型一、类型三开始。
+        成功 data 与 GET /readings/{id} 同形：Reading 字段（含 status / continue / stage / interpretation）+ reading_id + messages + has_more。
+        messages 从类型二、类型一、类型三开始。客户端应用 status=COMPLETED 与 messages 进入解读屏（灵数落牌后尤其如此）。
         explore 允许问题为空（主题占卜无提问环节）；空问题时按所选主题分类与牌阵解读，不回写 question。登录用户先过 play 门槛。未绑定供应商会把状态写成 FAILED_RETRYABLE。
       parameters:
         - $ref: '#/components/parameters/Authorization'

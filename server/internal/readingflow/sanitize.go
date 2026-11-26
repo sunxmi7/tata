@@ -14,6 +14,10 @@ var leakPrefixes = []string{
 	"本次解读遵循以下规则",
 	"系统提示词",
 	"开发者指令",
+	"好的，我将为你解读",
+	"好的，我来为你解读",
+	"根据系统提供的牌面信息",
+	"作为塔罗解读助手",
 }
 
 // StripInterpretationLeak removes leading work-note / fence / JSON-shaped prefixes.

@@ -16,7 +16,7 @@
 }
 ```
 
-`has_more` 为 `true` 表示这一页后面还有。问题推荐发生在创建占卜之前，那时还没有 `reading_id`，只返回 `messages` 和 `has_more`。
+`has_more` 为 `true` 表示这一页后面还有。登录用户调用 `POST /question-suggestions` 时，服务端会写入/刷新一条 `skip_detect=false` 的普通占卜，并在 data 里带回 `reading_id`（历史列表可见，`continue=detect`）。未登录仍只返回 `messages` / `has_more`。
 
 本版原件到类型二十。没有类型十三。空态只有类型八。选牌阵到抽牌方式是一整条类型十六。
 
@@ -31,7 +31,7 @@
 7. `POST /api/app/v1/readings/{id}/interpret` 把占卜 ID、牌阵 ID、抽好的牌一起交上来。服务端用占卜 ID 查出问题，再解读。
 8. 之后的追问、补抽、历史，都返回同一份 `messages`。
 
-创建占卜之前没有占卜 ID，预设列表和问题推荐不会写进后来的历史。洗牌、抽牌还没随解读请求交上来时，服务端只停在「问题加已选牌阵」。
+预设列表本身不写历史；点预设后应 `POST /readings` 且 `source=preset`（`skip_detect=true`，`continue=spread`，直接进选阵）。用户手输问题走 `POST /question-suggestions`（登录会有 `reading_id`，`continue=detect`），确认问题后再 `POST /readings`（不要带 `source=preset`）。洗牌、抽牌还没随解读请求交上来时，服务端只停在「问题加已选牌阵」。
 
 ## 历史对话类型
 
