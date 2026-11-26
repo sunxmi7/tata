@@ -56,6 +56,7 @@ export interface ReadingRow {
   type: string;
   question?: string | null;
   status: string;
+  stage_label?: string;
   vendor_name?: string | null;
   model_name?: string | null;
   fail_reason?: string | null;

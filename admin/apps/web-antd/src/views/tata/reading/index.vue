@@ -24,6 +24,23 @@ function questionTitle(question: unknown) {
   const text = String(question ?? '').trim();
   return text || '（未填写问题）';
 }
+const statusLabel: Record<string, string> = {
+  QUESTION_CREATED: '问题已提交',
+  SPREAD_SELECTED: '牌阵已选择',
+  SHUFFLING: '洗牌中',
+  CUTTING: '切牌中',
+  CARDS_FIXED: '牌面已固定',
+  INTERPRETING: '解读生成中',
+  COMPLETED: '已完成',
+  FAILED_RETRYABLE: '失败可重试',
+};
+function statusText(row: ReadingRow) {
+  const label = String(row.stage_label ?? '').trim();
+  if (label && label !== row.status) {
+    return label;
+  }
+  return statusLabel[row.status] ?? row.status;
+}
 function priceText(value: number | null | undefined) {
   return value == null ? '未配置' : formatTokens(value);
 }
@@ -56,7 +73,7 @@ onMounted(load);
     <Table
       :columns="[
         { title: '问题', dataIndex: 'question', ellipsis: true },
-        { title: '状态', dataIndex: 'status', width: 150 },
+        { title: '状态', dataIndex: 'stage_label', width: 120 },
         { title: '输入 token', dataIndex: 'prompt_tokens', align: 'right', width: 120 },
         { title: '输出 token', dataIndex: 'completion_tokens', align: 'right', width: 120 },
         { title: '合计 token', dataIndex: 'total_tokens', align: 'right', width: 120 },
@@ -69,6 +86,9 @@ onMounted(load);
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'question'">
           {{ questionTitle(record.question) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'stage_label'">
+          {{ statusText(record as ReadingRow) }}
         </template>
         <template
           v-else-if="column.dataIndex === 'prompt_tokens' || column.dataIndex === 'completion_tokens' || column.dataIndex === 'total_tokens'"
