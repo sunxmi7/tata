@@ -30,10 +30,27 @@ const typeFallback: Record<string, string> = {
   daily: '今日一牌',
   tarotist: '占卜师',
 };
+const statusLabel: Record<string, string> = {
+  QUESTION_CREATED: '问题已提交',
+  SPREAD_SELECTED: '牌阵已选择',
+  SHUFFLING: '洗牌中',
+  CUTTING: '切牌中',
+  CARDS_FIXED: '牌面已固定',
+  INTERPRETING: '解读生成中',
+  COMPLETED: '已完成',
+  FAILED_RETRYABLE: '失败可重试',
+};
 function sessionTypeText(row: ReadingRow) {
   const label = String(row.conversation_label ?? '').trim();
   if (label) return label;
   return typeFallback[row.type] ?? row.type ?? '—';
+}
+function statusText(row: ReadingRow) {
+  const label = String(row.stage_label ?? '').trim();
+  if (label && label !== row.status) {
+    return label;
+  }
+  return statusLabel[row.status] ?? row.status;
 }
 function userText(row: ReadingRow) {
   const name = String(row.user_display ?? '').trim();
@@ -95,6 +112,7 @@ onMounted(load);
         { title: '用户名', dataIndex: 'user_display', width: 140, ellipsis: true },
         { title: '会话类型', dataIndex: 'conversation_label', width: 110 },
         { title: '问题', dataIndex: 'question', ellipsis: true },
+        { title: '状态', dataIndex: 'stage_label', width: 120 },
         { title: '总 token', dataIndex: 'total_tokens', align: 'right', width: 110 },
         { title: '总价格', dataIndex: 'price_minor', align: 'right', width: 120 },
         { title: '创建时间', dataIndex: 'created_at', width: 180 },
@@ -113,6 +131,9 @@ onMounted(load);
         </template>
         <template v-else-if="column.dataIndex === 'question'">
           {{ questionTitle(record.question) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'stage_label'">
+          {{ statusText(record as ReadingRow) }}
         </template>
         <template v-else-if="column.dataIndex === 'total_tokens'">
           {{ formatTokens(record.total_tokens) }}
