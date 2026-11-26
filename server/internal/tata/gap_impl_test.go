@@ -954,8 +954,11 @@ func TestConventionalFlowCoversEveryType(t *testing.T) {
 		if item["style"] == "chip" && item["text"] == ownText {
 			t.Fatal("recommendation replaced the user's own question")
 		}
-		if item["style"] == "detect" && item["text"] != "你的问题涉及的范围比较广，明确你最关注的方向，可以帮助解读更聚焦，也更容易获得具体的建议。" {
-			t.Fatalf("detect: %#v", item)
+		if item["style"] == "detect" {
+			text, _ := item["text"].(string)
+			if text == "" {
+				t.Fatalf("detect empty: %#v", item)
+			}
 		}
 		if item["style"] == "followup" {
 			opts, _ := item["options"].([]any)

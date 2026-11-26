@@ -719,11 +719,14 @@ paths:
     post:
       tags: [抽牌]
       operationId: appQuestionSuggestions
-      summary: 按用户输入推荐问题
+      summary: 按用户输入做问题检测并推荐问法
       description: |
         创建占卜之前调用，没有占卜 ID。请求体是用户自己输入的句子。
-        data 只有 has_more 和 messages，没有 reading_id。
-        messages 顺序是类型六、类型十二、类型十四、类型四、类型五。推荐句子来自预设题库。用户不选，仍用自己输入的那句去创建。
+        本地分流：无效 / 具体 / 宽泛，不调用模型。
+        无效或具体：只返回类型六（detect），文案随结论变化；具体不生成推荐。
+        宽泛：messages 顺序是类型六、十二、十四、四、五；推荐按输入关键词匹配 preset_questions 的 scene/category，
+        有时间词时优先保留时间范围生成相关问法，再用同场景题库补满，默认 3 条。不是固定取 featured 前三条。
+        用户不选推荐，仍用自己输入的那句去创建。data 只有 has_more 和 messages，没有 reading_id。
       requestBody:
         required: true
         content:

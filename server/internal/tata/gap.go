@@ -796,20 +796,33 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	if err := decode(r, &req); err != nil || strings.TrimSpace(req.Question) == "" {
 		return biz("问题不能为空")
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT body, category FROM preset_questions WHERE enabled=true
-		ORDER BY CASE pool WHEN 'featured' THEN 0 ELSE 1 END, sort_order, question_id LIMIT 3`)
+	det := detectQuestion(req.Question)
+	messages := []map[string]any{{
+		"kind": "interpretation", "from": "server", "style": "detect",
+		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？",
+		"text": det.DetectText,
+	}}
+	if det.Kind != questionBroad {
+		writeOK(w, map[string]any{"messages": messages, "has_more": false})
+		return nil
+	}
+	rows, err := a.Store.Query(r.Context(), `SELECT body, category, scene FROM preset_questions WHERE enabled=true
+		ORDER BY CASE pool WHEN 'featured' THEN 0 ELSE 1 END, sort_order, question_id`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	type preset struct{ body, category string }
-	presets := []preset{}
+	presets := []presetRow{}
 	for rows.Next() {
-		var item preset
-		if err := rows.Scan(&item.body, &item.category); err != nil {
+		var item presetRow
+		if err := rows.Scan(&item.body, &item.category, &item.scene); err != nil {
 			return err
 		}
 		item.body = strings.TrimSpace(item.body)
+		item.scene = strings.TrimSpace(item.scene)
+		if item.scene == "" {
+			item.scene = sceneFromCategory(item.category)
+		}
 		if item.body != "" {
 			presets = append(presets, item)
 		}
@@ -817,41 +830,38 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	messages := []map[string]any{{
-		"kind": "interpretation", "from": "server", "style": "detect",
-		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？",
-		"text": "你的问题涉及的范围比较广，明确你最关注的方向，可以帮助解读更聚焦，也更容易获得具体的建议。",
-	}}
-	if len(presets) > 0 {
-		messages = append(messages, map[string]any{
-			"kind": "suggestion", "from": "server", "style": "chip", "text": presets[0].body,
-		})
+	picked := refineBroadSuggestions(det, presets)
+	if len(picked) == 0 {
+		writeOK(w, map[string]any{"messages": messages, "has_more": false})
+		return nil
 	}
-	options := make([]map[string]any, 0, len(presets))
-	followupOptions := make([]map[string]any, 0, len(presets))
-	for i, item := range presets {
-		selected := false
-		option := map[string]any{"text": item.body, "hint": item.category, "selected": selected}
+	messages = append(messages, map[string]any{
+		"kind": "suggestion", "from": "server", "style": "chip", "text": picked[0].body,
+	})
+	options := make([]map[string]any, 0, len(picked))
+	followupOptions := make([]map[string]any, 0, len(picked))
+	for i, item := range picked {
+		option := map[string]any{"text": item.body, "hint": item.category, "selected": false}
 		options = append(options, option)
 		followupOptions = append(followupOptions, map[string]any{"text": item.body})
-		if i == 1 || (i == 0 && len(presets) == 1) {
+		if i == 1 || (i == 0 && len(picked) == 1) {
 			messages = append(messages, map[string]any{
 				"kind": "suggestion", "from": "server", "style": "option",
 				"text": item.body, "hint": item.category, "selected": false,
 			})
 		}
 	}
-	if len(presets) > 0 {
-		messages = append(messages, map[string]any{
+	messages = append(messages,
+		map[string]any{
 			"kind": "suggestion", "from": "server", "style": "followup",
 			"title": "继续解读", "options": followupOptions,
-		})
-		messages = append(messages, map[string]any{
+		},
+		map[string]any{
 			"kind": "suggestion", "from": "server", "style": "recommend",
 			"title":   fmt.Sprintf("为你推荐 %d 个更清晰的问题", len(options)),
 			"options": options,
-		})
-	}
+		},
+	)
 	writeOK(w, map[string]any{"messages": messages, "has_more": false})
 	return nil
 }
