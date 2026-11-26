@@ -48,7 +48,7 @@ func (a *App) runEino(ctx context.Context, task, userPrompt string) (string, str
 	if err != nil {
 		return "", "", "", err
 	}
-	text, err := readingflow.RunTask(ctx, spec, task, map[string]any{"question": userPrompt})
+	text, err := readingflow.RunTask(a.watchUsage(ctx), spec, task, map[string]any{"question": userPrompt})
 	return spec.Vendor, spec.Model, text, err
 }
 
@@ -58,7 +58,7 @@ func (a *App) runEinoStream(ctx context.Context, task, userPrompt string, onChun
 	if err != nil {
 		return "", "", "", err
 	}
-	text, err := readingflow.RunTaskStream(ctx, spec, task, map[string]any{"question": userPrompt}, onChunk)
+	text, err := readingflow.RunTaskStream(a.watchUsage(ctx), spec, task, map[string]any{"question": userPrompt}, onChunk)
 	return spec.Vendor, spec.Model, text, err
 }
 
@@ -67,7 +67,10 @@ func (a *App) einoChat(ctx context.Context, baseURL, apiKey, model string, timeo
 	if timeoutSec != nil && *timeoutSec > 0 {
 		wait = time.Duration(*timeoutSec) * time.Second
 	}
-	return readingflow.RunTask(ctx, readingflow.ModelSpec{
+	if bill, _ := ctx.Value(aiBillKey{}).(aiBill); bill.Kind == "" {
+		ctx = mergeAIBill(ctx, aiBill{Kind: "probe"})
+	}
+	return readingflow.RunTask(a.watchUsage(ctx), readingflow.ModelSpec{
 		Model:     model,
 		BaseURL:   baseURL,
 		APIKey:    apiKey,

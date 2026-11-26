@@ -56,7 +56,7 @@ App 路由现为 **76** 条（含公开 `GET /uploads/{name}`）、完整契约 
 
 2026-11-16 对照新 UI 补接口：
 - **个人档案**：`PUT /profile` 性别入库为女性 / 男性 / 其他 / 不愿透露；另接受「女」「男」。新增 `explore_preferences`（八项多选）。
-- **用户协议**：公开 `GET /legal`；管理端 `PUT /copy/legal`。未填 pending，不编造条款。
+- **用户协议**：公开 `GET /legal`，正文读仓库 `server/internal/tata/legal/*.md`（五语），按语言头返回；管理端只读 `GET /copy/legal`，不可写。
 - **好友邀请**：`GET /invites` 返回 public_id；登录可带 `invite_code`，或 `POST /invites/accept`。成功给邀请人 +3 次。`GET /campaigns/rewards` 返回真实到账，fields_confirmed=true。参与记录仍占位。
 - **78 张牌**：`GET /cards?deck=` 对应「查看全部 78 张」。
 - **自定义塔罗牌**：`GET/POST /custom-decks`、`GET/PUT /custom-decks/{id}`、`POST .../use`。图片 `POST /uploads?folder=custom`。

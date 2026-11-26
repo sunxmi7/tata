@@ -1,73 +1,103 @@
 package tata
 
 import (
+	"io/fs"
 	"net/http"
+	"path"
 	"strings"
+
+	"embed"
 )
+
+//go:embed legal/*.md
+var legalFS embed.FS
 
 const (
-	legalUserAgreementKey = "legal.user_agreement"
-	legalPrivacyPolicyKey = "legal.privacy_policy"
-	legalUserAgreement    = "用户协议"
-	legalPrivacyPolicy    = "隐私政策"
+	legalUserAgreement = "用户协议"
+	legalPrivacyPolicy = "隐私政策"
+	legalDocAgreement  = "user_agreement"
+	legalDocPrivacy    = "privacy_policy"
 )
 
-func (a *App) appLegal(w http.ResponseWriter, r *http.Request) error {
-	cfg, err := a.Store.configMap(r.Context(), "legal.")
+var legalBodies = map[string]map[string]string{} // kind -> lang -> body
+
+func init() {
+	entries, err := fs.ReadDir(legalFS, "legal")
 	if err != nil {
-		return err
+		panic("legal: " + err.Error())
 	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		kind, lang, ok := strings.Cut(name, ".")
+		if !ok || (kind != legalDocAgreement && kind != legalDocPrivacy) {
+			panic("legal: unexpected file " + e.Name())
+		}
+		if _, ok := supportedAppLanguages[lang]; !ok {
+			panic("legal: unsupported language in " + e.Name())
+		}
+		raw, err := legalFS.ReadFile(path.Join("legal", e.Name()))
+		if err != nil {
+			panic("legal " + e.Name() + ": " + err.Error())
+		}
+		body := strings.TrimSpace(string(raw))
+		if body == "" {
+			panic("legal: empty " + e.Name())
+		}
+		if legalBodies[kind] == nil {
+			legalBodies[kind] = map[string]string{}
+		}
+		legalBodies[kind][lang] = body
+	}
+	for _, kind := range []string{legalDocAgreement, legalDocPrivacy} {
+		for lang := range supportedAppLanguages {
+			if strings.TrimSpace(legalBodies[kind][lang]) == "" {
+				panic("legal: missing " + kind + "." + lang + ".md")
+			}
+		}
+	}
+}
+
+func legalBody(kind, lang string) string {
+	if body := legalBodies[kind][lang]; body != "" {
+		return body
+	}
+	return legalBodies[kind][defaultAppLanguage]
+}
+
+func (a *App) appLegal(w http.ResponseWriter, r *http.Request) error {
+	lang := AppLanguageFromContext(r.Context())
 	writeOK(w, map[string]any{
-		"user_agreement": legalDoc(r, legalUserAgreement, cfg[legalUserAgreementKey]),
-		"privacy_policy": legalDoc(r, legalPrivacyPolicy, cfg[legalPrivacyPolicyKey]),
+		"user_agreement": legalDoc(r, legalUserAgreement, legalBody(legalDocAgreement, lang)),
+		"privacy_policy": legalDoc(r, legalPrivacyPolicy, legalBody(legalDocPrivacy, lang)),
 	})
 	return nil
 }
 
 func legalDoc(r *http.Request, title, body string) map[string]any {
-	status := copyStatus(body)
-	if status == "pending" {
-		body = T(r.Context(), helpBodyPending)
-	}
 	return map[string]any{
-		"title": T(r.Context(), title), "body": body, "body_status": status,
+		"title": T(r.Context(), title), "body": body, "body_status": "ready",
 	}
 }
 
 func (a *App) copyLegal(w http.ResponseWriter, r *http.Request) error {
-	cfg, err := a.Store.configMap(r.Context(), "legal.")
-	if err != nil {
-		return err
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if lang == "" {
+		lang = AppLanguageFromContext(r.Context())
+	} else if _, ok := supportedAppLanguages[lang]; !ok {
+		lang = defaultAppLanguage
 	}
 	writeOK(w, map[string]any{
 		"kind": "legal",
+		"lang": lang,
 		"user_agreement": map[string]any{
-			"body": cfg[legalUserAgreementKey], "body_status": copyStatus(cfg[legalUserAgreementKey]),
+			"body": legalBody(legalDocAgreement, lang), "body_status": "ready",
 		},
 		"privacy_policy": map[string]any{
-			"body": cfg[legalPrivacyPolicyKey], "body_status": copyStatus(cfg[legalPrivacyPolicyKey]),
+			"body": legalBody(legalDocPrivacy, lang), "body_status": "ready",
 		},
 	})
-	return nil
-}
-
-func (a *App) putCopyLegal(r *http.Request) error {
-	var req struct {
-		UserAgreement string `json:"user_agreement"`
-		PrivacyPolicy string `json:"privacy_policy"`
-	}
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	if _, err := a.Store.Exec(r.Context(), `INSERT INTO app_config(key, value, updated_at) VALUES ($1,$2,now())
-		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
-		legalUserAgreementKey, strings.TrimSpace(req.UserAgreement)); err != nil {
-		return err
-	}
-	if _, err := a.Store.Exec(r.Context(), `INSERT INTO app_config(key, value, updated_at) VALUES ($1,$2,now())
-		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
-		legalPrivacyPolicyKey, strings.TrimSpace(req.PrivacyPolicy)); err != nil {
-		return err
-	}
 	return nil
 }

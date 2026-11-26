@@ -389,6 +389,11 @@ func (a *App) executeInterpret(id int64) {
 	}
 	jobCtx, cancel := context.WithTimeout(bg, wait)
 	defer cancel()
+	uid := int64(0)
+	if userID != nil {
+		uid = *userID
+	}
+	jobCtx = mergeAIBill(jobCtx, aiBill{UserID: uid, ReadingID: id, JobID: run.jobID, Kind: "interpret"})
 
 	lastWrite := time.Now().Add(-time.Second)
 	_, _, text, callErr := a.runEinoStream(jobCtx, taskFor(kind), prompt, func(chunk string) error {
@@ -441,6 +446,9 @@ func (a *App) executeDetect(id int64, question string) {
 	run := a.jobs().ensure(key)
 	bg := context.Background()
 	run.jobID = a.insertAIJob(bg, "detect", id, 0, 0, 0)
+	var uid int64
+	_ = a.Store.QueryRow(bg, `SELECT COALESCE(user_id, 0) FROM readings WHERE id=$1`, id).Scan(&uid)
+	bg = mergeAIBill(bg, aiBill{UserID: uid, ReadingID: id, JobID: run.jobID, Kind: "detect"})
 	lastWrite := time.Now().Add(-time.Second)
 	vendor, model, output, callErr := a.runEinoStream(bg, "detect", question, func(chunk string) error {
 		partial := run.appendDelta(chunk)
@@ -489,6 +497,7 @@ func (a *App) executeFollowup(readingID, uid, turn int64, text string) {
 	run := a.jobs().ensure(key)
 	bg := context.Background()
 	run.jobID = a.insertAIJob(bg, "followup", readingID, uid, 0, int(turn))
+	bg = mergeAIBill(bg, aiBill{JobID: run.jobID})
 	lastWrite := time.Now().Add(-time.Second)
 	body, err := a.answerFollowupStreaming(bg, readingID, uid, turn, text, func(chunk string) error {
 		partial := run.appendDelta(chunk)
@@ -554,6 +563,7 @@ func (a *App) executeYearly(uid int64, year int, row yearlyRow) {
 		return
 	}
 	run.jobID = a.insertAIJob(bg, "yearly", 0, uid, year, 0)
+	bg = mergeAIBill(bg, aiBill{UserID: uid, JobID: run.jobID, Kind: "yearly"})
 	prompt := buildYearlyPrompt(year, row.birthDate, row.birthTime, row.birthPlace, row.gender, row.rhythmJSON, row.domainJSON)
 	lastWrite := time.Now().Add(-time.Second)
 	_, _, text, callErr := a.runEinoStream(bg, "interpret", prompt, func(chunk string) error {

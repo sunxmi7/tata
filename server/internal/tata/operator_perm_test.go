@@ -23,6 +23,7 @@ func TestAdminModuleOf(t *testing.T) {
 		"/api/admin/v1/quota-params":          adminModuleAI,
 		"/api/admin/v1/workflow/simulate":     adminModuleAI,
 		"/api/admin/v1/readings/3/retry":      adminModuleRecords,
+		"/api/admin/v1/readings/3/usages":     adminModuleRecords,
 		"/api/admin/v1/ledger":                adminModuleRecords,
 		"/api/admin/v1/wishlists":             adminModuleRecords,
 		"/api/admin/v1/feedback":              adminModuleRecords,

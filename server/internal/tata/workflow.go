@@ -32,6 +32,7 @@ func (a *App) adminSimulate(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, true); err != nil {
 		return err
 	}
+	r = r.WithContext(mergeAIBill(r.Context(), aiBill{Kind: "simulate"}))
 	var before int
 	_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings`).Scan(&before)
 	var req struct {
@@ -69,7 +70,8 @@ func (a *App) adminSimulate(w http.ResponseWriter, r *http.Request) error {
 	if req.Step != "" {
 		return a.simulateOne(w, r, req.Step, req.Question, cards, persona)
 	}
-	out, err := readingflow.RunWorkflow(r.Context(), a.workflowSpecs(r.Context()), readingflow.Input{
+	ctx := a.watchUsage(r.Context())
+	out, err := readingflow.RunWorkflow(ctx, a.workflowSpecs(ctx), readingflow.Input{
 		Question: req.Question,
 		Cards:    cards,
 		Persona:  persona,
@@ -101,7 +103,7 @@ func (a *App) adminSimulate(w http.ResponseWriter, r *http.Request) error {
 			"body": map[string]any{
 				"steps": []string{"detect", "rewrite", "recommend", "interpret"},
 			},
-			"note": "App 在牌面固定前调用检测、改写、推荐；牌面固定后调用 interpret。interpret 才会写入解读。模拟流程不写库、不扣费。",
+			"note": "App 在牌面固定前调用检测、改写、推荐；牌面固定后调用 interpret。interpret 才会写入解读。模拟流程不写占卜记录、不扣用户额度。供应商返回的 token 仍记入 ai_usages。",
 		},
 		"steps": steps,
 	})
@@ -175,6 +177,7 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
+	r = r.WithContext(mergeAIBill(r.Context(), aiBill{UserID: uid, ReadingID: id}))
 	var req struct {
 		Steps []string `json:"steps"`
 	}

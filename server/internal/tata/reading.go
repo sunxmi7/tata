@@ -60,6 +60,9 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 		attachConversationMeta(item, today)
 		a.localizeReading(r.Context(), item)
 	}
+	if err := a.attachReadingTokenTotals(r.Context(), items...); err != nil {
+		return err
+	}
 	writeOK(w, items)
 	return nil
 }
@@ -74,6 +77,9 @@ func (a *App) adminGetReading(w http.ResponseWriter, r *http.Request) error {
 	}
 	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
+		return err
+	}
+	if err := a.attachReadingTokenTotals(r.Context(), item); err != nil {
 		return err
 	}
 	writeOK(w, item)

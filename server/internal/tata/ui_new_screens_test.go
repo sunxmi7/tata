@@ -1,34 +1,57 @@
 package tata
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
 func TestUINewScreensAPIs(t *testing.T) {
 	store, ts := newMergeServer(t)
-	_, _ = store.Exec(t.Context(), `DELETE FROM app_config WHERE key LIKE 'legal.%'`)
-	t.Cleanup(func() {
-		_, _ = store.Exec(context.Background(), `DELETE FROM app_config WHERE key LIKE 'legal.%'`)
-	})
 
 	legal := listOne(t, ts, "", "/api/app/v1/legal")
 	agree, _ := legal["user_agreement"].(map[string]any)
 	privacy, _ := legal["privacy_policy"].(map[string]any)
-	if agree["title"] != "用户协议" || agree["body_status"] != "pending" || privacy["title"] != "隐私政策" {
-		t.Fatalf("legal pending: %#v", legal)
+	if agree["title"] != "用户协议" || agree["body_status"] != "ready" || privacy["title"] != "隐私政策" {
+		t.Fatalf("legal zh-Hans: %#v", legal)
+	}
+	if !strings.Contains(fmt.Sprint(agree["body"]), "用户服务协议") || !strings.Contains(fmt.Sprint(privacy["body"]), "隐私政策") {
+		t.Fatalf("legal body from md: agree=%q privacy=%q", agree["body"], privacy["body"])
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/app/v1/legal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Language", "en")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	enAgree, _ := env.Data["user_agreement"].(map[string]any)
+	if enAgree["title"] != "User Agreement" || !strings.Contains(fmt.Sprint(enAgree["body"]), "Terms of Service") {
+		t.Fatalf("legal en: %#v", env.Data)
 	}
 
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/legal", map[string]any{
-		"user_agreement": "协议正文。", "privacy_policy": "隐私正文。",
-	})
-	legal = listOne(t, ts, "", "/api/app/v1/legal")
-	agree, _ = legal["user_agreement"].(map[string]any)
-	if agree["body"] != "协议正文。" || agree["body_status"] != "ready" {
-		t.Fatalf("legal ready: %#v", legal)
+	if msg, _ := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/copy/legal", map[string]any{
+		"user_agreement": "x", "privacy_policy": "y",
+	}); !strings.Contains(msg, "文案类型") {
+		t.Fatalf("legal put disabled: %q", msg)
+	}
+	adminLegal := listOne(t, ts, admin.access, "/api/admin/v1/copy/legal?lang=en")
+	adminAgree, _ := adminLegal["user_agreement"].(map[string]any)
+	if adminLegal["lang"] != "en" || !strings.Contains(fmt.Sprint(adminAgree["body"]), "Terms of Service") {
+		t.Fatalf("admin legal read: %#v", adminLegal)
 	}
 
 	inviter, inviterID := registerUser(t, ts, store, "inviter")

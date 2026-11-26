@@ -259,7 +259,7 @@ func (a *App) adminProbeVendor(w http.ResponseWriter, r *http.Request) error {
 	if len(modelList) == 0 {
 		return biz("没有模型")
 	}
-	if _, err := a.einoChat(r.Context(), base, plain, modelList[0], timeout, "连通性探测", "ping"); err != nil {
+	if _, err := a.einoChat(mergeAIBill(r.Context(), aiBill{Kind: "probe", Vendor: name}), base, plain, modelList[0], timeout, "连通性探测", "ping"); err != nil {
 		return biz("连通性探测失败")
 	}
 	a.Store.audit(r.Context(), act.id, "probe", "vendor", fmtID(id), name)

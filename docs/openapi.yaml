@@ -736,6 +736,125 @@ components:
               description: 占卜数组。无记录时为空数组。
               items:
                 $ref: "#/components/schemas/Reading"
+    AdminReading:
+      allOf:
+        - $ref: "#/components/schemas/Reading"
+        - type: object
+          required: [prompt_tokens, completion_tokens, total_tokens]
+          description: |
+            管理端占卜。三列 token 是该 reading_id 在 ai_usages 上的合计，
+            含解读、检测、改写、追问，以及失败但仍返回用量的调用。没有调用时为 0。
+          properties:
+            prompt_tokens:
+              type: integer
+              description: 输入 token 合计。
+            completion_tokens:
+              type: integer
+              description: 输出 token 合计。
+            total_tokens:
+              type: integer
+              description: 供应商返回的 total_tokens 合计。
+    AdminReadingOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/AdminReading"
+    AdminReadingUsageStep:
+      type: object
+      required: [id, kind, kind_label, task, prompt_tokens, completion_tokens, total_tokens, price_minor]
+      description: 一条占卜里的一次模型调用。price_minor 在模型单价未配置时为 null，不编造金额。
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          description: interpret、detect、rewrite、followup 等。
+        kind_label:
+          type: string
+          description: 步骤中文名。
+        task:
+          type: string
+          description: 绑定任务。
+        vendor_name:
+          type: string
+        model_name:
+          type: string
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        cached_tokens:
+          type: integer
+        reasoning_tokens:
+          type: integer
+        ok:
+          type: boolean
+          description: 调用是否成功。失败但仍有用量时 token 仍计入。
+        created_at:
+          type: string
+          format: date-time
+        price_minor:
+          type: integer
+          nullable: true
+          description: 这一步的价格，最小货币单位。单价未配置时为 null。
+        price_currency:
+          type: string
+          nullable: true
+    AdminReadingUsages:
+      type: object
+      required: [reading_id, question, prompt_tokens, completion_tokens, total_tokens, price_minor, steps]
+      properties:
+        reading_id:
+          type: integer
+          format: int64
+        question:
+          type: string
+          description: 会话标题，即用户问题。可为空字符串。
+        prompt_tokens:
+          type: integer
+          description: 各步骤输入 token 合计。
+        completion_tokens:
+          type: integer
+          description: 各步骤输出 token 合计。
+        total_tokens:
+          type: integer
+          description: 各步骤 total_tokens 合计。
+        price_minor:
+          type: integer
+          nullable: true
+          description: 各步骤价格合计。任一步单价未配置时为 null。
+        price_currency:
+          type: string
+          nullable: true
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminReadingUsageStep"
+    AdminReadingUsagesOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/AdminReadingUsages"
+    AdminReadingListOK:
+      allOf:
+        - $ref: "#/components/schemas/SuccessMeta"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              description: 管理端占卜数组。无记录时为空数组。
+              items:
+                $ref: "#/components/schemas/AdminReading"
     ReadingPage:
       type: object
       description: GET /readings 的 data。游标分页。
@@ -1959,22 +2078,41 @@ components:
           description: 创建时间，RFC3339。
     CalendarItem:
       type: object
+      description: |
+        日历一条占卜。四类 type 都会出现：daily / normal / tarotist / explore。
+        探索用 conversation_type（moment/theme）或 theme_key 细分。
       properties:
         id:
           type: integer
           format: int64
           description: 占卜 id。
-        user_id:
-          type: integer
-          format: int64
-          nullable: true
-          description: 归属用户。未登录为 null。
         type:
           type: string
-          description: normal、tarotist、explore、daily。
+          enum: [normal, tarotist, explore, daily]
+          description: 底层业务类型。四类均进日历。
         type_label:
           type: string
           description: 今日一牌 / 普通占卜 / 占卜师 / 探索。未知 type 为空。
+        theme_key:
+          type: string
+          description: 探索主题键；非 explore 多为空字符串。
+        conversation_type:
+          type: string
+          enum: ['', daily, moment, theme]
+          description: 与历史列表相同。
+        conversation_label:
+          type: string
+          description: 展示名。
+        stage:
+          type: string
+          description: 阶段键。
+        stage_label:
+          type: string
+          description: 阶段中文。
+        target:
+          type: string
+          enum: [today, tomorrow, '']
+          description: 仅 daily 有意义。
         question:
           type: string
           description: 问题原文。无则为空。
@@ -1986,7 +2124,7 @@ components:
           description: COMPLETED 为「已解读」，其余为「待继续」。与历史列表相同。
         business_date:
           type: string
-          description: YYYY-MM-DD。
+          description: YYYY-MM-DD。日历按此字段归天、打点。
         progress:
           type: string
           description: 进度文案。
@@ -2040,10 +2178,12 @@ components:
           description: 占卜师头像。未配置为 null。
     CalendarView:
       type: object
+      description: GET /calendar 的 data。days 含该用户全部未删占卜（含 explore）。
+      required: [days, cycle, tomorrow_date]
       properties:
         days:
           type: array
-          description: 当月有记录的日期项。无记录时为空数组。
+          description: 占卜条目扁平列表。无记录时为空数组。
           items:
             $ref: "#/components/schemas/CalendarItem"
         cycle:
@@ -4354,10 +4494,11 @@ components:
           type: string
         body:
           type: string
-          description: 未配置时为「待确认」。
+          description: Markdown 正文，按请求语言从仓库 legal 文档读取。
         body_status:
           type: string
           enum: [pending, ready]
+          description: 协议正文固定 ready。
     CustomDeck:
       type: object
       properties:
@@ -5049,8 +5190,8 @@ paths:
       operationId: appLegal
       summary: 用户协议与隐私政策
       description: |
-        公开，不需要登录。正文取 app_config legal.user_agreement / legal.privacy_policy。
-        未配置时 body=待确认、body_status=pending，不编造条款。管理端 PUT /copy/legal 填写。
+        公开，不需要登录。正文来自仓库 `server/internal/tata/legal/*.md`，按 Accept-Language / X-Language 返回对应语言（zh-Hans / zh-Hant / en / ja / ko）。
+        body_status 恒为 ready；管理端不可写入，仅 GET /copy/legal 可读。
       responses:
         "200":
           description: data 为 LegalDocs。
@@ -5724,9 +5865,10 @@ paths:
       operationId: appCalendar
       summary: 日历
       description: |
-        必须登录。data 为 {days, cycle, tomorrow_date}。days 只含未删除且 business_date 非空的记录。
-        month 按前缀匹配，例如 2026-10。type 可按 normal/tarotist/explore/daily 过滤。
-        日详情字段与定稿 574:2 对齐：今日一牌含牌名/正逆位/短文/缩略图；普通占卜含多张缩略图；占卜师含姓名与头像；时分取 created_at。
+        必须登录。data 为 {days, cycle, tomorrow_date}。
+        全部占卜都进日历：normal / tarotist / explore / daily（未删除且 business_date 非空）；不传 type=全部。
+        month 按前缀匹配，例如 2026-10。type 可按四类过滤。
+        日详情字段与定稿 574:2 对齐；另带 conversation_* / theme_key。
         不返回完整牌面 JSON 与解读正文，短文从 interpretation 截取，不编造。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -7476,7 +7618,7 @@ paths:
         kind 为 yearly、cards、help、campaigns、decks、legal。
         年运存在 app_config（yearly.{year}.{section}）。单牌目录在 cards 表；GET/PUT copy/cards 仍可用，写 yi/thumbnail 进 cards，模板/默认图仍在 app_config。
         牌组风格在 decks 表（含 description / tags）；帮助、活动改已有表。会员专属活动文案在 iap_skus.copy，不走本接口。
-        legal 读写 app_config legal.user_agreement / legal.privacy_policy，给登录页协议链接。未填 App 返回 pending。
+        legal 只读：正文来自仓库 legal/*.md，可选 query lang（zh-Hans / zh-Hant / en / ja / ko），缺省按 Accept-Language。
         cards 的 data 含 thumbnail_template、thumbnail_default 与固定 78 张 items（deck() 顺序）。完整目录含新建项见 GET /api/admin/v1/cards。
       parameters:
         - $ref: "#/components/parameters/Authorization"
@@ -7492,6 +7634,13 @@ paths:
           schema:
             type: integer
           description: 仅 yearly。缺省为当前年（北京时间）。
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [zh-Hans, zh-Hant, en, ja, ko]
+          description: 仅 legal。缺省按 Accept-Language / X-Language。
       responses:
         "200":
           description: data 随 kind 变化。
@@ -7510,7 +7659,7 @@ paths:
       tags: [管理端内容]
       operationId: adminPutCopy
       summary: 保存运营文案
-      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格（name/cover_url|thumbnail/back_url/description/tags）与可选 faces[{card_id,image_url}]（写入 deck_faces，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表；legal 写 app_config 协议正文。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
+      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格（name/cover_url|thumbnail/back_url/description/tags）与可选 faces[{card_id,image_url}]（写入 deck_faces，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表。legal 不可写（改仓库 md）。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind
@@ -7518,7 +7667,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [yearly, cards, help, campaigns, decks, legal]
+            enum: [yearly, cards, help, campaigns, decks]
       requestBody:
         required: true
         content:
@@ -7659,7 +7808,9 @@ paths:
       tags: [管理端内容]
       operationId: adminListReadings
       summary: 占卜记录
-      description: 含已删除。最多 100 条，按 updated_at 降序。无分页参数。
+      description: |
+        含已删除。最多 100 条，按 updated_at 降序。无分页参数。
+        每条附带 prompt_tokens、completion_tokens、total_tokens，是该占卜全部模型调用的合计。没有调用时为 0。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: user_id
@@ -7686,11 +7837,11 @@ paths:
             type: string
       responses:
         "200":
-          description: data 为 Reading 数组。
+          description: data 为 AdminReading 数组。
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReadingListOK"
+                $ref: "#/components/schemas/AdminReadingListOK"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/readings/{id}:
@@ -7698,6 +7849,7 @@ paths:
       tags: [管理端内容]
       operationId: adminGetReading
       summary: 占卜详情
+      description: 含该占卜的 token 合计，口径与列表相同。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -7708,7 +7860,29 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: "#/components/schemas/ReadingOK"
+                  - $ref: "#/components/schemas/AdminReadingOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/readings/{id}/usages:
+    get:
+      tags: [管理端内容]
+      operationId: adminReadingUsages
+      summary: 一条占卜的分步 token
+      description: |
+        按调用时间顺序列出这次会话的每一次模型调用。
+        合计是这些步骤相加。价格在模型单价未配置时为 null，不编造金额。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: 占卜不存在时「记录不存在」。没有调用时 steps 为空数组，合计为 0。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AdminReadingUsagesOK"
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"

@@ -508,11 +508,6 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		a.Store.audit(r.Context(), act.id, "update", "copy", kind, code)
-	case "legal":
-		if err := a.putCopyLegal(r); err != nil {
-			return err
-		}
-		a.Store.audit(r.Context(), act.id, "update", "copy", kind, "legal")
 	default:
 		return biz("文案类型不正确")
 	}

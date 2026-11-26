@@ -827,6 +827,29 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
 );
 CREATE INDEX IF NOT EXISTS ai_jobs_reading_kind_idx ON ai_jobs (reading_id, kind, id DESC);
 CREATE INDEX IF NOT EXISTS ai_jobs_yearly_idx ON ai_jobs (user_id, yearly_year, kind, id DESC);
+CREATE TABLE IF NOT EXISTS ai_usages (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT,
+  reading_id BIGINT,
+  job_id BIGINT,
+  task TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT '',
+  vendor_name TEXT NOT NULL DEFAULT '',
+  model_name TEXT NOT NULL DEFAULT '',
+  prompt_tokens INT NOT NULL DEFAULT 0,
+  completion_tokens INT NOT NULL DEFAULT 0,
+  total_tokens INT NOT NULL DEFAULT 0,
+  cached_tokens INT NOT NULL DEFAULT 0,
+  reasoning_tokens INT NOT NULL DEFAULT 0,
+  ok BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT ai_usages_tokens_chk CHECK (
+    prompt_tokens >= 0 AND completion_tokens >= 0 AND total_tokens >= 0
+    AND cached_tokens >= 0 AND reasoning_tokens >= 0
+  )
+);
+CREATE INDEX IF NOT EXISTS ai_usages_user_created_idx ON ai_usages (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_usages_model_created_idx ON ai_usages (model_name, created_at DESC);
 CREATE TABLE IF NOT EXISTS preset_questions (
   question_id TEXT PRIMARY KEY,
   pool TEXT NOT NULL,
@@ -1045,6 +1068,10 @@ COMMENT ON COLUMN preset_questions.category IS '场景中文名，与文档一�
 COMMENT ON COLUMN ai_jobs.kind IS 'interpret / detect / followup / yearly。';
 COMMENT ON COLUMN ai_jobs.status IS 'queued / running / succeeded / failed。';
 COMMENT ON COLUMN ai_jobs.partial_text IS '流式过程中的已产出文本，供重连回放。';
+COMMENT ON TABLE ai_usages IS '一次模型调用的供应商 token。prompt 为输入，completion 为输出，cached 是输入里的缓存命中，reasoning 是输出里的思考 token。不存金额，算钱时按模型单价另算。';
+COMMENT ON COLUMN ai_usages.task IS '绑定任务：detect/rewrite/recommend/interpret/tarotist。连通性探测走 interpret 模板，task 仍是 interpret。';
+COMMENT ON COLUMN ai_usages.kind IS '业务：interpret、detect、followup、yearly、rewrite、probe、simulate。空则与 task 相同。';
+COMMENT ON COLUMN ai_usages.ok IS '调用是否成功。失败但供应商已返回 usage 时仍为 false，token 仍计入成本。';
 COMMENT ON COLUMN readings.cards IS 'JSON 牌面。灵数抽牌 numbers 映射 Rider-Waite 后写入。';
 COMMENT ON TABLE reading_messages IS '解读追问对话。对应 GET /readings/{id} 的 messages、followups。';
 

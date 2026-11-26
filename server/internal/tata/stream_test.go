@@ -33,7 +33,7 @@ func TestInterpretStream(t *testing.T) {
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/interpret",
 		map[string]any{"vendor_id": vendor["id"], "model": "demo"})
 
-	token, _ := registerUser(t, ts, store, "stream")
+	token, uid := registerUser(t, ts, store, "stream")
 	rd := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "我该怎么选？", "type": "normal"})
 	id := int64(rd["id"].(float64))
 	// 直接推进到 CARDS_FIXED 且额度已结算，专注验证流式生成。
@@ -75,6 +75,58 @@ func TestInterpretStream(t *testing.T) {
 	}
 	if status != "COMPLETED" || interp == nil || *interp == "" {
 		t.Fatalf("db not completed: status=%s interp=%v", status, interp)
+	}
+	var task, kind, vendorName, modelName string
+	var prompt, completion, total, cached, reasoning int
+	var gotUser int64
+	var ok bool
+	if err := store.QueryRow(t.Context(), `SELECT task, kind, vendor_name, model_name, prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, user_id, ok
+		FROM ai_usages WHERE reading_id=$1 ORDER BY id DESC LIMIT 1`, id).
+		Scan(&task, &kind, &vendorName, &modelName, &prompt, &completion, &total, &cached, &reasoning, &gotUser, &ok); err != nil {
+		t.Fatal(err)
+	}
+	if task != "interpret" || kind != "interpret" || vendorName != "流式演示" || modelName != "demo" || !ok || gotUser != uid {
+		t.Fatalf("usage row: task=%s kind=%s vendor=%s model=%s ok=%v user=%d", task, kind, vendorName, modelName, ok, gotUser)
+	}
+	if prompt < 1 || completion < 1 || total != prompt+completion || cached != prompt/5 || reasoning != 0 {
+		t.Fatalf("vendor tokens: prompt=%d completion=%d total=%d cached=%d reasoning=%d", prompt, completion, total, cached, reasoning)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO ai_usages(reading_id, user_id, task, kind, vendor_name, model_name, prompt_tokens, completion_tokens, total_tokens)
+		VALUES ($1,$2,'tarotist','followup','流式演示','demo',10,4,14)`, id, uid); err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]any{}
+	for _, row := range list(t, ts, admin.access, "/api/admin/v1/readings") {
+		if asID(row["id"]) == id {
+			found = row
+			break
+		}
+	}
+	if asID(found["prompt_tokens"]) != int64(prompt+10) || asID(found["completion_tokens"]) != int64(completion+4) || asID(found["total_tokens"]) != int64(total+14) {
+		t.Fatalf("admin list tokens: %#v", found)
+	}
+	one := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/readings/%d", id))
+	if asID(one["prompt_tokens"]) != int64(prompt+10) || asID(one["total_tokens"]) != int64(total+14) {
+		t.Fatalf("admin detail tokens: %#v", one)
+	}
+	usage := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/readings/%d/usages", id))
+	if asID(usage["total_tokens"]) != int64(total+14) || usage["price_minor"] != nil {
+		t.Fatalf("usage summary: %#v", usage)
+	}
+	steps, _ := usage["steps"].([]any)
+	if len(steps) != 2 {
+		t.Fatalf("steps: %#v", usage["steps"])
+	}
+	labels := map[string]bool{}
+	for _, raw := range steps {
+		step := raw.(map[string]any)
+		labels[step["kind_label"].(string)] = true
+		if step["price_minor"] != nil {
+			t.Fatalf("step price invented: %#v", step)
+		}
+	}
+	if !labels["解读"] || !labels["追问"] {
+		t.Fatalf("step labels: %#v", usage["steps"])
 	}
 }
 

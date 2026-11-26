@@ -675,6 +675,7 @@ func (a *App) answerFollowup(ctx context.Context, readingID, uid, turn int64, te
 		return nil, biz("牌面尚未固定")
 	}
 	prompt := a.personaPrompt(ctx, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
+	ctx = mergeAIBill(ctx, aiBill{UserID: uid, ReadingID: readingID, Kind: "followup"})
 	_, _, output, err := a.runEino(ctx, "tarotist", prompt)
 	if err != nil {
 		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣额度", "cards_unchanged": true, "bubbles": []string{}}, nil
@@ -720,6 +721,7 @@ func (a *App) answerFollowupStreaming(ctx context.Context, readingID, uid, turn 
 		return nil, biz("牌面尚未固定")
 	}
 	prompt := a.personaPrompt(ctx, tarotistID, uid) + "\n问题：" + question + "\n牌面：" + *cards + "\n追问：" + text + "\n不要改牌。把回答拆成不超过四个短气泡，气泡之间用空行分隔。"
+	ctx = mergeAIBill(ctx, aiBill{UserID: uid, ReadingID: readingID, Kind: "followup"})
 	_, _, output, err := a.runEinoStream(ctx, "tarotist", prompt, onChunk)
 	if err != nil {
 		return map[string]any{"turn_id": turn, "error": "生成失败，可重试，未重新扣额度", "cards_unchanged": true, "bubbles": []string{}}, nil
@@ -1698,7 +1700,7 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 		label, next := progressOf(status)
 		item := map[string]any{
 			"id": id, "type": typ, "question": question, "status": status, "business_date": day,
-			"theme_key": themeKey,
+			"theme_key":  themeKey,
 			"has_result": status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE",
 			"progress":   label, "continue": next, "updated_at": updated, "created_at": created,
 			"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,

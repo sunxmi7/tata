@@ -20,8 +20,8 @@
 | 抽牌 / 灵数 | `595:868`…`595:637` | `POST /readings` 及子资源；`draw` 接受 `mode=numerology` | 已确认 |
 | 牌阵 | `595:95` / `595:5054` | `GET /spreads` 含 recommended / thumbnail；`POST /readings/{id}/spread` | 已确认 |
 | 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label；`conversation_type`=`daily`/`moment`/`theme` + `stage`/`stage_label`；explore 可传 `theme_key`）`GET /readings/{id}`（进度+messages）`DELETE /readings/{id}` | 已确认 |
-| 日历筛选 | `574:306` | `GET /calendar?type=` | 已确认 |
-| 日历日详情 | `574:2` | `GET /calendar` 项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at | 已确认 |
+| 日历筛选 | `574:306` | `GET /calendar?type=`（normal/tarotist/explore/daily；不传=全部） | 已确认 |
+| 日历日详情 | `574:2` | `GET /calendar`：**全部占卜都进**（含 explore）；项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at、conversation_* | 已确认 |
 | 今日一牌 | 首页 / `POST /daily` | `card_name` / `yi` / `card_thumbnail` / `short_text`；没配图出默认牌背 | 已确认 |
 | 塔塔币 / 会员 | `565:1904` / `593:1905` | `GET /iap/skus` 档位与权益结构已齐；价为种子/管理端值 | 已确认 |
 | 兑换码 | `565:2024` | `POST /redeem` `GET /redeem/records` | 已确认（记录行未定稿，可空） |

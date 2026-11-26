@@ -256,8 +256,9 @@
 - [ ] `POST /api/app/v1/daily` `{"target":"today"}`
 - [ ] `POST /api/app/v1/daily` `{"target":"tomorrow"}`：明日运势；再抽应复用、不重复扣
 - [ ] target 乱填，应「目标日期不正确」
-- [ ] `GET /api/app/v1/calendar`：当月有点
+- [ ] `GET /api/app/v1/calendar`：当月有点；normal / tarotist / explore / daily 都会出现（全部占卜进日历）
 - [ ] `GET /api/app/v1/calendar?type=daily`：能过滤
+- [ ] `GET /api/app/v1/calendar?type=explore`：探索（此刻抉择/主题占卜）能单独筛出
 
 ---
 

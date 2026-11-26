@@ -76,6 +76,7 @@ func (a *App) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/admin/v1/readings", a.h(a.adminListReadings))
 	mux.HandleFunc("GET /api/admin/v1/readings/{id}", a.h(a.adminGetReading))
+	mux.HandleFunc("GET /api/admin/v1/readings/{id}/usages", a.h(a.adminReadingUsages))
 	mux.HandleFunc("POST /api/admin/v1/readings/{id}/retry", a.h(a.adminRetry))
 	mux.HandleFunc("POST /api/admin/v1/workflow/simulate", a.h(a.adminSimulate))
 

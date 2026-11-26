@@ -197,14 +197,24 @@ func TestCalendarTypeFilter(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, uid := registerUser(t, ts, store, "caltype")
 	day := time.Now().Format("2006-01-02")
-	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date)
-		VALUES ($1,'normal','普通','COMPLETED',$2), ($1,'tarotist','占卜师','COMPLETED',$2)`, uid, day); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, theme_key)
+		VALUES ($1,'normal','普通','COMPLETED',$2,''),
+		($1,'tarotist','占卜师','COMPLETED',$2,''),
+		($1,'explore','要不要去','COMPLETED',$2,'yes_or_no'),
+		($1,'daily','今日一牌','COMPLETED',$2,'')`, uid, day); err != nil {
 		t.Fatal(err)
 	}
 	all := listOne(t, ts, token, "/api/app/v1/calendar")
 	days, _ := all["days"].([]any)
-	if len(days) < 2 {
-		t.Fatalf("all days: %#v", all)
+	seen := map[string]bool{}
+	for _, raw := range days {
+		row := raw.(map[string]any)
+		seen[fmt.Sprint(row["type"])] = true
+	}
+	for _, want := range []string{"normal", "tarotist", "explore", "daily"} {
+		if !seen[want] {
+			t.Fatalf("calendar missing %s: %#v", want, all)
+		}
 	}
 	filtered := listOne(t, ts, token, "/api/app/v1/calendar?type=tarotist")
 	only, _ := filtered["days"].([]any)
@@ -214,6 +224,15 @@ func TestCalendarTypeFilter(t *testing.T) {
 	row := only[0].(map[string]any)
 	if row["type"] != "tarotist" {
 		t.Fatalf("row: %#v", row)
+	}
+	explore := listOne(t, ts, token, "/api/app/v1/calendar?type=explore")
+	expDays, _ := explore["days"].([]any)
+	if len(expDays) != 1 {
+		t.Fatalf("explore filter: %#v", explore)
+	}
+	exp := expDays[0].(map[string]any)
+	if exp["type"] != "explore" || exp["conversation_type"] != "moment" || exp["conversation_label"] != "此刻抉择" {
+		t.Fatalf("explore row: %#v", exp)
 	}
 	msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/calendar?type=nope", nil)
 	if !strings.Contains(msg, "type") {

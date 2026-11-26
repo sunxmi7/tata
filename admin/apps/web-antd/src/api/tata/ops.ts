@@ -59,6 +59,9 @@ export interface ReadingRow {
   vendor_name?: string | null;
   model_name?: string | null;
   fail_reason?: string | null;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
 }
 
 export interface LedgerDraw {
@@ -158,8 +161,40 @@ export interface GrantList {
   invite_remaining?: number;
 }
 
+export interface ReadingUsageStep {
+  id: number;
+  kind: string;
+  kind_label: string;
+  task: string;
+  vendor_name: string;
+  model_name: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_tokens: number;
+  reasoning_tokens: number;
+  ok: boolean;
+  created_at: string;
+  price_minor: number | null;
+  price_currency: string | null;
+}
+
+export interface ReadingUsageDetail {
+  reading_id: number;
+  question: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  price_minor: number | null;
+  price_currency: string | null;
+  steps: ReadingUsageStep[];
+}
+
 export function listReadings() {
   return requestClient.get<ReadingRow[]>('/readings');
+}
+export function getReadingUsages(id: number) {
+  return requestClient.get<ReadingUsageDetail>(`/readings/${id}/usages`);
 }
 export function retryReading(id: number) {
   return requestClient.post(`/readings/${id}/retry`);
