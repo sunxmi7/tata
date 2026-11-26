@@ -8,17 +8,31 @@ import { useVbenModal } from '@vben/common-ui';
 import { message } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
-import { fileListFromURL, fileListToURL, imageUploadProps } from '#/api/core/upload';
 import { createSpread, updateSpread } from '#/api/tata';
+
+type SpreadFormPayload = {
+  mode?: 'explore' | 'ordinary';
+  spread?: null | Spread;
+};
 
 const emit = defineEmits(['success']);
 const formData = ref<null | Spread>(null);
+const formMode = ref<'explore' | 'ordinary'>('ordinary');
 
-const getTitle = computed(() => (formData.value?.id ? '编辑牌阵' : '新建牌阵'));
+const getTitle = computed(() => {
+  const kind = formMode.value === 'explore' ? '探索牌阵' : '普通占卜牌阵';
+  return formData.value?.id ? `编辑${kind}` : `新建${kind}`;
+});
 
 const [Form, formApi] = useVbenForm({
   layout: 'vertical',
   schema: [
+    {
+      component: 'Input',
+      fieldName: '_mode',
+      formItemClass: 'hidden',
+      hideLabel: true,
+    },
     {
       component: 'Input',
       fieldName: 'name',
@@ -56,26 +70,47 @@ const [Form, formApi] = useVbenForm({
         ],
       },
       defaultValue: '',
+      dependencies: {
+        show: (values) => values._mode !== 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'depth_group',
       label: '普通占卜分组',
     },
     {
       component: 'Input',
+      dependencies: {
+        show: (values) => values._mode === 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'theme_key',
       label: '探索主题键',
+      rules: 'required',
     },
     {
       component: 'Input',
+      dependencies: {
+        show: (values) => values._mode === 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'theme_title',
       label: '探索主题',
     },
     {
       component: 'Input',
+      dependencies: {
+        show: (values) => values._mode === 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'theme_subtitle',
       label: '主题副标题',
     },
     {
       component: 'Input',
+      dependencies: {
+        show: (values) => values._mode === 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'short_sentence',
       label: '一句说明',
     },
@@ -83,7 +118,7 @@ const [Form, formApi] = useVbenForm({
       component: 'Switch',
       defaultValue: false,
       fieldName: 'quota_priced',
-      label: '已标额度扣次',
+      label: '已标额度消耗',
     },
     {
       component: 'InputNumber',
@@ -91,18 +126,7 @@ const [Form, formApi] = useVbenForm({
         min: 0,
       },
       fieldName: 'quota_cost',
-      label: '额度扣次',
-    },
-    {
-      component: 'Upload',
-      componentProps: imageUploadProps('spreads'),
-      fieldName: 'thumbnail',
-      label: '示意图',
-      renderComponentContent: () => {
-        return {
-          default: () => '上传图片',
-        };
-      },
+      label: '额度消耗',
     },
     {
       component: 'Textarea',
@@ -122,6 +146,10 @@ const [Form, formApi] = useVbenForm({
         rows: 4,
       },
       defaultValue: '',
+      dependencies: {
+        show: (values) => values._mode === 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'quickQuestionsText',
       label: '快捷问题',
     },
@@ -134,12 +162,10 @@ const [Form, formApi] = useVbenForm({
     {
       component: 'Switch',
       defaultValue: false,
-      fieldName: 'recommended',
-      label: '推荐',
-    },
-    {
-      component: 'Switch',
-      defaultValue: false,
+      dependencies: {
+        show: (values) => values._mode !== 'explore',
+        triggerFields: ['_mode'],
+      },
       fieldName: 'charged',
       label: '旧收费开关',
     },
@@ -147,7 +173,7 @@ const [Form, formApi] = useVbenForm({
   showDefaultActions: false,
 });
 
-const [Modal, modalApi] = useVbenModal<null | Spread>({
+const [Modal, modalApi] = useVbenModal<null | SpreadFormPayload>({
   async onConfirm() {
     const { valid } = await formApi.validate();
     if (!valid) {
@@ -155,7 +181,7 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
     }
     const data = await formApi.getValues();
     if (data.quota_priced && (data.quota_cost === null || data.quota_cost === undefined || data.quota_cost === '')) {
-      message.error('请填写额度扣次');
+      message.error('请填写额度消耗');
       return;
     }
     let positions: Spread['positions'];
@@ -169,6 +195,7 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
       .split(/\r?\n/)
       .map((line: string) => line.trim())
       .filter(Boolean);
+    const isExplore = formMode.value === 'explore';
     modalApi.lock();
     try {
       const body = {
@@ -177,16 +204,16 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         description: data.description,
         card_count: data.card_count,
         positions,
-        quick_questions,
+        quick_questions: isExplore ? quick_questions : [],
         enabled: data.enabled,
-        charged: data.charged,
-        recommended: data.recommended,
-        thumbnail: fileListToURL(data.thumbnail),
-        depth_group: data.depth_group ?? '',
-        theme_key: data.theme_key ?? '',
-        theme_title: data.theme_title ?? '',
-        theme_subtitle: data.theme_subtitle ?? '',
-        short_sentence: data.short_sentence ?? '',
+        charged: isExplore ? false : Boolean(data.charged),
+        recommended: formData.value?.recommended ?? false,
+        thumbnail: formData.value?.thumbnail ?? '',
+        depth_group: isExplore ? '' : (data.depth_group ?? ''),
+        theme_key: isExplore ? String(data.theme_key ?? '').trim() : '',
+        theme_title: isExplore ? (data.theme_title ?? '') : '',
+        theme_subtitle: isExplore ? (data.theme_subtitle ?? '') : '',
+        short_sentence: isExplore ? (data.short_sentence ?? '') : '',
         quota_priced: Boolean(data.quota_priced),
         quota_cost: data.quota_priced ? data.quota_cost : null,
       };
@@ -206,10 +233,15 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
     if (!isOpen) {
       return;
     }
-    const data = modalApi.getData();
+    const payload = modalApi.getData() || {};
+    const data = payload.spread ?? null;
+    formMode.value = payload.mode === 'explore' || !!String(data?.theme_key || '').trim()
+      ? 'explore'
+      : 'ordinary';
     if (data?.id) {
       formData.value = data;
       formApi.setValues({
+        _mode: formMode.value,
         name: data.name,
         name_en: data.name_en ?? '',
         description: data.description,
@@ -218,8 +250,6 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
         quickQuestionsText: (data.quick_questions ?? []).join('\n'),
         enabled: data.enabled,
         charged: data.charged,
-        recommended: data.recommended ?? false,
-        thumbnail: fileListFromURL(data.thumbnail),
         depth_group: data.depth_group ?? '',
         theme_key: data.theme_key ?? '',
         theme_title: data.theme_title ?? '',
@@ -231,6 +261,11 @@ const [Modal, modalApi] = useVbenModal<null | Spread>({
     } else {
       formData.value = null;
       formApi.reset();
+      formApi.setValues({
+        _mode: formMode.value,
+        depth_group: formMode.value === 'ordinary' ? 'quick' : '',
+        theme_key: '',
+      });
     }
   },
 });

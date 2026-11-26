@@ -123,7 +123,7 @@ onMounted(async () => {
 <template>
   <Page
     description="年运、今日一牌「宜」、帮助、活动。单牌文案在「牌目录」，风格套图在「牌组」，售价在「价位」。"
-    title="运营文案"
+    title="配置文案"
   >
     <Tabs>
       <Tabs.TabPane key="yearly" tab="年运正文">

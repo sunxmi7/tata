@@ -144,7 +144,7 @@ onMounted(load);
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'kind'">
-          {{ record.kind === 'free_count' ? '免费次数' : '额度' }}
+          {{ record.kind === 'free_count' ? '历史权益' : '额度' }}
         </template>
         <template v-else-if="column.dataIndex === 'usage'">
           {{ record.redeemed_count }}
@@ -173,10 +173,7 @@ onMounted(load);
           <Select
             v-model:value="form.kind"
             :disabled="!!editing"
-            :options="[
-              { label: '额度', value: 'quota' },
-              { label: '免费次数', value: 'free_count' },
-            ]"
+            :options="[{ label: '额度', value: 'quota' }]"
           />
         </Form.Item>
         <Form.Item label="数量">

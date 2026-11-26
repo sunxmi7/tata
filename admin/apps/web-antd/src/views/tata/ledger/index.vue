@@ -20,7 +20,7 @@ function sourceLabel(source: string) {
   if (source === 'admin') return '人工补发';
   if (source === 'registration_gift') return '注册赠送';
   if (source === 'invite') return '邀请';
-  if (source === 'redeem') return '兑换免费次数';
+  if (source === 'redeem') return '兑换码';
   return source;
 }
 
@@ -43,7 +43,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="只读。会员扣次会记下来源批次、到期时间和扣完后的剩余。一条扣次跨多个批次时，用分号分开。任务状态是这条解读当时查到的状态。" title="额度流水">
+  <Page description="只读。会员扣额度会记下来源批次、到期时间和扣完后的剩余。一条扣额度跨多个批次时，用分号分开。任务状态是这条解读当时查到的状态。" title="额度流水">
     <Table
       :columns="[
         { title: '用户', dataIndex: 'user_id' },

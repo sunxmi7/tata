@@ -33,9 +33,14 @@ function applyQuota(raw: Record<string, unknown>) {
   followupLimit.value = typeof raw.followup_limit === 'number' ? raw.followup_limit : null;
   quotaCost.value = typeof raw.quota_cost === 'number' ? raw.quota_cost : null;
   tokensPerQuota.value = typeof raw.tokens_per_quota === 'number' ? raw.tokens_per_quota : null;
-  registrationDelay.value = typeof raw.registration_grant_delay_minutes === 'number' ? raw.registration_grant_delay_minutes : null;
-  registrationValidDays.value = typeof raw.registration_valid_days === 'number' ? raw.registration_valid_days : 3;
-  registrationGrantCount.value = typeof raw.registration_grant_count === 'number' ? raw.registration_grant_count : 1;
+  registrationDelay.value =
+    typeof raw.registration_grant_delay_minutes === 'number'
+      ? raw.registration_grant_delay_minutes
+      : null;
+  registrationValidDays.value =
+    typeof raw.registration_valid_days === 'number' ? raw.registration_valid_days : 3;
+  registrationGrantCount.value =
+    typeof raw.registration_grant_count === 'number' ? raw.registration_grant_count : 1;
   registrationSpreadIds.value = Array.isArray(raw.registration_spread_ids)
     ? raw.registration_spread_ids.filter((id): id is number => typeof id === 'number')
     : [];
@@ -52,15 +57,17 @@ async function load() {
 async function save() {
   saving.value = true;
   try {
-    applyQuota(await updateQuota({
-      followup_limit: followupLimit.value,
-      quota_cost: quotaCost.value,
-      tokens_per_quota: tokensPerQuota.value,
-      registration_grant_delay_minutes: registrationDelay.value,
-      registration_valid_days: registrationValidDays.value,
-      registration_grant_count: registrationGrantCount.value,
-      registration_spread_ids: registrationSpreadIds.value,
-    }));
+    applyQuota(
+      await updateQuota({
+        followup_limit: followupLimit.value,
+        quota_cost: quotaCost.value,
+        tokens_per_quota: tokensPerQuota.value,
+        registration_grant_delay_minutes: registrationDelay.value,
+        registration_valid_days: registrationValidDays.value,
+        registration_grant_count: registrationGrantCount.value,
+        registration_spread_ids: registrationSpreadIds.value,
+      }),
+    );
     message.success('已保存额度参数');
   } finally {
     saving.value = false;
@@ -71,7 +78,10 @@ onMounted(load);
 </script>
 
 <template>
-  <Page description="每日免费已下线。追问上限和会员单次额度改完立刻生效。每额度 token 数留空表示未启用，结算仍按会员单次额度。注册赠送间隔留空不自动发，填 0 表示注册完成马上发；次数和有效天数只作用于之后新注册、或尚未发放的账号。白名单决定哪些 3 张及以内的普通占卜能用注册赠送和邀请次数。" title="额度参数">
+  <Page
+    description="追问上限和会员单次额度改完立刻生效。每额度 token 数留空表示未启用，结算仍按会员单次额度。注册赠送间隔留空不自动发，填 0 表示注册完成马上发；赠送数量与有效天数只作用于之后新注册、或尚未发放的账号。白名单决定哪些 3 张及以内的普通占卜能用注册赠送和邀请权益。"
+    title="额度参数"
+  >
     <Descriptions bordered :column="1">
       <Descriptions.Item label="共用范围">{{ data.shared_scope }}</Descriptions.Item>
       <Descriptions.Item label="失败">{{ data.failure_policy }}</Descriptions.Item>
@@ -84,7 +94,7 @@ onMounted(load);
             placeholder="不限制"
             style="width: 140px"
           />
-          <span class="text-muted-foreground text-xs">每条解读最多几次。没有单次扣额，不扣额度池</span>
+          <span class="text-muted-foreground text-xs">每条解读最多追问几轮。不扣额度池</span>
         </div>
       </Descriptions.Item>
       <Descriptions.Item label="每额度 token 数">
@@ -138,7 +148,7 @@ onMounted(load);
           <span class="text-muted-foreground text-xs">从实际发放时刻起算，默认 3 天</span>
         </div>
       </Descriptions.Item>
-      <Descriptions.Item label="注册赠送次数">
+      <Descriptions.Item label="注册赠送数量">
         <div class="flex items-center gap-2">
           <InputNumber
             v-model:value="registrationGrantCount"
@@ -147,7 +157,7 @@ onMounted(load);
             :precision="0"
             style="width: 140px"
           />
-          <span class="text-muted-foreground text-xs">每个新账号发放几次，默认 1</span>
+          <span class="text-muted-foreground text-xs">每个新账号发放几份注册赠送权益，默认 1</span>
         </div>
       </Descriptions.Item>
       <Descriptions.Item label="注册赠送白名单">

@@ -62,7 +62,7 @@ onMounted(loadDecks);
 
 <template>
   <Page
-    description="这里只管理牌组素材：封面、卡背、78 张卡面。单牌文案在「牌目录」。售价在「付费 → 价位」。展开一行可看本套卡面。"
+    description="这里只管理牌组素材：78 张卡面。单牌文案在「牌目录」。售价在「付费 → 价位」。展开一行可看本套卡面。"
     title="牌组"
   >
     <template #extra>
@@ -77,8 +77,6 @@ onMounted(loadDecks);
       :columns="[
         { title: '编码', dataIndex: 'code', width: 140 },
         { title: '名称', dataIndex: 'name', width: 140 },
-        { title: '封面', dataIndex: 'cover', width: 88 },
-        { title: '卡背', dataIndex: 'back', width: 88 },
         { title: '卡面进度', dataIndex: 'faces', width: 110 },
         { title: '卡面预览', dataIndex: 'face_previews', width: 220 },
         { title: '启用', dataIndex: 'enabled', width: 80 },
@@ -91,15 +89,7 @@ onMounted(loadDecks);
       :locale="{ emptyText: '还没有牌组' }"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.dataIndex === 'cover'">
-          <Image v-if="record.cover_url || record.thumbnail" :src="(record.cover_url || record.thumbnail) as string" :width="48" />
-          <span v-else>—</span>
-        </template>
-        <template v-else-if="column.dataIndex === 'back'">
-          <Image v-if="record.back_url" :src="record.back_url as string" :width="48" />
-          <span v-else>—</span>
-        </template>
-        <template v-else-if="column.dataIndex === 'faces'">
+        <template v-if="column.dataIndex === 'faces'">
           <Tag :color="Number(record.face_count || 0) >= 78 ? 'green' : 'orange'">
             {{ Number(record.face_count || 0) }}/{{ Number(record.card_count || 78) }}
           </Tag>

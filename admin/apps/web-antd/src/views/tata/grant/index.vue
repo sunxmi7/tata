@@ -47,7 +47,7 @@ onMounted(load);
 
 <template>
   <Page
-    description="只补会员额度，写入套餐赠送或补充包。不改历史订单，也不补免费次数。付费模块可写才能补发。"
+    description="只补会员额度，写入套餐赠送或补充包。不改历史订单。付费模块可写才能补发。"
     title="人工补发"
   >
     <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -66,8 +66,7 @@ onMounted(load);
       <Button type="primary" :disabled="!canWrite" @click="submit">补发</Button>
     </div>
     <p v-if="view.user_id" class="mb-4">
-      用户 {{ userLabel(view.user_id) }} · 额度 {{ view.quota_remaining ?? view.balance ?? 0 }} / 邀请次数
-      {{ view.invite_remaining ?? 0 }}
+      用户 {{ userLabel(view.user_id) }} · 剩余额度 {{ view.quota_remaining ?? view.balance ?? 0 }}
     </p>
     <p class="mb-4 text-sm opacity-70">{{ view.permission_note }}</p>
     <Table
@@ -82,7 +81,6 @@ onMounted(load);
         { title: '原因', dataIndex: 'reason' },
         { title: '说明', dataIndex: 'note' },
         { title: '额度流水', dataIndex: 'quota_ledger_id' },
-        { title: '次数流水', dataIndex: 'count_ledger_id' },
       ]"
       :data-source="rows"
       row-key="id"
@@ -97,13 +95,16 @@ onMounted(load);
           {{ operatorLabel(record.operator_id) }}
         </template>
         <template v-else-if="column.dataIndex === 'kind'">
-          {{ record.kind === 'free_count' ? '历史免费次数' : record.bucket === 'subscription' ? '套餐赠送' : '补充包' }}
+          {{
+            record.kind === 'free_count'
+              ? '历史记录'
+              : record.bucket === 'subscription'
+                ? '套餐赠送'
+                : '补充包'
+          }}
         </template>
         <template v-else-if="column.dataIndex === 'quota_ledger_id'">
           {{ record.quota_ledger_id ? `#${record.quota_ledger_id}` : '—' }}
-        </template>
-        <template v-else-if="column.dataIndex === 'count_ledger_id'">
-          {{ record.count_ledger_id ? `#${record.count_ledger_id}` : '—' }}
         </template>
       </template>
     </Table>

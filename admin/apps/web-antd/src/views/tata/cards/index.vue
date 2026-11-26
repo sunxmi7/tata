@@ -49,7 +49,7 @@ onMounted(load);
 
 <template>
   <Page
-    description="管理每张牌的文案：多语言名、正逆位寄语、今日宜、启停。各风格封面/卡背/卡面在「牌组」。预览默认来自莱德韦特。"
+    description="管理每张牌的文案：多语言名、正逆位寄语、今日宜、启停。各风格卡面在「牌组」。预览默认来自莱德韦特。"
     title="牌目录"
   >
     <template #extra>

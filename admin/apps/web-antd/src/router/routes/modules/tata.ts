@@ -49,7 +49,7 @@ const routes: RouteRecordRaw[] = [
             name: 'TataCopy',
             path: '/tata/copy',
             component: () => import('#/views/tata/copy/index.vue'),
-            meta: { icon: 'lucide:file-text', title: '运营文案', authority: can('content') },
+            meta: { icon: 'lucide:file-text', title: '配置文案', authority: can('content') },
           },
           {
             name: 'TataBanner',

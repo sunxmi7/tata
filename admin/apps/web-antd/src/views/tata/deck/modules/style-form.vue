@@ -64,28 +64,6 @@ const [Form, formApi] = useVbenForm({
       rules: 'required',
     },
     {
-      component: 'Upload',
-      componentProps: imageUploadProps('decks'),
-      fieldName: 'cover_url',
-      label: '封面',
-      renderComponentContent: () => {
-        return {
-          default: () => '上传封面',
-        };
-      },
-    },
-    {
-      component: 'Upload',
-      componentProps: imageUploadProps('decks'),
-      fieldName: 'back_url',
-      label: '卡背',
-      renderComponentContent: () => {
-        return {
-          default: () => '上传卡背',
-        };
-      },
-    },
-    {
       component: 'Switch',
       defaultValue: true,
       fieldName: 'enabled',
@@ -116,11 +94,10 @@ const [Modal, modalApi] = useVbenModal<StyleFormData>({
     const data = await formApi.getValues();
     modalApi.lock();
     try {
+      // 封面/卡背上传已下线：不传 cover_url/back_url，保留库内原值。
       await updateCopy('decks', {
         code: data.code,
         name: data.name,
-        cover_url: fileListToURL(data.cover_url),
-        back_url: fileListToURL(data.back_url),
         enabled: data.enabled,
         sort_order: formData.value?.sort_order,
         faces: buildFacesPayload(),
@@ -146,18 +123,10 @@ const [Modal, modalApi] = useVbenModal<StyleFormData>({
           image_url: row.image_url || '',
         })),
       );
-      const cover =
-        (typeof data.cover_url === 'string' && data.cover_url) ||
-        (typeof data.thumbnail === 'string' && data.thumbnail) ||
-        '';
       formApi.setValues({
         code: data.code,
         name: data.name,
         enabled: data.enabled ?? true,
-        cover_url: fileListFromURL(cover),
-        back_url: fileListFromURL(
-          typeof data.back_url === 'string' ? data.back_url : '',
-        ),
       });
       return;
     }
