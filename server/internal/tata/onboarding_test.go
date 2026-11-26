@@ -58,6 +58,49 @@ func TestOnboardingGuideFollowsDeviceTrialFollowsAccount(t *testing.T) {
 	}
 }
 
+func TestGuideHiddenOnRelaunchWithoutProfile(t *testing.T) {
+	_, ts := newMergeServer(t)
+	deviceID := fmt.Sprintf("device-relaunch-%d", time.Now().UnixNano())
+	first := listOne(t, ts, "", "/api/app/v1/onboarding?device_id="+deviceID)
+	if first["show_guide"] != true || first["guide_completed"] != false || first["reading_trial_available"] != true {
+		t.Fatalf("first launch: %#v", first)
+	}
+	if first["gender"] != "" || first["birth_date"] != "" {
+		t.Fatalf("profile was invented: %#v", first)
+	}
+	again := listOne(t, ts, "", "/api/app/v1/onboarding?device_id="+deviceID)
+	if again["show_guide"] != false || again["guide_completed"] != false || again["reading_trial_available"] != true {
+		t.Fatalf("relaunch without profile: %#v", again)
+	}
+	if again["gender"] != "" || again["birth_date"] != "" {
+		t.Fatalf("relaunch invented a profile: %#v", again)
+	}
+}
+
+func TestGuideHiddenAfterProfileWithoutCompletedFlag(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, uid := registerUser(t, ts, store, "guideprof")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=TRUE WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	deviceID := fmt.Sprintf("device-profile-%d", time.Now().UnixNano())
+	must(t, ts, token, http.MethodPut, "/api/app/v1/onboarding", map[string]any{
+		"device_id": deviceID, "gender": "男", "birth_date": "2021-11-24",
+		"explore_preferences": []string{"感情与关系"},
+	})
+	guide := listOne(t, ts, token, "/api/app/v1/onboarding?device_id="+deviceID)
+	if guide["show_guide"] != false || guide["guide_completed"] != true || guide["reading_trial_available"] != false {
+		t.Fatalf("logged-in relaunch with profile: %#v", guide)
+	}
+	if guide["gender"] != "男性" || guide["birth_date"] != "2021-11-24" {
+		t.Fatalf("profile lost: %#v", guide)
+	}
+	again := listOne(t, ts, token, "/api/app/v1/onboarding?device_id="+deviceID)
+	if again["show_guide"] != false || again["guide_completed"] != true {
+		t.Fatalf("second logged-in relaunch: %#v", again)
+	}
+}
+
 func TestAnonymousReadingFollowsDevice(t *testing.T) {
 	store, ts := newMergeServer(t)
 	deviceID := fmt.Sprintf("device-anon-%d", time.Now().UnixNano())

@@ -36,6 +36,7 @@ func normalizeBirthDate(raw string) (string, error) {
 type deviceGuide struct {
 	found       bool
 	guideDone   bool
+	offered     bool
 	consumed    bool
 	forfeited   bool
 	gender      string
@@ -45,8 +46,8 @@ type deviceGuide struct {
 
 func (a *App) loadDeviceGuide(r *http.Request, deviceID string) (deviceGuide, error) {
 	var g deviceGuide
-	err := a.Store.QueryRow(r.Context(), `SELECT guide_completed, consumed, trial_forfeited, gender, birth_date, explore_preferences
-		FROM device_experiences WHERE device_id=$1`, deviceID).Scan(&g.guideDone, &g.consumed, &g.forfeited, &g.gender, &g.birth, &g.preferences)
+	err := a.Store.QueryRow(r.Context(), `SELECT guide_completed, guide_offered, consumed, trial_forfeited, gender, birth_date, explore_preferences
+		FROM device_experiences WHERE device_id=$1`, deviceID).Scan(&g.guideDone, &g.offered, &g.consumed, &g.forfeited, &g.gender, &g.birth, &g.preferences)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
@@ -57,17 +58,39 @@ func (a *App) loadDeviceGuide(r *http.Request, deviceID string) (deviceGuide, er
 	return g, nil
 }
 
+func deviceHasProfile(g deviceGuide) bool {
+	if strings.TrimSpace(g.gender) != "" || strings.TrimSpace(g.birth) != "" {
+		return true
+	}
+	return len(parseExplorePreferences(g.preferences)) > 0
+}
+
+func shouldShowGuide(g deviceGuide) bool {
+	// 这台设备只出一次：已经看过、已经标完成、或已经留下档案草稿，都不再出。
+	return !g.guideDone && !g.offered && !deviceHasProfile(g)
+}
+
 func guideView(g deviceGuide) map[string]any {
-	show := !g.found || !g.guideDone
 	trial := !g.found || (!g.consumed && !g.forfeited)
 	return map[string]any{
-		"show_guide":              show,
+		"show_guide":              shouldShowGuide(g),
 		"guide_completed":         g.found && g.guideDone,
 		"reading_trial_available": trial,
 		"gender":                  g.gender,
 		"birth_date":              g.birth,
 		"explore_preferences":     parseExplorePreferences(g.preferences),
 	}
+}
+
+func (a *App) markGuideSeen(r *http.Request, deviceID string, complete bool) error {
+	if complete {
+		_, err := a.Store.Exec(r.Context(), `INSERT INTO device_experiences(device_id, guide_offered, guide_completed) VALUES ($1, TRUE, TRUE)
+			ON CONFLICT (device_id) DO UPDATE SET guide_offered=TRUE, guide_completed=TRUE`, deviceID)
+		return err
+	}
+	_, err := a.Store.Exec(r.Context(), `INSERT INTO device_experiences(device_id, guide_offered) VALUES ($1, TRUE)
+		ON CONFLICT (device_id) DO UPDATE SET guide_offered=TRUE`, deviceID)
+	return err
 }
 
 func (a *App) appGetOnboarding(w http.ResponseWriter, r *http.Request) error {
@@ -79,10 +102,24 @@ func (a *App) appGetOnboarding(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	show := shouldShowGuide(g)
+	// 第一次查询就记下已展示；档案草稿已在则直接标完成，登录后重启也不会再出。
+	if !g.offered || (deviceHasProfile(g) && !g.guideDone) {
+		complete := deviceHasProfile(g) || g.guideDone
+		if err := a.markGuideSeen(r, deviceID, complete); err != nil {
+			return err
+		}
+		g.offered = true
+		if complete {
+			g.guideDone = true
+		}
+		g.found = true
+	}
 	view, err := a.onboardingView(r, g)
 	if err != nil {
 		return err
 	}
+	view["show_guide"] = show
 	writeOK(w, view)
 	return nil
 }
@@ -158,21 +195,26 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 	if req.GuideCompleted != nil {
 		done = *req.GuideCompleted
 	}
+	g.gender = gender
+	g.birth = birth
+	g.preferences = prefs
+	// 写入档案草稿即视为这台设备已经走过引导，避免登录后重启又出一遍。
+	if deviceHasProfile(g) && req.GuideCompleted == nil {
+		done = true
+	}
 	if g.found {
 		if _, err := a.Store.Exec(r.Context(), `UPDATE device_experiences
-			SET guide_completed=$1, gender=$2, birth_date=$3, explore_preferences=$4
+			SET guide_completed=$1, guide_offered=TRUE, gender=$2, birth_date=$3, explore_preferences=$4
 			WHERE device_id=$5`, done, gender, birth, prefs, deviceID); err != nil {
 			return err
 		}
-	} else if _, err := a.Store.Exec(r.Context(), `INSERT INTO device_experiences(device_id, guide_completed, gender, birth_date, explore_preferences)
-		VALUES ($1,$2,$3,$4,$5)`, deviceID, done, gender, birth, prefs); err != nil {
+	} else if _, err := a.Store.Exec(r.Context(), `INSERT INTO device_experiences(device_id, guide_completed, guide_offered, gender, birth_date, explore_preferences)
+		VALUES ($1,$2,TRUE,$3,$4,$5)`, deviceID, done, gender, birth, prefs); err != nil {
 		return err
 	}
 	g.found = true
 	g.guideDone = done
-	g.gender = gender
-	g.birth = birth
-	g.preferences = prefs
+	g.offered = true
 	view, err := a.onboardingView(r, g)
 	if err != nil {
 		return err

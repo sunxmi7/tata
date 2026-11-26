@@ -756,7 +756,7 @@ paths:
           schema:
             type: string
       description: |
-        公开。show_guide 只看这台设备的引导有没有看完。登录后 reading_trial_available 只看这个账号还有没有那一次解读；老账号换新设备可以再看引导，不能再领解读。没有价格。
+        公开。冷启动调用。这台设备第一次查询 show_guide 为 true，并记下已经展示过。之后再启动不再出引导：没填档案也一样；已经留下性别/生日/探索偏好、或 guide_completed 为 true，也不再出。PUT 写入档案草稿且未显式传 guide_completed 时，服务端会标成已完成，避免登录后重启又出引导。登录后 reading_trial_available 只看这个账号还有没有那一次解读；老账号换新设备可以再看一次引导，不能再领解读。没有价格。
       responses:
         '200':
           description: data 含 show_guide、guide_completed、reading_trial_available、gender、birth_date、explore_preferences。

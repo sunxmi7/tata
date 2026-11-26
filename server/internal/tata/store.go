@@ -947,7 +947,14 @@ ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEF
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS explore_preferences TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS trial_forfeited BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS guide_offered BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE device_experiences SET guide_completed=TRUE WHERE consumed=TRUE AND guide_completed=FALSE;
+UPDATE device_experiences SET guide_offered=TRUE WHERE guide_completed=TRUE AND guide_offered=FALSE;
+UPDATE device_experiences SET guide_offered=TRUE, guide_completed=TRUE
+	WHERE guide_completed=FALSE AND (
+		btrim(gender)<>'' OR btrim(birth_date)<>''
+		OR (btrim(explore_preferences)<>'' AND btrim(explore_preferences)<>'[]')
+	);
 DROP INDEX IF EXISTS device_experiences_anon_idx;
 ALTER TABLE readings DROP COLUMN IF EXISTS anonymous_id;
 ALTER TABLE device_experiences DROP COLUMN IF EXISTS anonymous_id;
@@ -1092,7 +1099,7 @@ COMMENT ON TABLE registration_gifts IS '注册赠送的独立记录。与新人�
 COMMENT ON TABLE user_devices IS '账号登录时记下的设备。注销不删这行。同一设备再注册新账号时不再发注册赠送和邀请奖励。';
 COMMENT ON COLUMN app_users.cancelled_at IS '软删除时刻。行和占卜记录保留。邮箱、微信、苹果、手机号、设备写入 identity_claims 后不能再注册。';
 COMMENT ON TABLE quota_charges IS '单次解读扣费。entitlement=daily_free/invite_reward/admin_grant_free/member_quota/ai_trial/onboard_trial。';
-COMMENT ON TABLE device_experiences IS '设备只决定引导出不出现。解读资格在账号 reading_trial_used，每账号 1 次。';
+COMMENT ON TABLE device_experiences IS '设备只决定引导出不出现。第一次查询展示引导并记下 guide_offered，之后即使没建档案也不再展示。解读资格在账号 reading_trial_used，每账号 1 次。';
 COMMENT ON COLUMN readings.onboard_experience IS '新人引导那一次解读。AI 成功后才扣账号资格，失败不扣。成功后可回看，不能再免费生成、追问或补抽。';
 COMMENT ON COLUMN readings.device_id IS '登录前的进度按设备保存。登录时把同一设备、尚未归属账号的记录挂到该账号。';
 COMMENT ON TABLE quota_paywall IS '付费墙暂停点。IAP 入账后可 resume。';
