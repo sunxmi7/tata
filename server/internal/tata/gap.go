@@ -13,14 +13,34 @@ import (
 )
 
 func progressOf(status string) (label, next string) {
+	return progressOfReading(status, false, "")
+}
+
+// progressOfReading returns progress label and continue action.
+// skipDetect=true (preset/explore) skips question detect → continue=spread.
+// draw_mode=numerology skips shuffle/cut → continue=numerology until cards are fixed.
+func progressOfReading(status string, skipDetect bool, drawMode string) (label, next string) {
+	numerology := strings.TrimSpace(drawMode) == "numerology"
 	switch status {
 	case "QUESTION_CREATED":
+		if skipDetect {
+			return "问题已提交", "spread"
+		}
 		return "问题已提交", "detect"
 	case "SPREAD_SELECTED":
+		if numerology {
+			return "牌阵已选择", "numerology"
+		}
 		return "牌阵已选择", "shuffle"
 	case "SHUFFLING":
+		if numerology {
+			return "待灵数抽牌", "numerology"
+		}
 		return "洗牌中", "cut"
 	case "CUTTING":
+		if numerology {
+			return "待灵数抽牌", "numerology"
+		}
 		return "切牌中", "draw"
 	case "CARDS_FIXED":
 		return "牌面已固定", "interpret"
@@ -779,14 +799,26 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	if err := decode(r, &req); err != nil || strings.TrimSpace(req.Question) == "" {
 		return biz("问题不能为空")
 	}
-	det := detectQuestion(req.Question)
+	question := strings.TrimSpace(req.Question)
+	det := detectQuestion(question)
 	messages := []map[string]any{{
 		"kind": "interpretation", "from": "server", "style": "detect",
 		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？",
 		"text": det.DetectText,
 	}}
+	readingID, _ := a.ensureDetectReading(r, question)
+	wrap := func(extra map[string]any) map[string]any {
+		out := map[string]any{"messages": messages, "has_more": false, "continue": "detect", "skip_detect": false}
+		for k, v := range extra {
+			out[k] = v
+		}
+		if readingID > 0 {
+			out["reading_id"] = readingID
+		}
+		return out
+	}
 	if det.Kind != questionBroad {
-		writeOK(w, map[string]any{"messages": messages, "has_more": false})
+		writeOK(w, wrap(nil))
 		return nil
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT body, category, scene FROM preset_questions WHERE enabled=true
@@ -815,7 +847,7 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	}
 	picked := refineBroadSuggestions(det, presets)
 	if len(picked) == 0 {
-		writeOK(w, map[string]any{"messages": messages, "has_more": false})
+		writeOK(w, wrap(nil))
 		return nil
 	}
 	messages = append(messages, map[string]any{
@@ -845,8 +877,36 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 			"options": options,
 		},
 	)
-	writeOK(w, map[string]any{"messages": messages, "has_more": false})
+	writeOK(w, wrap(nil))
 	return nil
+}
+
+// ensureDetectReading creates or refreshes a hand-input detect reading so history lists it.
+// Only for logged-in users; guest detect stays message-only.
+func (a *App) ensureDetectReading(r *http.Request, question string) (int64, error) {
+	uid, err := a.appActor(r)
+	if err != nil || uid <= 0 {
+		return 0, err
+	}
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return 0, nil
+	}
+	cycle := a.userCycle(r, uid)
+	var id int64
+	err = a.Store.QueryRow(r.Context(), `SELECT id FROM readings
+		WHERE user_id=$1 AND type='normal' AND skip_detect=false AND status='QUESTION_CREATED' AND deleted_at IS NULL
+		ORDER BY id DESC LIMIT 1`, uid).Scan(&id)
+	if err == nil && id > 0 {
+		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET question=$1, business_date=$2, updated_at=now() WHERE id=$3`, question, cycle, id)
+		return id, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, skip_detect)
+		VALUES ($1,'normal',$2,'QUESTION_CREATED',$3,false) RETURNING id`, uid, question, cycle).Scan(&id)
+	return id, err
 }
 
 func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
@@ -859,7 +919,7 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id, COALESCE(question,'') FROM readings WHERE id=$1`, id).Scan(&selected, &question); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail FROM spreads
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail, positions FROM spreads
 		WHERE enabled=true AND theme_key='' ORDER BY recommended DESC, id`)
 	if err != nil {
 		return err
@@ -868,15 +928,21 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	spreads := []map[string]any{}
 	for rows.Next() {
 		var sid int64
-		var name, desc, short, thumb string
+		var name, desc, short, thumb, posRaw string
 		var count int
 		var recommended bool
-		if err := rows.Scan(&sid, &name, &desc, &short, &count, &recommended, &thumb); err != nil {
+		if err := rows.Scan(&sid, &name, &desc, &short, &count, &recommended, &thumb, &posRaw); err != nil {
 			return err
+		}
+		var positions any
+		if strings.TrimSpace(posRaw) != "" {
+			positions = json.RawMessage(posRaw)
+		} else {
+			positions = []any{}
 		}
 		spreads = append(spreads, map[string]any{
 			"id": sid, "name": T(r.Context(), name), "description": T(r.Context(), desc),
-			"short_sentence": short, "card_count": count,
+			"short_sentence": short, "card_count": count, "positions": positions,
 			"recommended": recommended, "selected": selected.Valid && selected.Int64 == sid,
 			"thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
 		})
@@ -891,12 +957,58 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	// only reads spread-choices still sees the question-matched spread first.
 	matchedID := a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
 	_ = matchedID
-	writeOK(w, map[string]any{
+	msg := spreadChoiceMessage(spreads)
+	out := map[string]any{
 		"reading_id": id,
 		"has_more":   false,
-		"messages":   []map[string]any{spreadChoiceMessage(spreads)},
-	})
+		"messages":   []map[string]any{msg},
+	}
+	if uid, aerr := a.appActor(r); aerr == nil && uid > 0 {
+		if deck := a.userDeckBackView(r, uid); deck != nil {
+			out["deck"] = deck
+			out["deck_back_url"] = deck["back_url"]
+		}
+	}
+	writeOK(w, out)
 	return nil
+}
+
+// userDeckBackView returns the active deck code + back_url for layout (official or custom).
+func (a *App) userDeckBackView(r *http.Request, uid int64) map[string]any {
+	code, decks, custom, err := a.resolveUserDeck(r.Context(), uid, r)
+	if err != nil {
+		return nil
+	}
+	if custom != nil {
+		if id, ok := asInt64OK(custom["id"]); ok && id > 0 {
+			d, loadErr := a.loadCustomDeck(r.Context(), uid, id)
+			if loadErr == nil {
+				back := emptyAsNil(absoluteAssetURL(r, strings.TrimSpace(d.BackURL)))
+				return map[string]any{"code": code, "name": d.Name, "back_url": back, "custom": true}
+			}
+		}
+	}
+	for _, item := range decks {
+		if fmt.Sprint(item["code"]) == code {
+			return map[string]any{
+				"code": code, "name": item["name"], "back_url": item["back_url"], "custom": false,
+			}
+		}
+	}
+	return nil
+}
+
+func asInt64OK(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	default:
+		return 0, false
+	}
 }
 
 // applyLocalRecommendToSpreadChoices marks at most one matched spread as recommended
@@ -948,9 +1060,10 @@ func conversationDrawModes() []map[string]any {
 }
 
 func spreadChoiceMessage(spreads []map[string]any) map[string]any {
+	// Full list already returned (has_more=false); omit more_spreads CTA copy.
 	return map[string]any{
 		"kind": "cards", "from": "server", "style": "choose",
-		"title": spreadChoiceTitle(), "more_spreads": "更多牌阵",
+		"title":           spreadChoiceTitle(),
 		"draw_mode_label": "抽牌方式", "draw_modes": conversationDrawModes(),
 		"spreads": spreads,
 	}
@@ -1074,12 +1187,20 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 			break
 		}
 	}
+	out := map[string]any{"reading_id": id, "messages": messages, "has_more": false}
 	if validCount == cardCount && !duplicate {
 		if err := a.fixNumerologyCards(r.Context(), id, req.Numbers, positions); err != nil {
 			return err
 		}
+		if item, loadErr := a.loadReadingAbs(r.Context(), r, id); loadErr == nil {
+			out["reading"] = item
+			out["status"] = item["status"]
+			out["continue"] = item["continue"]
+			out["stage"] = item["stage"]
+			out["draw_mode"] = item["draw_mode"]
+		}
 	}
-	writeOK(w, map[string]any{"reading_id": id, "messages": messages, "has_more": false})
+	writeOK(w, out)
 	return nil
 }
 
@@ -1713,7 +1834,7 @@ func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
 	if typ != "" && typ != "normal" && typ != "tarotist" && typ != "explore" && typ != "daily" {
 		return biz("type 不正确")
 	}
-	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, COALESCE(r.target_date,''), r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(r.theme_key,''), COALESCE(t.name,''), COALESCE(t.avatar_url,'')
+	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, COALESCE(r.target_date,''), r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(r.theme_key,''), COALESCE(r.draw_mode,''), r.skip_detect, COALESCE(t.name,''), COALESCE(t.avatar_url,'')
 FROM readings r
 LEFT JOIN tarotists t ON t.id = r.tarotist_id
 WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
@@ -1737,19 +1858,22 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 	cycle := a.userCycle(r, uid)
 	for rows.Next() {
 		var id int64
-		var typ, question, status, day, targetDate, themeKey string
+		var typ, question, status, day, targetDate, themeKey, drawMode string
+		var skipDetect bool
 		var updated, created time.Time
 		var cards, interp *string
 		var tarotistID *int64
 		var tarotistName, tarotistAvatar string
-		if err := rows.Scan(&id, &typ, &question, &status, &day, &targetDate, &updated, &created, &cards, &interp, &tarotistID, &themeKey, &tarotistName, &tarotistAvatar); err != nil {
+		if err := rows.Scan(&id, &typ, &question, &status, &day, &targetDate, &updated, &created, &cards, &interp, &tarotistID, &themeKey, &drawMode, &skipDetect, &tarotistName, &tarotistAvatar); err != nil {
 			return err
 		}
-		label, next := progressOf(status)
+		label, next := progressOfReading(status, skipDetect, drawMode)
 		item := map[string]any{
 			"id": id, "type": typ, "question": question, "status": status, "business_date": day,
 			"target_date": targetDate,
 			"theme_key":   themeKey,
+			"draw_mode":   drawMode,
+			"skip_detect": skipDetect,
 			"has_result":  status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE",
 			"progress":    label, "continue": next, "updated_at": updated, "created_at": created,
 			"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,

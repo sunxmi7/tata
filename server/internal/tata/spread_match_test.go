@@ -148,6 +148,15 @@ func TestSpreadChoicesOverlaysLocalRecommend(t *testing.T) {
 	if first["name"] != "单张牌占卜" || first["recommended"] != true {
 		t.Fatalf("matched first: %#v", first)
 	}
+	if first["positions"] == nil {
+		t.Fatalf("positions missing: %#v", first)
+	}
+	if choose["more_spreads"] != nil {
+		t.Fatalf("more_spreads should be omitted when full list returned: %#v", choose["more_spreads"])
+	}
+	if choices["deck"] == nil && choices["deck_back_url"] == nil {
+		t.Fatalf("deck back missing: %#v", choices)
+	}
 	recCount := 0
 	for _, raw := range spreads {
 		if raw.(map[string]any)["recommended"] == true {

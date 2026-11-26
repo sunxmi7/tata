@@ -16,6 +16,57 @@ var leakPrefixes = []string{
 	"开发者指令",
 }
 
+// StripInterpretationLeak removes leading work-note / fence / JSON-shaped prefixes.
+// Returns cleaned text; ok=false when nothing usable remains.
+func StripInterpretationLeak(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", false
+	}
+	for {
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed == "" {
+			return "", false
+		}
+		changed := false
+		if strings.HasPrefix(trimmed, "```") {
+			if end := strings.Index(trimmed[3:], "```"); end >= 0 {
+				trimmed = strings.TrimSpace(trimmed[3+end+3:])
+				changed = true
+				continue
+			}
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+			changed = true
+			continue
+		}
+		for _, p := range leakPrefixes {
+			if strings.HasPrefix(trimmed, p) {
+				rest := strings.TrimSpace(trimmed[len(p):])
+				rest = strings.TrimLeft(rest, "：:。；;，,\n\r\t ")
+				trimmed = rest
+				changed = true
+				break
+			}
+			needle := "\n" + p
+			if i := strings.Index(trimmed, needle); i >= 0 && i < 240 {
+				trimmed = strings.TrimSpace(trimmed[:i] + trimmed[i+len(needle):])
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	if trimmed == "" {
+		return "", false
+	}
+	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, "\"") {
+		return "", false
+	}
+	return trimmed, true
+}
+
 // InterpretationLeakReason returns a non-empty reason when output looks like leaked internals.
 // Only the opening window is checked for work-note prefixes, to avoid false positives in long body text.
 func InterpretationLeakReason(text string) string {

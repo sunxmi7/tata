@@ -3,7 +3,7 @@ package tata
 import "strings"
 
 // readingSelectCols is the column list scanned by scanReading.
-const readingSelectCols = `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode, theme_key, business_date, COALESCE(target_date,'')`
+const readingSelectCols = `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode, theme_key, business_date, COALESCE(target_date,''), skip_detect`
 
 // momentThemeKeys are explore themes that share the「普通占卜 / 此刻抉择」conversation flow.
 var momentThemeKeys = map[string]bool{
@@ -186,14 +186,31 @@ func attachConversationMeta(item map[string]any, todayCycle string) {
 	themeKey, _ := item["theme_key"].(string)
 	business, _ := item["business_date"].(string)
 	targetDate, _ := item["target_date"].(string)
+	drawMode, _ := item["draw_mode"].(string)
+	skip, _ := item["skip_detect"].(bool)
 	target := dailyTargetOf(kind, business, targetDate, todayCycle)
 	conv := conversationTypeForItem(kind, themeKey, target)
 	label := conversationLabelOf(kind, themeKey, target)
-	stage, stageLabel := stageOf(conv, fmtString(item["status"]))
+	status := fmtString(item["status"])
+	stage, stageLabel := stageOf(conv, status)
+	// Preset/explore skip detect: QUESTION_CREATED should resume at spread select.
+	if status == "QUESTION_CREATED" && skip {
+		stage, stageLabel = "pending_spread", "待选牌阵"
+	}
+	// Numerology never resumes into shuffle/cut stages.
+	if strings.TrimSpace(drawMode) == "numerology" {
+		switch status {
+		case "SPREAD_SELECTED", "SHUFFLING", "CUTTING":
+			stage, stageLabel = "pending_numerology", "待灵数抽牌"
+		}
+	}
+	progress, next := progressOfReading(status, skip, drawMode)
 	item["conversation_type"] = conv
 	item["conversation_label"] = label
 	item["stage"] = stage
 	item["stage_label"] = stageLabel
+	item["progress"] = progress
+	item["continue"] = next
 	if kind == "daily" {
 		item["target"] = target
 		if business != "" {

@@ -24,6 +24,28 @@ func TestConversationTypeOf(t *testing.T) {
 	}
 }
 
+func TestProgressOfReadingContinue(t *testing.T) {
+	cases := []struct {
+		status string
+		skip   bool
+		mode   string
+		want   string
+	}{
+		{"QUESTION_CREATED", false, "", "detect"},
+		{"QUESTION_CREATED", true, "", "spread"},
+		{"SPREAD_SELECTED", false, "normal", "shuffle"},
+		{"SPREAD_SELECTED", false, "numerology", "numerology"},
+		{"SHUFFLING", false, "numerology", "numerology"},
+		{"CARDS_FIXED", false, "numerology", "interpret"},
+	}
+	for _, c := range cases {
+		_, next := progressOfReading(c.status, c.skip, c.mode)
+		if next != c.want {
+			t.Fatalf("%s skip=%v mode=%s: continue=%q want %q", c.status, c.skip, c.mode, next, c.want)
+		}
+	}
+}
+
 func TestConversationLabelAndStage(t *testing.T) {
 	if got := conversationLabelOf("daily", "", "tomorrow"); got != "普通占卜" {
 		t.Fatalf("daily tomorrow: %q", got)
@@ -132,6 +154,21 @@ func TestCreateExploreThemeKeyAndSpreadBackfill(t *testing.T) {
 	})
 	if created["conversation_type"] != "moment" || created["conversation_label"] != "此刻抉择" {
 		t.Fatalf("created: %#v", created)
+	}
+	if created["skip_detect"] != true || created["continue"] != "spread" || created["stage"] != "pending_spread" {
+		t.Fatalf("explore resume fields: %#v", created)
+	}
+	preset := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"question": "他还会联系我吗？", "type": "normal", "source": "preset",
+	})
+	if preset["skip_detect"] != true || preset["continue"] != "spread" || preset["stage"] != "pending_spread" {
+		t.Fatalf("preset resume fields: %#v", preset)
+	}
+	hand := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"question": "我该不该换工作？", "type": "normal",
+	})
+	if hand["skip_detect"] != false || hand["continue"] != "detect" {
+		t.Fatalf("hand resume fields: %#v", hand)
 	}
 	var spreadID int64
 	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE theme_key='relationship' AND enabled=true ORDER BY id LIMIT 1`).Scan(&spreadID); err != nil {

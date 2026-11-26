@@ -42,7 +42,7 @@ func TestDetectQuestionKinds(t *testing.T) {
 }
 
 func TestQuestionSuggestionsVaryByInput(t *testing.T) {
-	_, ts := newMergeServer(t)
+	store, ts := newMergeServer(t)
 
 	invalid := create(t, ts, "", "/api/app/v1/question-suggestions", map[string]any{"question": "！！！"})
 	invalidMsgs := messageList(t, invalid)
@@ -51,6 +51,35 @@ func TestQuestionSuggestionsVaryByInput(t *testing.T) {
 	}
 	if text, _ := invalidMsgs[0]["text"].(string); !strings.Contains(text, "看不出你想问什么") {
 		t.Fatalf("invalid detect: %#v", invalidMsgs[0])
+	}
+	if invalid["reading_id"] != nil {
+		t.Fatalf("guest detect should not create reading: %#v", invalid)
+	}
+
+	token, uid := registerUser(t, ts, store, "detecthist")
+	handDetect := create(t, ts, token, "/api/app/v1/question-suggestions", map[string]any{"question": "我应该接受这份工作吗？"})
+	rid := asID(handDetect["reading_id"])
+	if rid <= 0 || handDetect["continue"] != "detect" {
+		t.Fatalf("logged-in detect reading: %#v", handDetect)
+	}
+	var listed int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM readings WHERE id=$1 AND user_id=$2 AND skip_detect=false AND status='QUESTION_CREATED'`, rid, uid).Scan(&listed); err != nil || listed != 1 {
+		t.Fatalf("detect reading not in history store: listed=%d err=%v", listed, err)
+	}
+	hist := listOne(t, ts, token, "/api/app/v1/readings?limit=10")
+	items, _ := hist["items"].([]any)
+	found := false
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		if asID(item["id"]) == rid {
+			found = true
+			if item["continue"] != "detect" || item["question"] != "我应该接受这份工作吗？" {
+				t.Fatalf("history detect item: %#v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("detect reading missing from GET /readings: %#v", hist)
 	}
 
 	specific := create(t, ts, "", "/api/app/v1/question-suggestions", map[string]any{"question": "我应该接受这份工作吗？"})

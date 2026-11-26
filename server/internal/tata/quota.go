@@ -1496,8 +1496,13 @@ func (a *App) resumeOne(ctx context.Context, uid, readingID int64, key, action, 
 	generated := false
 	switch action {
 	case resumeShuffle:
-		if _, err := tx.Exec(ctx, `UPDATE readings SET status='SHUFFLING', updated_at=now() WHERE id=$1 AND status='SPREAD_SELECTED'`, readingID); err != nil {
-			return nil, err
+		var drawMode string
+		_ = tx.QueryRow(ctx, `SELECT COALESCE(draw_mode,'') FROM readings WHERE id=$1`, readingID).Scan(&drawMode)
+		// Numerology does not use shuffle/cut; keep SPREAD_SELECTED for /numerology.
+		if strings.TrimSpace(drawMode) != "numerology" {
+			if _, err := tx.Exec(ctx, `UPDATE readings SET status='SHUFFLING', updated_at=now() WHERE id=$1 AND status='SPREAD_SELECTED'`, readingID); err != nil {
+				return nil, err
+			}
 		}
 	case resumeDraw, resumeDaily:
 		if err := drawIfEmpty(ctx, tx, readingID, action); err != nil {

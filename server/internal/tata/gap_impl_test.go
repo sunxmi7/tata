@@ -774,7 +774,7 @@ func TestConversationShapesMatchOriginals(t *testing.T) {
 		t.Fatalf("choose: %#v", choose)
 	}
 	modes, _ := choose["draw_modes"].([]any)
-	if choose["more_spreads"] != "更多牌阵" || choose["draw_mode_label"] != "抽牌方式" || len(modes) != 2 {
+	if choose["more_spreads"] != nil || choose["draw_mode_label"] != "抽牌方式" || len(modes) != 2 {
 		t.Fatalf("choose draw modes: %#v", choose)
 	}
 }

@@ -419,9 +419,13 @@ func (a *App) executeInterpret(id int64) {
 		return
 	}
 	if reason := readingflow.InterpretationLeakReason(text); reason != "" {
-		_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, "解读输出异常:"+reason, id)
-		fail(biz("解读失败，可重试，未重新扣费"))
-		return
+		if cleaned, ok := readingflow.StripInterpretationLeak(text); ok && readingflow.InterpretationLeakReason(cleaned) == "" {
+			text = cleaned
+		} else {
+			_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, "解读输出异常:"+reason, id)
+			fail(biz("解读失败，可重试，未重新扣费"))
+			return
+		}
 	}
 	if _, err := a.Store.Exec(bg, `UPDATE readings SET status='COMPLETED', interpretation=$1, fail_reason=NULL, updated_at=now() WHERE id=$2`, text, id); err != nil {
 		fail(err)

@@ -3192,7 +3192,12 @@ components:
         continue:
           type: string
           description: |
-            建议下一步动作名。例如 detect、shuffle、cut、draw、interpret；完成时为空字符串。
+            建议下一步动作名，随 skip_detect / draw_mode 变化：
+            detect（手输待检测）、spread（preset/explore 待选阵）、
+            shuffle / cut / draw（常规抽牌）、numerology（灵数抽牌）、interpret；完成时为空字符串。
+        skip_detect:
+          type: boolean
+          description: true 表示跳过问题检测（preset / explore）。列表与详情都会返回。
         card_name:
           type: string
           description: 第一张牌名。无牌时为空字符串。
