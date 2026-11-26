@@ -1451,6 +1451,8 @@ paths:
       summary: 牌阵选项
       description: |
         返回这一次占卜的牌阵选项，包在 messages 里，一条类型十六（kind=cards，style=choose）。选牌阵、更多牌阵、常规/灵数抽牌在同一条消息里。
+        列表中 recommended 会按该次问题的本地匹配（与 POST /recommend 同源 §6.4）覆盖角标：匹配成功时仅命中牌阵为 true 并排在最前；匹配失败则全部为 false。
+        more_spreads 文案固定为「更多牌阵」；是否展示由 App 在展开前后自行控制。
         不是分组目录。分组目录走 GET /spreads。
         未登录不带令牌，query 带 device_id。
       parameters:

@@ -128,3 +128,33 @@ func TestRecommendLocalMatchAPI(t *testing.T) {
 	}
 	_ = http.StatusOK
 }
+
+func TestSpreadChoicesOverlaysLocalRecommend(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "choicesmatch")
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "我应该接受这份工作吗？", "type": "normal"})
+	rid := asID(reading["id"])
+	choices := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/spread-choices", rid))
+	msgs, _ := choices["messages"].([]any)
+	if len(msgs) == 0 {
+		t.Fatalf("no messages: %#v", choices)
+	}
+	choose := msgs[0].(map[string]any)
+	spreads, _ := choose["spreads"].([]any)
+	if len(spreads) == 0 {
+		t.Fatalf("empty spreads: %#v", choose)
+	}
+	first := spreads[0].(map[string]any)
+	if first["name"] != "单张牌占卜" || first["recommended"] != true {
+		t.Fatalf("matched first: %#v", first)
+	}
+	recCount := 0
+	for _, raw := range spreads {
+		if raw.(map[string]any)["recommended"] == true {
+			recCount++
+		}
+	}
+	if recCount != 1 {
+		t.Fatalf("recommended count=%d spreads=%#v", recCount, spreads)
+	}
+}

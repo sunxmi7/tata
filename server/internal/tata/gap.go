@@ -855,7 +855,8 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var selected sql.NullInt64
-	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id FROM readings WHERE id=$1`, id).Scan(&selected); err != nil {
+	var question string
+	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id, COALESCE(question,'') FROM readings WHERE id=$1`, id).Scan(&selected, &question); err != nil {
 		return err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail FROM spreads
@@ -886,12 +887,53 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	if len(spreads) == 0 {
 		return biz("牌阵不可用")
 	}
+	// Overlay PRD §6.4 local match onto response recommended flags so App that
+	// only reads spread-choices still sees the question-matched spread first.
+	matchedID := a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
+	_ = matchedID
 	writeOK(w, map[string]any{
 		"reading_id": id,
 		"has_more":   false,
 		"messages":   []map[string]any{spreadChoiceMessage(spreads)},
 	})
 	return nil
+}
+
+// applyLocalRecommendToSpreadChoices marks at most one matched spread as recommended
+// in the in-memory list (does not rewrite admin DB flags), sorts it to the front,
+// and remembers it on the reading when matched.
+func (a *App) applyLocalRecommendToSpreadChoices(r *http.Request, readingID int64, question string, spreads []map[string]any) int64 {
+	payload := map[string]any{"question": strings.TrimSpace(question)}
+	if err := a.attachRecommendation(r, payload); err != nil {
+		return 0
+	}
+	list, _ := payload["recommended_spreads"].([]map[string]any)
+	if len(list) == 0 {
+		for _, item := range spreads {
+			item["recommended"] = false
+		}
+		return 0
+	}
+	matchedID, _ := list[0]["id"].(int64)
+	if matchedID <= 0 {
+		return 0
+	}
+	matchedIdx := -1
+	for i, item := range spreads {
+		id, _ := item["id"].(int64)
+		isMatch := id == matchedID
+		item["recommended"] = isMatch
+		if isMatch {
+			matchedIdx = i
+		}
+	}
+	if matchedIdx > 0 {
+		matched := spreads[matchedIdx]
+		copy(spreads[1:matchedIdx+1], spreads[0:matchedIdx])
+		spreads[0] = matched
+	}
+	a.rememberRecommendation(r.Context(), readingID, payload)
+	return matchedID
 }
 
 func spreadChoiceTitle() string {
