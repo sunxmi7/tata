@@ -29,7 +29,6 @@ const ordinaryColumns = [
   { title: '分组', dataIndex: 'depth_label', width: 110 },
   { title: '额度消耗', dataIndex: 'quota_cost', width: 100 },
   { title: '启用', dataIndex: 'enabled', width: 80 },
-  { title: '旧收费', dataIndex: 'charged', width: 80 },
   { title: '操作', dataIndex: 'action', width: 80 },
 ];
 
@@ -90,7 +89,7 @@ onMounted(load);
 
 <template>
   <Page
-    description="普通占卜与探索分开展示。可改英文名、含义说明与额度消耗；探索可改主题键、主题名、副标题、一句说明和快捷问题。收费是旧开关，结算不读。"
+    description="普通占卜与探索分开展示。可改英文名、含义说明与额度消耗；探索可改主题键、主题名、副标题、一句说明和快捷问题。"
     title="牌阵"
   >
     <template #extra>
@@ -149,9 +148,6 @@ onMounted(load);
         </template>
         <template v-else-if="column.dataIndex === 'quota_cost'">
           {{ record.quota_priced ? record.quota_cost : '未标价' }}
-        </template>
-        <template v-else-if="column.dataIndex === 'charged'">
-          {{ record.charged ? '是' : '否' }}
         </template>
         <template v-else-if="column.dataIndex === 'action'">
           <Button v-if="canWrite()" type="link" @click="onEdit(record as Spread)">

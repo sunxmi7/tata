@@ -159,16 +159,6 @@ const [Form, formApi] = useVbenForm({
       fieldName: 'enabled',
       label: '启用',
     },
-    {
-      component: 'Switch',
-      defaultValue: false,
-      dependencies: {
-        show: (values) => values._mode !== 'explore',
-        triggerFields: ['_mode'],
-      },
-      fieldName: 'charged',
-      label: '旧收费开关',
-    },
   ],
   showDefaultActions: false,
 });
@@ -198,6 +188,7 @@ const [Modal, modalApi] = useVbenModal<null | SpreadFormPayload>({
     const isExplore = formMode.value === 'explore';
     modalApi.lock();
     try {
+      // 不提交 charged：更新时服务端保留库内原值；新建默认 false。
       const body = {
         name: data.name,
         name_en: data.name_en ?? '',
@@ -206,7 +197,6 @@ const [Modal, modalApi] = useVbenModal<null | SpreadFormPayload>({
         positions,
         quick_questions: isExplore ? quick_questions : [],
         enabled: data.enabled,
-        charged: isExplore ? false : Boolean(data.charged),
         recommended: formData.value?.recommended ?? false,
         thumbnail: formData.value?.thumbnail ?? '',
         depth_group: isExplore ? '' : (data.depth_group ?? ''),
@@ -249,7 +239,6 @@ const [Modal, modalApi] = useVbenModal<null | SpreadFormPayload>({
         positionsText: JSON.stringify(data.positions, null, 2),
         quickQuestionsText: (data.quick_questions ?? []).join('\n'),
         enabled: data.enabled,
-        charged: data.charged,
         depth_group: data.depth_group ?? '',
         theme_key: data.theme_key ?? '',
         theme_title: data.theme_title ?? '',

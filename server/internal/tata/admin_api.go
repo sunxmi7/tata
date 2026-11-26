@@ -357,9 +357,9 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	}
 	var oldCount int
 	var oldPos, oldQuestions, oldThumb, oldDepth string
-	var oldRec bool
+	var oldRec, oldCharged bool
 	var oldQuota sql.NullInt64
-	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, quick_questions, recommended, thumbnail, depth_group, quota_cost FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldQuestions, &oldRec, &oldThumb, &oldDepth, &oldQuota)
+	err = a.Store.QueryRow(r.Context(), `SELECT card_count, positions, quick_questions, recommended, thumbnail, depth_group, quota_cost, charged FROM spreads WHERE id=$1`, id).Scan(&oldCount, &oldPos, &oldQuestions, &oldRec, &oldThumb, &oldDepth, &oldQuota, &oldCharged)
 	if err != nil {
 		return biz("牌阵不存在")
 	}
@@ -375,6 +375,10 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 	rec := oldRec
 	if req.Recommended != nil {
 		rec = *req.Recommended
+	}
+	charged := oldCharged
+	if req.Charged != nil {
+		charged = *req.Charged
 	}
 	thumb := oldThumb
 	if req.Thumbnail != nil {
@@ -402,7 +406,7 @@ func (a *App) adminUpdateSpread(w http.ResponseWriter, r *http.Request) error {
 		theme_key=COALESCE($11, theme_key), theme_title=COALESCE($12, theme_title), theme_subtitle=COALESCE($13, theme_subtitle), short_sentence=COALESCE($14, short_sentence),
 		depth_group=$15, quota_cost=$16
 		WHERE id=$17`,
-		req.Name, spreadNullText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), questions, req.enabled(), req.charged(), rec, thumb,
+		req.Name, spreadNullText(req.NameEN), req.Description, req.CardCount, mustJSON(req.Positions), questions, req.enabled(), charged, rec, thumb,
 		spreadNullText(req.ThemeKey), spreadNullText(req.ThemeTitle), spreadNullText(req.ThemeSubtitle), spreadNullText(req.ShortSentence),
 		depth, quota, id)
 	if err != nil {
