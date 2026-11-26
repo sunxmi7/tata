@@ -273,8 +273,8 @@ func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 	var quota, first bool
 	var created, updated time.Time
 	var deleted *time.Time
-	var drawMode, themeKey, businessDate string
-	err := sc.Scan(&id, &userID, &typ, &question, &spreadID, &tarotistID, &status, &cards, &interpretation, &vendor, &model, &fail, &quota, &first, &created, &updated, &deleted, &drawMode, &themeKey, &businessDate)
+	var drawMode, themeKey, businessDate, targetDate string
+	err := sc.Scan(&id, &userID, &typ, &question, &spreadID, &tarotistID, &status, &cards, &interpretation, &vendor, &model, &fail, &quota, &first, &created, &updated, &deleted, &drawMode, &themeKey, &businessDate, &targetDate)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +288,7 @@ func scanReading(sc interface{ Scan(...any) error }) (map[string]any, error) {
 		"spread_id": spreadID, "tarotist_id": tarotistID, "status": status, "cards": cardsJSON,
 		"interpretation": interpretation, "vendor_name": vendor, "model_name": model, "fail_reason": fail,
 		"quota_consumed": quota, "first_experience": first, "created_at": created, "updated_at": updated, "deleted_at": deleted,
-		"draw_mode": drawMode, "theme_key": themeKey, "business_date": businessDate,
+		"draw_mode": drawMode, "theme_key": themeKey, "business_date": businessDate, "target_date": targetDate,
 		"progress": label, "continue": next,
 	}
 	attachReadingPreview(item)

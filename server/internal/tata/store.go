@@ -205,6 +205,13 @@ WHERE reading_trial_used=FALSE AND (
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tease_off BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS spread_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS business_date TEXT NOT NULL DEFAULT '';
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS target_date TEXT NOT NULL DEFAULT '';
+-- Daily fortune: business_date = draw day (calendar/history bucket); target_date = fortune day (reuse key).
+-- Legacy rows stored the target day in business_date; backfill then move advance-drawn tomorrow onto the draw day.
+UPDATE readings SET target_date=business_date
+	WHERE type='daily' AND target_date='' AND business_date<>'';
+UPDATE readings SET business_date=quota_cycle
+	WHERE type='daily' AND question='明日运势' AND COALESCE(quota_cycle,'')<>'' AND quota_cycle < business_date;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS skip_detect BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS reward_consumed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS numerology_map TEXT NOT NULL DEFAULT '';

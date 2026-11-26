@@ -1481,7 +1481,7 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 	if wantsSSE(r) {
 		return a.appDailyStream(w, r)
 	}
-	id, target, business, existing, written, err := a.openDaily(w, r, false)
+	id, target, drawDate, targetDate, existing, written, err := a.openDaily(w, r, false)
 	if err != nil || written {
 		return err
 	}
@@ -1494,134 +1494,145 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 		if loadErr != nil {
 			return err
 		}
-		a.attachDailyHome(r.Context(), r, failed, target, business)
+		attachConversationMeta(failed, drawDate)
+		a.attachDailyHome(r.Context(), r, failed, target, drawDate, targetDate)
 		writeOK(w, failed)
 		return nil
 	}
-	a.attachDailyHome(r.Context(), r, item, target, business)
+	// generate() loads without request cycle; re-attach so tomorrow → moment/普通占卜.
+	attachConversationMeta(item, drawDate)
+	a.attachDailyHome(r.Context(), r, item, target, drawDate, targetDate)
 	writeOK(w, item)
 	return nil
 }
 
-func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id int64, target, business string, existing map[string]any, written bool, err error) {
+// openDaily opens or reuses a daily fortune for target today/tomorrow.
+// business_date is always the draw day (calendar/history bucket).
+// target_date is the fortune day used for uniqueness and next-day reuse.
+func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id int64, target, drawDate, targetDate string, existing map[string]any, written bool, err error) {
 	uid, err := a.appActor(r)
 	if err != nil {
-		return 0, "", "", nil, false, err
+		return 0, "", "", "", nil, false, err
 	}
 	if uid == 0 {
-		return 0, "", "", nil, false, biz("登录后才能抽今日一牌")
+		return 0, "", "", "", nil, false, biz("登录后才能抽今日一牌")
 	}
 	var req struct {
 		Target string      `json:"target"`
 		Cards  []drawnCard `json:"cards"`
 	}
 	if err := decode(r, &req); err != nil {
-		return 0, "", "", nil, false, err
+		return 0, "", "", "", nil, false, err
 	}
 	target = req.Target
 	cycle := a.userCycle(r, uid)
-	business = cycle
+	drawDate = cycle
+	targetDate = cycle
 	question := "今日一牌"
 	slotName := "今日"
 	meaning := "当日一牌"
 	switch req.Target {
 	case "", "today":
+		target = "today"
 	case "tomorrow":
-		business, err = nextBusinessDate(cycle)
+		targetDate, err = nextBusinessDate(cycle)
 		if err != nil {
-			return 0, "", "", nil, false, err
+			return 0, "", "", "", nil, false, err
 		}
 		question = "明日运势"
 		slotName = "明日"
 		meaning = "明日运势"
 	default:
-		return 0, "", "", nil, false, biz("目标日期不正确")
+		return 0, "", "", "", nil, false, biz("目标日期不正确")
 	}
 	clientCards, err := normalizeDailyCards(req.Cards, slotName)
 	if err != nil {
-		return 0, "", "", nil, false, err
+		return 0, "", "", "", nil, false, err
 	}
+	// Uniqueness / reuse key is the fortune day (target_date), with legacy fallback
+	// where older rows stored that day in business_date only.
+	const dailyTargetMatch = `(target_date=$2 OR (COALESCE(target_date,'')='' AND business_date=$2))`
 	var usedSlots int
 	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings
-		WHERE user_id=$1 AND type='daily' AND business_date=$2
-		AND cards IS NOT NULL AND cards <> ''`, uid, business).Scan(&usedSlots); err != nil {
-		return 0, target, business, nil, false, err
+		WHERE user_id=$1 AND type='daily' AND `+dailyTargetMatch+`
+		AND cards IS NOT NULL AND cards <> ''`, uid, targetDate).Scan(&usedSlots); err != nil {
+		return 0, target, drawDate, targetDate, nil, false, err
 	}
 	if usedSlots >= 1 {
 		var existingID int64
 		err = a.Store.QueryRow(r.Context(), `SELECT id FROM readings
-			WHERE user_id=$1 AND type='daily' AND business_date=$2 AND deleted_at IS NULL
+			WHERE user_id=$1 AND type='daily' AND deleted_at IS NULL AND `+dailyTargetMatch+`
 			AND cards IS NOT NULL AND cards <> ''
-			ORDER BY id DESC LIMIT 1`, uid, business).Scan(&existingID)
+			ORDER BY id DESC LIMIT 1`, uid, targetDate).Scan(&existingID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, target, business, nil, false, biz("该日已使用，删除记录后不能再抽")
+			return 0, target, drawDate, targetDate, nil, false, biz("该日已使用，删除记录后不能再抽")
 		}
 		if err != nil {
-			return 0, target, business, nil, false, err
+			return 0, target, drawDate, targetDate, nil, false, err
 		}
 		item, loadErr := a.loadReadingAbs(r.Context(), r, existingID)
 		if loadErr != nil {
-			return 0, target, business, nil, false, loadErr
+			return 0, target, drawDate, targetDate, nil, false, loadErr
 		}
 		if stream {
-			return existingID, target, business, item, false, nil
+			return existingID, target, drawDate, targetDate, item, false, nil
 		}
 		msg := T(r.Context(), "当日今日一牌名额已占用")
-		if business != cycle {
+		if targetDate != cycle {
 			msg = T(r.Context(), "该日已有结果，不重复扣额度")
 		}
-		a.attachDailyHome(r.Context(), r, item, req.Target, business)
+		a.attachDailyHome(r.Context(), r, item, target, drawDate, targetDate)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"code": 1, "message": msg,
 			"data": map[string]any{"reused": true, "charged": false, "reading": item},
 		})
-		return existingID, target, business, item, true, nil
+		return existingID, target, drawDate, targetDate, item, true, nil
 	}
 	tx, err := a.Store.Begin(r.Context())
 	if err != nil {
-		return 0, target, business, nil, false, err
+		return 0, target, drawDate, targetDate, nil, false, err
 	}
 	defer tx.Rollback(r.Context())
 	err = tx.QueryRow(r.Context(), `SELECT id FROM readings
-		WHERE user_id=$1 AND type='daily' AND business_date=$2 AND deleted_at IS NULL
+		WHERE user_id=$1 AND type='daily' AND deleted_at IS NULL AND `+dailyTargetMatch+`
 		AND (cards IS NULL OR cards='')
-		ORDER BY id DESC LIMIT 1 FOR UPDATE`, uid, business).Scan(&id)
+		ORDER BY id DESC LIMIT 1 FOR UPDATE`, uid, targetDate).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = tx.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, quota_cycle)
-			VALUES ($1,'daily',$2,'QUESTION_CREATED',$3,$4) RETURNING id`, uid, question, business, cycle).Scan(&id)
+		err = tx.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle)
+			VALUES ($1,'daily',$2,'QUESTION_CREATED',$3,$4,$5) RETURNING id`, uid, question, drawDate, targetDate, cycle).Scan(&id)
 	}
 	if err != nil {
-		return 0, target, business, nil, false, err
+		return 0, target, drawDate, targetDate, nil, false, err
 	}
 	decision, err := settleSharedQuota(r.Context(), tx, chargeOpts{
 		UserID: uid, ReadingID: id, ChargeKey: chargeKeyPlay, Cycle: cycle,
 		AllowTrial: false, ResumeAction: resumeDaily,
 	})
 	if err != nil {
-		return 0, target, business, nil, false, err
+		return 0, target, drawDate, targetDate, nil, false, err
 	}
 	if !decision.Continue {
 		if err := tx.Commit(r.Context()); err != nil {
-			return 0, target, business, nil, false, err
+			return 0, target, drawDate, targetDate, nil, false, err
 		}
 		writeQuotaBlock(w, r, decision, id)
-		return id, target, business, nil, true, nil
+		return id, target, drawDate, targetDate, nil, true, nil
 	}
 	cards := clientCards
 	if len(cards) == 0 {
 		cards, err = drawCards([]position{{Index: 1, Name: slotName, Meaning: meaning}})
 		if err != nil {
-			return 0, target, business, nil, false, err
+			return 0, target, drawDate, targetDate, nil, false, err
 		}
 	}
-	if _, err := tx.Exec(r.Context(), `UPDATE readings SET cards=$1, status='CARDS_FIXED', question=$2, business_date=$3, updated_at=now() WHERE id=$4`,
-		mustJSON(cards), question, business, id); err != nil {
-		return 0, target, business, nil, false, err
+	if _, err := tx.Exec(r.Context(), `UPDATE readings SET cards=$1, status='CARDS_FIXED', question=$2, business_date=$3, target_date=$4, updated_at=now() WHERE id=$5`,
+		mustJSON(cards), question, drawDate, targetDate, id); err != nil {
+		return 0, target, drawDate, targetDate, nil, false, err
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		return 0, target, business, nil, false, err
+		return 0, target, drawDate, targetDate, nil, false, err
 	}
-	return id, target, business, nil, false, nil
+	return id, target, drawDate, targetDate, nil, false, nil
 }
 
 // normalizeDailyCards accepts the single card App drew for today/tomorrow.

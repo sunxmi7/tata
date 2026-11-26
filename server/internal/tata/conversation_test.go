@@ -25,8 +25,14 @@ func TestConversationTypeOf(t *testing.T) {
 }
 
 func TestConversationLabelAndStage(t *testing.T) {
-	if got := conversationLabelOf("daily", "", "tomorrow"); got != "明日运势" {
+	if got := conversationLabelOf("daily", "", "tomorrow"); got != "普通占卜" {
 		t.Fatalf("daily tomorrow: %q", got)
+	}
+	if got := conversationTypeForItem("daily", "", "tomorrow"); got != "moment" {
+		t.Fatalf("daily tomorrow type: %q", got)
+	}
+	if got := conversationLabelOf("daily", "", "today"); got != "今日运势" {
+		t.Fatalf("daily today: %q", got)
 	}
 	if got := conversationLabelOf("explore", "yes_or_no", ""); got != "此刻抉择" {
 		t.Fatalf("moment explore: %q", got)
@@ -59,8 +65,8 @@ func TestHistoryConversationFields(t *testing.T) {
 		VALUES ($1,'explore','','QUESTION_CREATED','relationship')`, uid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date)
-		VALUES ($1,'daily','明日运势','CARDS_FIXED',$2)`, uid, "2099-01-02"); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle)
+		VALUES ($1,'daily','明日运势','CARDS_FIXED',$2,$3,$2)`, uid, "2099-01-01", "2099-01-02"); err != nil {
 		t.Fatal(err)
 	}
 	page := listOne(t, ts, token, "/api/app/v1/readings?limit=10")
@@ -81,9 +87,13 @@ func TestHistoryConversationFields(t *testing.T) {
 	if theme == nil || theme["stage"] != "pending_spread" || theme["stage_label"] != "待选牌阵" {
 		t.Fatalf("theme: %#v", theme)
 	}
-	daily := byType["daily|明日运势"]
-	if daily == nil || daily["target"] != "tomorrow" || daily["stage"] != "pending_interpret" {
-		t.Fatalf("daily: %#v", daily)
+	// Advance-drawn tomorrow fortune is filed as 普通占卜 (moment) on the draw day.
+	daily := byType["moment|普通占卜"]
+	if daily == nil || daily["target"] != "tomorrow" || daily["stage"] != "cards_fixed" {
+		t.Fatalf("daily tomorrow as moment: %#v", daily)
+	}
+	if daily["business_date"] != "2099-01-01" || daily["target_date"] != "2099-01-02" {
+		t.Fatalf("daily dates: %#v", daily)
 	}
 }
 

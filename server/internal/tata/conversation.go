@@ -3,7 +3,7 @@ package tata
 import "strings"
 
 // readingSelectCols is the column list scanned by scanReading.
-const readingSelectCols = `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode, theme_key, business_date`
+const readingSelectCols = `id, user_id, type, question, spread_id, tarotist_id, status, cards, interpretation, vendor_name, model_name, fail_reason, quota_consumed, first_experience, created_at, updated_at, deleted_at, draw_mode, theme_key, business_date, COALESCE(target_date,'')`
 
 // momentThemeKeys are explore themes that share the「普通占卜 / 此刻抉择」conversation flow.
 var momentThemeKeys = map[string]bool{
@@ -52,11 +52,12 @@ func conversationTypeOf(kind, themeKey string) string {
 }
 
 func conversationLabelOf(kind, themeKey, target string) string {
+	// Advance-drawn tomorrow fortune is filed under the draw day as 普通占卜 for calendar/history UI.
+	if kind == "daily" && target == "tomorrow" {
+		return "普通占卜"
+	}
 	switch conversationTypeOf(kind, themeKey) {
 	case "daily":
-		if target == "tomorrow" {
-			return "明日运势"
-		}
 		return "今日运势"
 	case "moment":
 		if kind == "explore" && momentThemeKeys[strings.TrimSpace(themeKey)] {
@@ -73,15 +74,27 @@ func conversationLabelOf(kind, themeKey, target string) string {
 	}
 }
 
-func dailyTargetOf(kind, businessDate, todayCycle string) string {
+func conversationTypeForItem(kind, themeKey, target string) string {
+	if kind == "daily" && target == "tomorrow" {
+		return "moment"
+	}
+	return conversationTypeOf(kind, themeKey)
+}
+
+func dailyTargetOf(kind, businessDate, targetDate, todayCycle string) string {
 	if kind != "daily" {
 		return ""
 	}
+	targetDate = strings.TrimSpace(targetDate)
 	businessDate = strings.TrimSpace(businessDate)
-	if businessDate == "" {
+	fortuneDay := targetDate
+	if fortuneDay == "" {
+		fortuneDay = businessDate
+	}
+	if fortuneDay == "" {
 		return "today"
 	}
-	if todayCycle != "" && businessDate > todayCycle {
+	if todayCycle != "" && fortuneDay > todayCycle {
 		return "tomorrow"
 	}
 	return "today"
@@ -172,8 +185,9 @@ func attachConversationMeta(item map[string]any, todayCycle string) {
 	kind, _ := item["type"].(string)
 	themeKey, _ := item["theme_key"].(string)
 	business, _ := item["business_date"].(string)
-	target := dailyTargetOf(kind, business, todayCycle)
-	conv := conversationTypeOf(kind, themeKey)
+	targetDate, _ := item["target_date"].(string)
+	target := dailyTargetOf(kind, business, targetDate, todayCycle)
+	conv := conversationTypeForItem(kind, themeKey, target)
 	label := conversationLabelOf(kind, themeKey, target)
 	stage, stageLabel := stageOf(conv, fmtString(item["status"]))
 	item["conversation_type"] = conv
@@ -184,6 +198,12 @@ func attachConversationMeta(item map[string]any, todayCycle string) {
 		item["target"] = target
 		if business != "" {
 			item["business_date"] = business
+		}
+		if strings.TrimSpace(targetDate) == "" && business != "" {
+			// Legacy rows: fortune day lived in business_date before target_date existed.
+			item["target_date"] = business
+		} else if strings.TrimSpace(targetDate) != "" {
+			item["target_date"] = targetDate
 		}
 	}
 }

@@ -195,7 +195,7 @@ func (a *App) streamGenerate(w http.ResponseWriter, r *http.Request, id int64, w
 }
 
 func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
-	id, target, business, existing, written, err := a.openDaily(w, r, true)
+	id, target, drawDate, targetDate, existing, written, err := a.openDaily(w, r, true)
 	if err != nil || written {
 		return err
 	}
@@ -203,7 +203,7 @@ func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
 		status, _ := existing["status"].(string)
 		if status == "COMPLETED" {
 			send := sseStart(w)
-			a.attachDailyHome(r.Context(), r, existing, target, business)
+			a.attachDailyHome(r.Context(), r, existing, target, drawDate, targetDate)
 			send("done", map[string]any{"reading": existing, "reused": true})
 			return nil
 		}
@@ -215,7 +215,8 @@ func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
 		id = asInt64(existing["id"])
 	}
 	return a.streamGenerate(w, r, id, func(item map[string]any) map[string]any {
-		a.attachDailyHome(r.Context(), r, item, target, business)
+		attachConversationMeta(item, drawDate)
+		a.attachDailyHome(r.Context(), r, item, target, drawDate, targetDate)
 		return item
 	})
 }

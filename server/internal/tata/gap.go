@@ -1713,7 +1713,7 @@ func (a *App) appCalendar(w http.ResponseWriter, r *http.Request) error {
 	if typ != "" && typ != "normal" && typ != "tarotist" && typ != "explore" && typ != "daily" {
 		return biz("type 不正确")
 	}
-	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(r.theme_key,''), COALESCE(t.name,''), COALESCE(t.avatar_url,'')
+	q := `SELECT r.id, r.type, r.question, r.status, r.business_date, COALESCE(r.target_date,''), r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(r.theme_key,''), COALESCE(t.name,''), COALESCE(t.avatar_url,'')
 FROM readings r
 LEFT JOIN tarotists t ON t.id = r.tarotist_id
 WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
@@ -1737,20 +1737,21 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 	cycle := a.userCycle(r, uid)
 	for rows.Next() {
 		var id int64
-		var typ, question, status, day, themeKey string
+		var typ, question, status, day, targetDate, themeKey string
 		var updated, created time.Time
 		var cards, interp *string
 		var tarotistID *int64
 		var tarotistName, tarotistAvatar string
-		if err := rows.Scan(&id, &typ, &question, &status, &day, &updated, &created, &cards, &interp, &tarotistID, &themeKey, &tarotistName, &tarotistAvatar); err != nil {
+		if err := rows.Scan(&id, &typ, &question, &status, &day, &targetDate, &updated, &created, &cards, &interp, &tarotistID, &themeKey, &tarotistName, &tarotistAvatar); err != nil {
 			return err
 		}
 		label, next := progressOf(status)
 		item := map[string]any{
 			"id": id, "type": typ, "question": question, "status": status, "business_date": day,
-			"theme_key":  themeKey,
-			"has_result": status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE",
-			"progress":   label, "continue": next, "updated_at": updated, "created_at": created,
+			"target_date": targetDate,
+			"theme_key":   themeKey,
+			"has_result":  status == "COMPLETED" || status == "CARDS_FIXED" || status == "INTERPRETING" || status == "FAILED_RETRYABLE",
+			"progress":    label, "continue": next, "updated_at": updated, "created_at": created,
 			"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,
 		}
 		attachConversationMeta(item, cycle)

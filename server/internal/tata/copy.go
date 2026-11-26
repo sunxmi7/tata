@@ -143,7 +143,7 @@ func (a *App) applyCardThumbnails(ctx context.Context, r *http.Request, items ..
 	}
 }
 
-func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[string]any, target, business string) {
+func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[string]any, target, drawDate, targetDate string) {
 	name := firstCardName(item["cards"])
 	cfg := a.cardConfig(ctx)
 	if r != nil {
@@ -158,7 +158,7 @@ func (a *App) attachDailyHome(ctx context.Context, r *http.Request, item map[str
 		message, yi = dailyLibraryCopy(cfg, name, firstCardOrientation(item["cards"]))
 		thumb = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 	}
-	attachDailyHome(item, target, business, yi, message, thumb)
+	attachDailyHome(item, target, drawDate, targetDate, yi, message, thumb)
 	a.localizeReading(ctx, item)
 }
 

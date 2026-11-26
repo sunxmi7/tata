@@ -1828,13 +1828,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Authorization'
       description: |
-        必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
+        必须登录。同一用户、同一 `target_date`（运势目标日）已有牌面则 code=1，reused=true，charged=false，不重复扣费。
+        `business_date` 固定为抽牌日（日历/历史归天）；`target_date` 为运势日（今日=当天，明日=次日）。提前抽的明日运势在抽牌日可见，目标日再调 `/daily`（today）会复用同一条。
         否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置、额度不足或请开通会员为 QuotaBlockEnvelope。
         扣费成功后：请求带了 `cards`（1 张）则用 App 交上的牌；否则服务端抽一张，再生成解读。
         生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
-        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、has_result。不编造宜忌文案。
+        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、target_date、has_result。不编造宜忌文案。
+        明日运势在历史/日历展示为普通占卜（conversation_type=moment，conversation_label=普通占卜），仍保留 type=daily、target=tomorrow、target_date。
       requestBody:
         required: true
         content:
@@ -3090,16 +3092,18 @@ components:
           enum: ['', daily, moment, theme]
           description: |
             历史对话三类（App 分 UI 用这个）：
-            - daily：今日/明日（type=daily，再看 target）
-            - moment：普通占卜（type=normal）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no|either_or）
+            - daily：今日运势（type=daily 且 target=today）
+            - moment：普通占卜（type=normal，或 type=daily 且 target=tomorrow）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no|either_or）
             - theme：主题占卜（type=explore 且其余 theme_key）
             - 空字符串：explore 尚未有 theme_key
             判定：type=explore && conversation_type=moment → 此刻抉择；
-            type=explore && conversation_type=theme → 主题占卜。
+            type=explore && conversation_type=theme → 主题占卜；
+            type=daily && target=tomorrow → 按普通占卜展示（仍可用 target / target_date 识别明日运势）。
         conversation_label:
           type: string
           description: |
-            列表/详情展示名：今日运势、明日运势、普通占卜、占卜师、此刻抉择、主题占卜。
+            列表/详情展示名：今日运势、普通占卜、占卜师、此刻抉择、主题占卜。
+            提前抽的明日运势展示为「普通占卜」（不再单独用「明日运势」标签）。
             conversation_type 为空时为空字符串。
         stage:
           type: string
@@ -3218,7 +3222,14 @@ components:
           description: 仅 daily 有意义。today=今日运势，tomorrow=明日运势。非 daily 可为空或不使用。
         business_date:
           type: string
-          description: 业务日 YYYY-MM-DD。daily 用来算 target；其它类型也可能有值。
+          description: |
+            业务日 YYYY-MM-DD。日历/历史按此字段归天打点。
+            daily：抽牌日（提前抽明日运势时为抽牌当天，不是运势日）。
+        target_date:
+          type: string
+          description: |
+            仅 daily 有意义。运势目标日 YYYY-MM-DD；与 target 对应，用作复用唯一键。
+            旧数据可能缺省，此时服务端用 business_date 兜底。
         has_result:
           type: boolean
           description: 已有牌名时为 true（今日一牌首页卡常用）。列表项也可能带。
@@ -4056,7 +4067,7 @@ components:
         target:
           type: string
           enum: [today, tomorrow, '']
-          description: 仅 daily 有意义。
+          description: 仅 daily 有意义。明日运势仍为 tomorrow，但 conversation_* / type_label 按普通占卜展示。
         question:
           type: string
           description: 问题原文。无则为空。
@@ -4068,7 +4079,10 @@ components:
           description: COMPLETED 为「已解读」，其余为「待继续」。与历史列表相同。
         business_date:
           type: string
-          description: YYYY-MM-DD。日历按此字段归天、打点。
+          description: YYYY-MM-DD。日历按此字段归天、打点（daily 为抽牌日）。
+        target_date:
+          type: string
+          description: 仅 daily。运势目标日 YYYY-MM-DD；复用键。可空（旧数据兜底 business_date）。
         progress:
           type: string
           description: 进度文案。

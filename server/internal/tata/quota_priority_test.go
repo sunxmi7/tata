@@ -610,6 +610,9 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 
 	other, otherID := registerUser(t, ts, store, "tomorrow")
 	seedInvite(t, store, otherID, 1)
+	if _, err := store.Exec(t.Context(), `UPDATE registration_gifts SET remaining=0 WHERE user_id=$1`, otherID); err != nil {
+		t.Fatal(err)
+	}
 	msg, raw = call(t, ts, other, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "tomorrow"})
 	if msg != "" {
 		t.Fatalf("tomorrow: %s %s", msg, raw)
@@ -618,7 +621,23 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	if tomorrow["question"] != "明日运势" {
 		t.Fatalf("tomorrow reading: %#v", tomorrow)
 	}
+	cal := listOne(t, ts, other, "/api/app/v1/calendar")
+	cycle := fmt.Sprint(cal["cycle"])
+	wantTarget := fmt.Sprint(cal["tomorrow_date"])
+	if tomorrow["business_date"] != cycle || tomorrow["target_date"] != wantTarget {
+		t.Fatalf("tomorrow dates: business=%v target=%v cycle=%s tomorrow=%s", tomorrow["business_date"], tomorrow["target_date"], cycle, wantTarget)
+	}
+	if tomorrow["conversation_type"] != "moment" || tomorrow["conversation_label"] != "普通占卜" || tomorrow["target"] != "tomorrow" {
+		t.Fatalf("tomorrow conversation: %#v", tomorrow)
+	}
+	var storedBiz, storedTarget string
 	tomorrowID := asID(tomorrow["id"])
+	if err := store.QueryRow(t.Context(), `SELECT business_date, target_date FROM readings WHERE id=$1`, tomorrowID).Scan(&storedBiz, &storedTarget); err != nil {
+		t.Fatal(err)
+	}
+	if storedBiz != cycle || storedTarget != wantTarget {
+		t.Fatalf("stored dates: %s %s", storedBiz, storedTarget)
+	}
 	if playEntitlement(t, store, tomorrowID) != entInvite {
 		t.Fatalf("tomorrow entitlement %s", playEntitlement(t, store, tomorrowID))
 	}
@@ -628,6 +647,73 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	}
 	if chargeCount(t, store, tomorrowID) != 1 {
 		t.Fatalf("tomorrow recharged %d", chargeCount(t, store, tomorrowID))
+	}
+
+	// Target-day reuse: advance-drawn row for today is returned without redraw/charge.
+	reuseToken, reuseUID := registerUser(t, ts, store, "targetreuse")
+	seedInvite(t, store, reuseUID, 1)
+	reuseCal := listOne(t, ts, reuseToken, "/api/app/v1/calendar")
+	reuseCycle := fmt.Sprint(reuseCal["cycle"])
+	yest, parseErr := time.Parse("2006-01-02", reuseCycle)
+	if parseErr != nil {
+		t.Fatal(parseErr)
+	}
+	drawDay := yest.AddDate(0, 0, -1).Format("2006-01-02")
+	if _, execErr := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle, cards, interpretation)
+		VALUES ($1,'daily','明日运势','COMPLETED',$2,$3,$2,'[{"name":"愚者","orientation":"upright"}]','明日宜缓行。')`,
+		reuseUID, drawDay, reuseCycle); execErr != nil {
+		t.Fatal(execErr)
+	}
+	var advanceID int64
+	if scanErr := store.QueryRow(t.Context(), `SELECT id FROM readings WHERE user_id=$1 AND target_date=$2`, reuseUID, reuseCycle).Scan(&advanceID); scanErr != nil {
+		t.Fatal(scanErr)
+	}
+	msg, raw = call(t, ts, reuseToken, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
+	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "不重复扣") {
+		t.Fatalf("target-day reuse: %s", msg)
+	}
+	reusedToday := decodeData(t, raw)
+	reading, _ = reusedToday["reading"].(map[string]any)
+	if reusedToday["charged"] != false || reading == nil || asID(reading["id"]) != advanceID {
+		t.Fatalf("target-day reuse payload: %#v", reusedToday)
+	}
+	if reading["business_date"] != drawDay || reading["target_date"] != reuseCycle {
+		t.Fatalf("target-day reuse dates: %#v", reading)
+	}
+	// Draw-day calendar: tomorrow fortune lands on cycle day as 普通占卜.
+	drawCalDays, _ := listOne(t, ts, other, "/api/app/v1/calendar")["days"].([]any)
+	foundTomorrow := false
+	for _, rawDay := range drawCalDays {
+		row := rawDay.(map[string]any)
+		if asID(row["id"]) != tomorrowID {
+			continue
+		}
+		foundTomorrow = true
+		if row["business_date"] != cycle || row["target_date"] != wantTarget {
+			t.Fatalf("tomorrow calendar dates: %#v", row)
+		}
+		if row["conversation_label"] != "普通占卜" || row["type_label"] != "普通占卜" || row["target"] != "tomorrow" {
+			t.Fatalf("tomorrow calendar labels: %#v", row)
+		}
+	}
+	if !foundTomorrow {
+		t.Fatalf("tomorrow reading missing from draw-day calendar: %#v", drawCalDays)
+	}
+	// Target-day calendar: advance row still buckets under the draw day.
+	calDays, _ := listOne(t, ts, reuseToken, "/api/app/v1/calendar")["days"].([]any)
+	found := false
+	for _, rawDay := range calDays {
+		row := rawDay.(map[string]any)
+		if asID(row["id"]) != advanceID {
+			continue
+		}
+		found = true
+		if row["business_date"] != drawDay || row["target_date"] != reuseCycle {
+			t.Fatalf("calendar advance row: %#v", row)
+		}
+	}
+	if !found {
+		t.Fatalf("advance reading missing from calendar: %#v", calDays)
 	}
 }
 

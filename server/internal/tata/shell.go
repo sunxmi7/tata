@@ -925,12 +925,22 @@ func publicBlurb(blurb, copy string) string {
 	return copy
 }
 
-func attachDailyHome(item map[string]any, target, business string, yi, message, thumbnail any) {
+func attachDailyHome(item map[string]any, target, drawDate, targetDate string, yi, message, thumbnail any) {
 	if target == "" {
 		target = "today"
 	}
 	item["target"] = target
-	item["business_date"] = business
+	// Keep persisted draw/target dates on reuse so calendar bucket stays the draw day.
+	if bd, _ := item["business_date"].(string); strings.TrimSpace(bd) == "" {
+		item["business_date"] = drawDate
+	}
+	if td, _ := item["target_date"].(string); strings.TrimSpace(td) == "" {
+		if strings.TrimSpace(targetDate) != "" {
+			item["target_date"] = targetDate
+		} else if strings.TrimSpace(drawDate) != "" {
+			item["target_date"] = drawDate
+		}
+	}
 	name := firstCardName(item["cards"])
 	item["card_name"] = name
 	item["short_text"] = clipText(interpText(item["interpretation"]), 48)
@@ -1033,6 +1043,12 @@ func attachCalendarPreview(r *http.Request, item map[string]any, cfg map[string]
 	item["card_thumbnail"] = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 	typ, _ := item["type"].(string)
 	item["type_label"] = readingTypeLabel(typ)
+	// Advance-drawn tomorrow fortune displays as 普通占卜 on the draw-day calendar.
+	if typ == "daily" {
+		if label, _ := item["conversation_label"].(string); label == "普通占卜" {
+			item["type_label"] = label
+		}
+	}
 	item["tarotist_name"] = emptyAsNil(tarotistName)
 	item["tarotist_avatar"] = emptyAsNil(absoluteAssetURL(r, tarotistAvatar))
 	delete(item, "cards")
