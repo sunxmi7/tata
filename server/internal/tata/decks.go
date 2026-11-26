@@ -247,7 +247,7 @@ func (d deckRow) admin(faceCount int, faces []map[string]any) map[string]any {
 		"thumbnail": nullableConfig(cover), "cover_url": nullableConfig(cover),
 		"preview": deckPreviewURL(cover), "back_url": nullableConfig(back),
 		"back_preview": emptyAsNil(back),
-		"face_count": faceCount, "card_count": 78, "faces": faces,
+		"face_count":   faceCount, "card_count": 78, "faces": faces,
 		"enabled": d.Enabled, "sort_order": d.Sort,
 		"description": d.Description, "tags": parseDeckTags(d.Tags),
 	}

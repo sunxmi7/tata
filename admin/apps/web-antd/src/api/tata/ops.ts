@@ -53,7 +53,10 @@ export interface Operator {
 export interface ReadingRow {
   id: number;
   user_id?: number | null;
+  user_display?: string | null;
   type: string;
+  conversation_type?: string | null;
+  conversation_label?: string | null;
   question?: string | null;
   status: string;
   stage_label?: string;
@@ -63,6 +66,9 @@ export interface ReadingRow {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  price_minor?: number | null;
+  price_currency?: string | null;
+  created_at?: string;
 }
 
 export interface LedgerDraw {

@@ -27,23 +27,22 @@ func (a *App) generate(ctx context.Context, id int64, adminRetry bool) (map[stri
 	return item, nil
 }
 
-func (a *App) binding(ctx context.Context, task string) (name, model, base, key string, timeout *int, err error) {
-	var vendorID int64
+func (a *App) binding(ctx context.Context, task string) (vendorID int64, name, model, base, key string, timeout *int, err error) {
 	err = a.Store.QueryRow(ctx, `SELECT vendor_id, model FROM bindings WHERE task=$1`, task).Scan(&vendorID, &model)
 	if err != nil {
-		return "", "", "", "", nil, biz("未绑定供应商")
+		return 0, "", "", "", "", nil, biz("未绑定供应商")
 	}
 	var enc []byte
 	var enabled bool
 	err = a.Store.QueryRow(ctx, `SELECT name, base_url, api_key_enc, timeout_sec, enabled FROM vendors WHERE id=$1`, vendorID).Scan(&name, &base, &enc, &timeout, &enabled)
 	if err != nil || !enabled {
-		return "", "", "", "", nil, biz("未绑定供应商")
+		return 0, "", "", "", "", nil, biz("未绑定供应商")
 	}
 	key, err = a.Store.decrypt(enc)
 	if err != nil {
-		return "", "", "", "", nil, biz("供应商密钥无法读取")
+		return 0, "", "", "", "", nil, biz("供应商密钥无法读取")
 	}
-	return name, model, base, key, timeout, nil
+	return vendorID, name, model, base, key, timeout, nil
 }
 
 func buildPrompt(kind, question, cards string) string {

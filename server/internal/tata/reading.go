@@ -63,6 +63,9 @@ func (a *App) adminListReadings(w http.ResponseWriter, r *http.Request) error {
 	if err := a.attachReadingTokenTotals(r.Context(), items...); err != nil {
 		return err
 	}
+	if err := a.attachReadingUserDisplays(r.Context(), items...); err != nil {
+		return err
+	}
 	writeOK(w, items)
 	return nil
 }
@@ -82,8 +85,91 @@ func (a *App) adminGetReading(w http.ResponseWriter, r *http.Request) error {
 	if err := a.attachReadingTokenTotals(r.Context(), item); err != nil {
 		return err
 	}
+	if err := a.attachReadingUserDisplays(r.Context(), item); err != nil {
+		return err
+	}
 	writeOK(w, item)
 	return nil
+}
+
+// attachReadingUserDisplays 给管理端列表补用户展示名：昵称优先，否则邮箱，否则 #id；未登录为「未登录」。
+func (a *App) attachReadingUserDisplays(ctx context.Context, items ...map[string]any) error {
+	ids := make([]int64, 0, len(items))
+	seen := map[int64]struct{}{}
+	for _, item := range items {
+		item["user_display"] = "未登录"
+		id := readingUserID(item)
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, len(ids))
+	holders := make([]string, len(ids))
+	for i, id := range ids {
+		args[i] = id
+		holders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	rows, err := a.Store.Query(ctx, `SELECT id, COALESCE(name,''), COALESCE(email,'')
+		FROM app_users WHERE id IN (`+strings.Join(holders, ",")+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	names := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var name, email string
+		if err := rows.Scan(&id, &name, &email); err != nil {
+			return err
+		}
+		display := strings.TrimSpace(name)
+		if display == "" {
+			display = strings.TrimSpace(email)
+		}
+		if display == "" {
+			display = fmt.Sprintf("#%d", id)
+		}
+		names[id] = display
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range items {
+		id := readingUserID(item)
+		if id == 0 {
+			continue
+		}
+		if name, ok := names[id]; ok {
+			item["user_display"] = name
+		} else {
+			item["user_display"] = fmt.Sprintf("#%d", id)
+		}
+	}
+	return nil
+}
+
+func readingUserID(item map[string]any) int64 {
+	switch v := item["user_id"].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case *int64:
+		if v != nil {
+			return *v
+		}
+	}
+	return 0
 }
 
 func (a *App) adminRetry(w http.ResponseWriter, r *http.Request) error {

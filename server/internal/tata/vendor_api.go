@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 )
 
 var tasks = []string{"detect", "rewrite", "recommend", "interpret", "tarotist"}
@@ -259,7 +260,7 @@ func (a *App) adminProbeVendor(w http.ResponseWriter, r *http.Request) error {
 	if len(modelList) == 0 {
 		return biz("没有模型")
 	}
-	if _, err := a.einoChat(mergeAIBill(r.Context(), aiBill{Kind: "probe", Vendor: name}), base, plain, modelList[0], timeout, "连通性探测", "ping"); err != nil {
+	if _, err := a.einoChat(mergeAIBill(r.Context(), aiBill{Kind: "probe", Vendor: name, VendorID: id}), base, plain, modelList[0], timeout, "连通性探测", "ping"); err != nil {
 		return biz("连通性探测失败")
 	}
 	a.Store.audit(r.Context(), act.id, "probe", "vendor", fmtID(id), name)
@@ -337,6 +338,148 @@ func (a *App) adminPutBinding(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	a.Store.audit(r.Context(), act.id, "bind", "binding", task, req.Model)
+	writeOK(w, true)
+	return nil
+}
+
+type modelPriceBody struct {
+	ModelName            string `json:"model_name"`
+	Currency             string `json:"currency"`
+	InputPerMtokMinor    *int64 `json:"input_per_mtok_minor"`
+	CacheHitPerMtokMinor *int64 `json:"cache_hit_per_mtok_minor"`
+	OutputPerMtokMinor   *int64 `json:"output_per_mtok_minor"`
+}
+
+func (a *App) adminGetVendorPrices(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminActor(r, false); err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	var modelsJSON string
+	err = a.Store.QueryRow(r.Context(), `SELECT models FROM vendors WHERE id=$1`, id).Scan(&modelsJSON)
+	if err != nil {
+		return biz("供应商不存在")
+	}
+	var models []string
+	_ = json.Unmarshal([]byte(modelsJSON), &models)
+	rows, err := a.Store.Query(r.Context(), `SELECT model_name, currency, input_per_mtok_minor, cache_hit_per_mtok_minor, output_per_mtok_minor, updated_at
+		FROM model_prices WHERE vendor_id=$1`, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byModel := map[string]map[string]any{}
+	for rows.Next() {
+		var name, currency string
+		var input, output int64
+		var cache *int64
+		var updated time.Time
+		if err := rows.Scan(&name, &currency, &input, &cache, &output, &updated); err != nil {
+			return err
+		}
+		item := map[string]any{
+			"model_name": name, "currency": currency,
+			"input_per_mtok_minor": input, "output_per_mtok_minor": output,
+			"updated_at": updated,
+		}
+		if cache != nil {
+			item["cache_hit_per_mtok_minor"] = *cache
+		} else {
+			item["cache_hit_per_mtok_minor"] = nil
+		}
+		byModel[name] = item
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	list := make([]map[string]any, 0, len(models))
+	for _, name := range models {
+		if item, ok := byModel[name]; ok {
+			list = append(list, item)
+			continue
+		}
+		list = append(list, map[string]any{
+			"model_name": name, "currency": "CNY",
+			"input_per_mtok_minor": nil, "cache_hit_per_mtok_minor": nil, "output_per_mtok_minor": nil,
+			"updated_at": nil,
+		})
+	}
+	writeOK(w, list)
+	return nil
+}
+
+func (a *App) adminPutVendorPrices(w http.ResponseWriter, r *http.Request) error {
+	act, err := a.adminActor(r, true)
+	if err != nil {
+		return err
+	}
+	id, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	var modelsJSON string
+	err = a.Store.QueryRow(r.Context(), `SELECT models FROM vendors WHERE id=$1`, id).Scan(&modelsJSON)
+	if err != nil {
+		return biz("供应商不存在")
+	}
+	var models []string
+	_ = json.Unmarshal([]byte(modelsJSON), &models)
+	allowed := map[string]bool{}
+	for _, m := range models {
+		allowed[m] = true
+	}
+	var req struct {
+		Prices []modelPriceBody `json:"prices"`
+	}
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	if len(req.Prices) == 0 {
+		return biz("单价列表不能为空")
+	}
+	seen := map[string]bool{}
+	for _, item := range req.Prices {
+		name := strings.TrimSpace(item.ModelName)
+		if name == "" {
+			return biz("模型名必填")
+		}
+		if !allowed[name] {
+			return biz("模型不属于该供应商")
+		}
+		if seen[name] {
+			return biz("模型单价重复")
+		}
+		seen[name] = true
+		if item.InputPerMtokMinor == nil || item.OutputPerMtokMinor == nil {
+			return biz("输入价和输出价必填")
+		}
+		if *item.InputPerMtokMinor < 0 || *item.OutputPerMtokMinor < 0 {
+			return biz("单价不能为负")
+		}
+		if item.CacheHitPerMtokMinor != nil && *item.CacheHitPerMtokMinor < 0 {
+			return biz("单价不能为负")
+		}
+		currency := strings.TrimSpace(item.Currency)
+		if currency == "" {
+			currency = "CNY"
+		}
+		_, err = a.Store.Exec(r.Context(), `INSERT INTO model_prices(vendor_id, model_name, currency, input_per_mtok_minor, cache_hit_per_mtok_minor, output_per_mtok_minor, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,now())
+			ON CONFLICT (vendor_id, model_name) DO UPDATE SET
+				currency=EXCLUDED.currency,
+				input_per_mtok_minor=EXCLUDED.input_per_mtok_minor,
+				cache_hit_per_mtok_minor=EXCLUDED.cache_hit_per_mtok_minor,
+				output_per_mtok_minor=EXCLUDED.output_per_mtok_minor,
+				updated_at=now()`,
+			id, name, currency, *item.InputPerMtokMinor, item.CacheHitPerMtokMinor, *item.OutputPerMtokMinor)
+		if err != nil {
+			return err
+		}
+	}
+	a.Store.audit(r.Context(), act.id, "update", "model_prices", fmtID(id), "更新模型单价")
 	writeOK(w, true)
 	return nil
 }

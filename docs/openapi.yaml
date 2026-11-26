@@ -740,10 +740,11 @@ components:
       allOf:
         - $ref: "#/components/schemas/Reading"
         - type: object
-          required: [prompt_tokens, completion_tokens, total_tokens]
+          required: [prompt_tokens, completion_tokens, total_tokens, price_minor]
           description: |
             管理端占卜。三列 token 是该 reading_id 在 ai_usages 上的合计，
             含解读、检测、改写、追问，以及失败但仍返回用量的调用。没有调用时为 0。
+            价格按 model_prices 高档单价在落库时算出；已计价步骤求和，没有任何一步能计价时为 null。
           properties:
             prompt_tokens:
               type: integer
@@ -754,6 +755,16 @@ components:
             total_tokens:
               type: integer
               description: 供应商返回的 total_tokens 合计。
+            price_minor:
+              type: integer
+              nullable: true
+              description: 已计价步骤的价格合计，微元（1 元 = 1_000_000）。没有任何一步能计价时为 null。
+            price_currency:
+              type: string
+              nullable: true
+            user_display:
+              type: string
+              description: 用户展示名。昵称优先，否则邮箱，否则 #id；未登录为「未登录」。
     AdminReadingOK:
       allOf:
         - $ref: "#/components/schemas/SuccessMeta"
@@ -802,7 +813,7 @@ components:
         price_minor:
           type: integer
           nullable: true
-          description: 这一步的价格，最小货币单位。单价未配置时为 null。
+          description: 这一步按 model_prices 高档单价算出的价格，最小货币单位。单价未配置时为 null。
         price_currency:
           type: string
           nullable: true
@@ -828,7 +839,7 @@ components:
         price_minor:
           type: integer
           nullable: true
-          description: 各步骤价格合计。任一步单价未配置时为 null。
+          description: 已计价步骤的价格合计。没有任何一步能计价时为 null；缺价步骤不计入，不当 0。
         price_currency:
           type: string
           nullable: true
@@ -1320,6 +1331,64 @@ components:
           type: boolean
           nullable: true
           description: 创建时省略视为 false。启用前必须已有密钥。
+    VendorModelPrice:
+      type: object
+      description: |
+        供应商下某个模型的单价。只配一档高价，不区分峰谷时段。
+        单位是每百万 token 的微元（1 元 = 1_000_000）。
+        GET 未配置时 input/output 为 null。
+      required: [model_name, currency, input_per_mtok_minor, output_per_mtok_minor]
+      properties:
+        model_name:
+          type: string
+        currency:
+          type: string
+          description: 默认 CNY。
+        input_per_mtok_minor:
+          type: integer
+          nullable: true
+          description: 每百万输入 token（缓存未命中）价格。
+        cache_hit_per_mtok_minor:
+          type: integer
+          nullable: true
+          description: 每百万缓存命中输入价格。空则按 input 价。
+        output_per_mtok_minor:
+          type: integer
+          nullable: true
+          description: 每百万输出 token 价格。
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+    VendorModelPriceBody:
+      type: object
+      additionalProperties: false
+      required: [model_name, input_per_mtok_minor, output_per_mtok_minor]
+      properties:
+        model_name:
+          type: string
+        currency:
+          type: string
+        input_per_mtok_minor:
+          type: integer
+          minimum: 0
+        cache_hit_per_mtok_minor:
+          type: integer
+          nullable: true
+          minimum: 0
+        output_per_mtok_minor:
+          type: integer
+          minimum: 0
+    VendorPricesPutBody:
+      type: object
+      additionalProperties: false
+      required: [prices]
+      properties:
+        prices:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/VendorModelPriceBody"
     Binding:
       type: object
       properties:
@@ -7444,6 +7513,63 @@ paths:
                   - $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/admin/v1/vendors/{id}/prices:
+    get:
+      tags: [供应商]
+      operationId: adminGetVendorPrices
+      summary: 供应商模型单价
+      description: |
+        按该供应商 models 列表返回每一项的单价。只配一档高价，不区分峰谷。
+        未配置的模型 input_per_mtok_minor / output_per_mtok_minor 为 null。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: data 为 VendorModelPrice 数组。供应商不存在时「供应商不存在」。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/SuccessMeta"
+                      - type: object
+                        required: [data]
+                        properties:
+                          data:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/VendorModelPrice"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [供应商]
+      operationId: adminPutVendorPrices
+      summary: 更新供应商模型单价
+      description: |
+        写入该供应商下指定模型的高档单价。模型名必须在供应商 models 里。
+        已落库的历史 ai_usages 不回填，只影响之后的调用。
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VendorPricesPutBody"
+      responses:
+        "200":
+          description: 成功 data=true。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BoolOK"
+                  - $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/bindings:
     get:
       tags: [供应商]
@@ -7883,7 +8009,7 @@ paths:
       summary: 一条占卜的分步 token
       description: |
         按调用时间顺序列出这次会话的每一次模型调用。
-        合计是这些步骤相加。价格在模型单价未配置时为 null，不编造金额。
+        合计是这些步骤相加。价格按落库时的 model_prices 高档单价；已计价步骤求和，没有任何一步能计价时为 null。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"

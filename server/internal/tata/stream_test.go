@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"tata/server/internal/readingflow"
 )
 
 func TestInterpretStream(t *testing.T) {
@@ -30,6 +32,16 @@ func TestInterpretStream(t *testing.T) {
 	vendor := create(t, ts, admin.access, "/api/admin/v1/vendors", map[string]any{
 		"name": "流式演示", "base_url": ts.URL + "/demo/openai/v1", "api_key": "k", "models": []string{"demo"}, "enabled": true,
 	})
+	vendorID := asID(vendor["id"])
+	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/vendors/%d/prices", vendorID),
+		map[string]any{"prices": []map[string]any{{
+			"model_name": "demo", "currency": "CNY",
+			"input_per_mtok_minor": 1_000_000_000_000, "cache_hit_per_mtok_minor": 100_000_000_000, "output_per_mtok_minor": 1_000_000_000_000,
+		}}})
+	prices := list(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/vendors/%d/prices", vendorID))
+	if len(prices) != 1 || asID(prices[0]["input_per_mtok_minor"]) != 1_000_000_000_000 {
+		t.Fatalf("prices: %#v", prices)
+	}
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/bindings/interpret",
 		map[string]any{"vendor_id": vendor["id"], "model": "demo"})
 
@@ -78,18 +90,24 @@ func TestInterpretStream(t *testing.T) {
 	}
 	var task, kind, vendorName, modelName string
 	var prompt, completion, total, cached, reasoning int
-	var gotUser int64
+	var gotUser, gotVendorID int64
+	var price *int64
 	var ok bool
-	if err := store.QueryRow(t.Context(), `SELECT task, kind, vendor_name, model_name, prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, user_id, ok
+	if err := store.QueryRow(t.Context(), `SELECT task, kind, vendor_id, vendor_name, model_name, prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, price_minor, user_id, ok
 		FROM ai_usages WHERE reading_id=$1 ORDER BY id DESC LIMIT 1`, id).
-		Scan(&task, &kind, &vendorName, &modelName, &prompt, &completion, &total, &cached, &reasoning, &gotUser, &ok); err != nil {
+		Scan(&task, &kind, &gotVendorID, &vendorName, &modelName, &prompt, &completion, &total, &cached, &reasoning, &price, &gotUser, &ok); err != nil {
 		t.Fatal(err)
 	}
-	if task != "interpret" || kind != "interpret" || vendorName != "流式演示" || modelName != "demo" || !ok || gotUser != uid {
-		t.Fatalf("usage row: task=%s kind=%s vendor=%s model=%s ok=%v user=%d", task, kind, vendorName, modelName, ok, gotUser)
+	if task != "interpret" || kind != "interpret" || vendorName != "流式演示" || modelName != "demo" || !ok || gotUser != uid || gotVendorID != vendorID {
+		t.Fatalf("usage row: task=%s kind=%s vendor=%s model=%s ok=%v user=%d vendor_id=%d", task, kind, vendorName, modelName, ok, gotUser, gotVendorID)
 	}
 	if prompt < 1 || completion < 1 || total != prompt+completion || cached != prompt/5 || reasoning != 0 {
 		t.Fatalf("vendor tokens: prompt=%d completion=%d total=%d cached=%d reasoning=%d", prompt, completion, total, cached, reasoning)
+	}
+	wantPrice, _ := usagePriceMinor(modelPrice{currency: "CNY", inputMinor: 1_000_000_000_000, cacheMinor: int64Ptr(100_000_000_000), outputMinor: 1_000_000_000_000},
+		readingflow.Usage{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached})
+	if price == nil || *price != wantPrice {
+		t.Fatalf("usage price: %v want %d", price, wantPrice)
 	}
 	if _, err := store.Exec(t.Context(), `INSERT INTO ai_usages(reading_id, user_id, task, kind, vendor_name, model_name, prompt_tokens, completion_tokens, total_tokens)
 		VALUES ($1,$2,'tarotist','followup','流式演示','demo',10,4,14)`, id, uid); err != nil {
@@ -105,13 +123,22 @@ func TestInterpretStream(t *testing.T) {
 	if asID(found["prompt_tokens"]) != int64(prompt+10) || asID(found["completion_tokens"]) != int64(completion+4) || asID(found["total_tokens"]) != int64(total+14) {
 		t.Fatalf("admin list tokens: %#v", found)
 	}
+	if asID(found["price_minor"]) != int64(wantPrice) {
+		t.Fatalf("list price should sum priced steps: %#v want %d", found, wantPrice)
+	}
+	if found["user_display"] == nil || found["user_display"] == "" || found["user_display"] == "未登录" {
+		t.Fatalf("list user_display: %#v", found["user_display"])
+	}
+	if label, _ := found["conversation_label"].(string); label == "" {
+		t.Fatalf("list conversation_label empty: %#v", found)
+	}
 	one := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/readings/%d", id))
 	if asID(one["prompt_tokens"]) != int64(prompt+10) || asID(one["total_tokens"]) != int64(total+14) {
 		t.Fatalf("admin detail tokens: %#v", one)
 	}
 	usage := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/readings/%d/usages", id))
-	if asID(usage["total_tokens"]) != int64(total+14) || usage["price_minor"] != nil {
-		t.Fatalf("usage summary: %#v", usage)
+	if asID(usage["total_tokens"]) != int64(total+14) || asID(usage["price_minor"]) != int64(wantPrice) {
+		t.Fatalf("usage summary: %#v want price %d", usage, wantPrice)
 	}
 	steps, _ := usage["steps"].([]any)
 	if len(steps) != 2 {
@@ -121,14 +148,23 @@ func TestInterpretStream(t *testing.T) {
 	for _, raw := range steps {
 		step := raw.(map[string]any)
 		labels[step["kind_label"].(string)] = true
-		if step["price_minor"] != nil {
-			t.Fatalf("step price invented: %#v", step)
+		switch step["kind_label"] {
+		case "解读":
+			if asID(step["price_minor"]) != int64(wantPrice) {
+				t.Fatalf("interpret step price: %#v", step)
+			}
+		case "追问":
+			if step["price_minor"] != nil {
+				t.Fatalf("followup without price should be null: %#v", step)
+			}
 		}
 	}
 	if !labels["解读"] || !labels["追问"] {
 		t.Fatalf("step labels: %#v", usage["steps"])
 	}
 }
+
+func int64Ptr(v int64) *int64 { return &v }
 
 func TestDailyStream(t *testing.T) {
 	store, ts := newMergeServer(t)

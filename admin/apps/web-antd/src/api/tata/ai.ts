@@ -28,6 +28,31 @@ export function updateVendor(id: number, data: Record<string, unknown>) {
 export function probeVendor(id: number) {
   return requestClient.post(`/vendors/${id}/probe`);
 }
+
+export interface VendorModelPrice {
+  model_name: string;
+  currency: string;
+  input_per_mtok_minor: number | null;
+  cache_hit_per_mtok_minor: number | null;
+  output_per_mtok_minor: number | null;
+  updated_at?: string | null;
+}
+
+export function getVendorPrices(id: number) {
+  return requestClient.get<VendorModelPrice[]>(`/vendors/${id}/prices`);
+}
+export function putVendorPrices(
+  id: number,
+  prices: Array<{
+    model_name: string;
+    currency?: string;
+    input_per_mtok_minor: number;
+    cache_hit_per_mtok_minor?: number | null;
+    output_per_mtok_minor: number;
+  }>,
+) {
+  return requestClient.put(`/vendors/${id}/prices`, { prices });
+}
 export function listBindings() {
   return requestClient.get<Binding[]>('/bindings');
 }

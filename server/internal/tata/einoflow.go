@@ -25,7 +25,7 @@ func (t holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (a *App) modelSpec(ctx context.Context, task string) (readingflow.ModelSpec, error) {
-	name, model, base, key, timeout, err := a.binding(ctx, task)
+	vendorID, name, model, base, key, timeout, err := a.binding(ctx, task)
 	if err != nil {
 		return readingflow.ModelSpec{}, err
 	}
@@ -35,6 +35,7 @@ func (a *App) modelSpec(ctx context.Context, task string) (readingflow.ModelSpec
 	}
 	return readingflow.ModelSpec{
 		Vendor:    name,
+		VendorID:  vendorID,
 		Model:     model,
 		BaseURL:   base,
 		APIKey:    key,
@@ -67,10 +68,14 @@ func (a *App) einoChat(ctx context.Context, baseURL, apiKey, model string, timeo
 	if timeoutSec != nil && *timeoutSec > 0 {
 		wait = time.Duration(*timeoutSec) * time.Second
 	}
-	if bill, _ := ctx.Value(aiBillKey{}).(aiBill); bill.Kind == "" {
+	bill, _ := ctx.Value(aiBillKey{}).(aiBill)
+	if bill.Kind == "" {
 		ctx = mergeAIBill(ctx, aiBill{Kind: "probe"})
+		bill, _ = ctx.Value(aiBillKey{}).(aiBill)
 	}
 	return readingflow.RunTask(a.watchUsage(ctx), readingflow.ModelSpec{
+		Vendor:    bill.Vendor,
+		VendorID:  bill.VendorID,
 		Model:     model,
 		BaseURL:   baseURL,
 		APIKey:    apiKey,

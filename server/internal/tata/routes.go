@@ -55,6 +55,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/vendors/{id}", a.h(a.adminUpdateVendor))
 	mux.HandleFunc("DELETE /api/admin/v1/vendors/{id}", a.h(a.adminDeleteVendor))
 	mux.HandleFunc("POST /api/admin/v1/vendors/{id}/probe", a.h(a.adminProbeVendor))
+	mux.HandleFunc("GET /api/admin/v1/vendors/{id}/prices", a.h(a.adminGetVendorPrices))
+	mux.HandleFunc("PUT /api/admin/v1/vendors/{id}/prices", a.h(a.adminPutVendorPrices))
 
 	mux.HandleFunc("GET /api/admin/v1/bindings", a.h(a.adminListBindings))
 	mux.HandleFunc("PUT /api/admin/v1/bindings/{task}", a.h(a.adminPutBinding))

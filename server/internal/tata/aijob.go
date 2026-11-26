@@ -345,7 +345,7 @@ func (a *App) executeInterpret(id int64) {
 		fail(biz("牌面尚未固定"))
 		return
 	}
-	vendorName, model, _, _, _, err := a.binding(bg, taskFor(kind))
+	_, vendorName, model, _, _, _, err := a.binding(bg, taskFor(kind))
 	if err != nil {
 		_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2 AND status IN ('CARDS_FIXED','FAILED_RETRYABLE','INTERPRETING')`, "未绑定供应商", id)
 		fail(err)
@@ -526,7 +526,7 @@ func (a *App) ensureYearlyJob(ctx context.Context, uid int64, year int, row year
 	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
 		return finishedRun(nil, nil), nil
 	}
-	if _, _, _, _, _, err := a.binding(ctx, "interpret"); err != nil {
+	if _, _, _, _, _, _, err := a.binding(ctx, "interpret"); err != nil {
 		_, _ = a.Store.Exec(ctx, `UPDATE yearly_reports SET report_status='failed', fail_reason=$1 WHERE user_id=$2 AND year=$3`, "未绑定供应商", uid, year)
 		return nil, err
 	}

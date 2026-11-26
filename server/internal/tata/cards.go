@@ -167,7 +167,7 @@ func (s *Store) migrateCardThumbnailsToRiderWaite(ctx context.Context) error {
 	}
 	defer rows.Close()
 	type row struct {
-		id   int
+		id    int
 		thumb string
 	}
 	list := []row{}

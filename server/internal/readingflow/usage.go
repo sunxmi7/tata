@@ -49,11 +49,12 @@ func usageFrom(msg *schema.Message) Usage {
 
 // UsageEvent is one finished model call. Err is the call error; usage may still be set.
 type UsageEvent struct {
-	Task   string
-	Vendor string
-	Model  string
-	Usage  Usage
-	Err    error
+	Task     string
+	Vendor   string
+	VendorID int64
+	Model    string
+	Usage    Usage
+	Err      error
 }
 
 type usageHookKey struct{}
@@ -74,5 +75,5 @@ func notifyUsage(ctx context.Context, spec ModelSpec, task string, usage Usage, 
 	if hook == nil {
 		return
 	}
-	hook(UsageEvent{Task: task, Vendor: spec.Vendor, Model: spec.Model, Usage: usage, Err: err})
+	hook(UsageEvent{Task: task, Vendor: spec.Vendor, VendorID: spec.VendorID, Model: spec.Model, Usage: usage, Err: err})
 }

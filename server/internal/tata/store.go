@@ -834,6 +834,7 @@ CREATE TABLE IF NOT EXISTS ai_usages (
   job_id BIGINT,
   task TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT '',
+  vendor_id BIGINT,
   vendor_name TEXT NOT NULL DEFAULT '',
   model_name TEXT NOT NULL DEFAULT '',
   prompt_tokens INT NOT NULL DEFAULT 0,
@@ -841,6 +842,8 @@ CREATE TABLE IF NOT EXISTS ai_usages (
   total_tokens INT NOT NULL DEFAULT 0,
   cached_tokens INT NOT NULL DEFAULT 0,
   reasoning_tokens INT NOT NULL DEFAULT 0,
+  price_minor INT,
+  price_currency TEXT,
   ok BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT ai_usages_tokens_chk CHECK (
@@ -850,6 +853,28 @@ CREATE TABLE IF NOT EXISTS ai_usages (
 );
 CREATE INDEX IF NOT EXISTS ai_usages_user_created_idx ON ai_usages (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ai_usages_model_created_idx ON ai_usages (model_name, created_at DESC);
+CREATE TABLE IF NOT EXISTS model_prices (
+  vendor_id BIGINT NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+  model_name TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  input_per_mtok_minor BIGINT NOT NULL,
+  cache_hit_per_mtok_minor BIGINT,
+  output_per_mtok_minor BIGINT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (vendor_id, model_name),
+  CONSTRAINT model_prices_nonneg_chk CHECK (
+    input_per_mtok_minor >= 0
+    AND output_per_mtok_minor >= 0
+    AND (cache_hit_per_mtok_minor IS NULL OR cache_hit_per_mtok_minor >= 0)
+  )
+);
+ALTER TABLE ai_usages ADD COLUMN IF NOT EXISTS vendor_id BIGINT;
+ALTER TABLE ai_usages ADD COLUMN IF NOT EXISTS price_minor BIGINT;
+ALTER TABLE ai_usages ADD COLUMN IF NOT EXISTS price_currency TEXT;
+ALTER TABLE model_prices ALTER COLUMN input_per_mtok_minor TYPE BIGINT;
+ALTER TABLE model_prices ALTER COLUMN cache_hit_per_mtok_minor TYPE BIGINT;
+ALTER TABLE model_prices ALTER COLUMN output_per_mtok_minor TYPE BIGINT;
+ALTER TABLE ai_usages ALTER COLUMN price_minor TYPE BIGINT;
 CREATE TABLE IF NOT EXISTS preset_questions (
   question_id TEXT PRIMARY KEY,
   pool TEXT NOT NULL,
@@ -1068,10 +1093,17 @@ COMMENT ON COLUMN preset_questions.category IS '场景中文名，与文档一�
 COMMENT ON COLUMN ai_jobs.kind IS 'interpret / detect / followup / yearly。';
 COMMENT ON COLUMN ai_jobs.status IS 'queued / running / succeeded / failed。';
 COMMENT ON COLUMN ai_jobs.partial_text IS '流式过程中的已产出文本，供重连回放。';
-COMMENT ON TABLE ai_usages IS '一次模型调用的供应商 token。prompt 为输入，completion 为输出，cached 是输入里的缓存命中，reasoning 是输出里的思考 token。不存金额，算钱时按模型单价另算。';
+COMMENT ON TABLE ai_usages IS '一次模型调用的供应商 token 与按 model_prices 高档单价算出的金额。单价未配置时 price_minor 为 null。';
 COMMENT ON COLUMN ai_usages.task IS '绑定任务：detect/rewrite/recommend/interpret/tarotist。连通性探测走 interpret 模板，task 仍是 interpret。';
 COMMENT ON COLUMN ai_usages.kind IS '业务：interpret、detect、followup、yearly、rewrite、probe、simulate。空则与 task 相同。';
+COMMENT ON COLUMN ai_usages.vendor_id IS '调用时的供应商 id。改名后仍能对上单价。';
+COMMENT ON COLUMN ai_usages.price_minor IS '按调用时 model_prices 高档单价算出的金额，微元（1 元 = 1_000_000）。未配置为 null。';
+COMMENT ON COLUMN ai_usages.price_currency IS '与 price_minor 对应的币种。未配置为 null。';
 COMMENT ON COLUMN ai_usages.ok IS '调用是否成功。失败但供应商已返回 usage 时仍为 false，token 仍计入成本。';
+COMMENT ON TABLE model_prices IS '供应商模型单价。只配一档高价，不区分峰谷时段。金额单位是微元：1 元 = 1_000_000。';
+COMMENT ON COLUMN model_prices.input_per_mtok_minor IS '每百万输入 token（缓存未命中）价格，微元。';
+COMMENT ON COLUMN model_prices.cache_hit_per_mtok_minor IS '每百万缓存命中输入 token 价格，微元。空则按 input 价。';
+COMMENT ON COLUMN model_prices.output_per_mtok_minor IS '每百万输出 token 价格，微元。';
 COMMENT ON COLUMN readings.cards IS 'JSON 牌面。灵数抽牌 numbers 映射 Rider-Waite 后写入。';
 COMMENT ON TABLE reading_messages IS '解读追问对话。对应 GET /readings/{id} 的 messages、followups。';
 
@@ -1172,6 +1204,85 @@ COMMENT ON TABLE retained_identities IS '并账后保留的登录身份。';
 COMMENT ON TABLE audit_log IS '审计。operator 操作或 App iap_verify/restore。';
 COMMENT ON TABLE idempotency IS '写接口幂等键。';
 `)
+	if err != nil {
+		return err
+	}
+	return s.backfillAIUsagePrices(ctx)
+}
+
+// backfillAIUsagePrices 给历史 ai_usages 补 vendor_id 与按 model_prices 算出的金额。
+// 单价与金额单位是微元（1 元 = 1_000_000），避免 DeepSeek 单次解读四舍五入成 0 分。
+func (s *Store) backfillAIUsagePrices(ctx context.Context) error {
+	_, err := s.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+)`)
+	if err != nil {
+		return err
+	}
+	var unit string
+	err = s.QueryRow(ctx, `SELECT value FROM app_meta WHERE key='model_prices_unit'`).Scan(&unit)
+	if err != nil || unit != "micros" {
+		// 早期按「分」写入的单价升到微元（1 元 = 1_000_000）。
+		if _, err := s.Exec(ctx, `
+UPDATE model_prices
+SET input_per_mtok_minor = input_per_mtok_minor * 10000,
+    cache_hit_per_mtok_minor = CASE WHEN cache_hit_per_mtok_minor IS NULL THEN NULL ELSE cache_hit_per_mtok_minor * 10000 END,
+    output_per_mtok_minor = output_per_mtok_minor * 10000,
+    updated_at = now()
+WHERE input_per_mtok_minor > 0 AND input_per_mtok_minor < 100000`); err != nil {
+			return err
+		}
+		if _, err := s.Exec(ctx, `INSERT INTO app_meta(key, value) VALUES ('model_prices_unit', 'micros')
+			ON CONFLICT (key) DO UPDATE SET value='micros'`); err != nil {
+			return err
+		}
+	}
+	_, err = s.Exec(ctx, `
+UPDATE ai_usages u
+SET vendor_id = v.id
+FROM vendors v
+WHERE u.vendor_id IS NULL
+  AND u.vendor_name <> ''
+  AND u.vendor_name = v.name`)
+	if err != nil {
+		return err
+	}
+	_, err = s.Exec(ctx, `
+UPDATE ai_usages u
+SET vendor_id = v.id
+FROM vendors v
+WHERE u.vendor_id IS NULL
+  AND u.model_name <> ''
+  AND v.models::jsonb ? u.model_name
+  AND (SELECT count(*) FROM vendors v2 WHERE v2.models::jsonb ? u.model_name) = 1`)
+	if err != nil {
+		return err
+	}
+	_, err = s.Exec(ctx, `
+UPDATE ai_usages u
+SET
+  price_minor = ROUND(
+    GREATEST(u.prompt_tokens - LEAST(GREATEST(u.cached_tokens, 0), u.prompt_tokens), 0)::numeric
+      * p.input_per_mtok_minor / 1000000.0
+    + LEAST(GREATEST(u.cached_tokens, 0), u.prompt_tokens)::numeric
+      * COALESCE(p.cache_hit_per_mtok_minor, p.input_per_mtok_minor) / 1000000.0
+    + u.completion_tokens::numeric * p.output_per_mtok_minor / 1000000.0
+  )::int,
+  price_currency = COALESCE(NULLIF(p.currency, ''), 'CNY'),
+  vendor_id = COALESCE(u.vendor_id, p.vendor_id)
+FROM model_prices p
+JOIN vendors v ON v.id = p.vendor_id
+WHERE u.model_name = p.model_name
+  AND (
+    u.vendor_id = p.vendor_id
+    OR (u.vendor_id IS NULL AND u.vendor_name <> '' AND u.vendor_name = v.name)
+    OR (
+      (SELECT count(*) FROM model_prices p2 WHERE p2.model_name = u.model_name) = 1
+      AND NOT EXISTS (SELECT 1 FROM vendors vx WHERE vx.id = u.vendor_id)
+    )
+  )`)
 	return err
 }
 

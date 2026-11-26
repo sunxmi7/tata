@@ -12,6 +12,7 @@ import (
 // ModelSpec is the vendor binding the admin stored. Eino does not choose the vendor.
 type ModelSpec struct {
 	Vendor    string
+	VendorID  int64
 	Model     string
 	BaseURL   string
 	APIKey    string

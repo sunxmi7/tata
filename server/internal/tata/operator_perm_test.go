@@ -19,6 +19,7 @@ func TestAdminModuleOf(t *testing.T) {
 		"/api/admin/v1/copy/help":             adminModuleContent,
 		"/api/admin/v1/push/broadcast":        adminModuleContent,
 		"/api/admin/v1/vendors":               adminModuleAI,
+		"/api/admin/v1/vendors/1/prices":      adminModuleAI,
 		"/api/admin/v1/bindings/interpret":    adminModuleAI,
 		"/api/admin/v1/quota-params":          adminModuleAI,
 		"/api/admin/v1/workflow/simulate":     adminModuleAI,

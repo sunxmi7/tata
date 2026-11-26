@@ -364,7 +364,7 @@ func (a *App) attachRecommendation(r *http.Request, out map[string]any) error {
 		list = append(list, map[string]any{
 			"id": id, "name": T(r.Context(), name), "description": T(r.Context(), desc),
 			"short_sentence": short, "card_count": count, "recommended": recommended,
-			"thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
+			"thumbnail":   absoluteAssetURL(r, deckPreviewURL(thumb)),
 			"depth_group": depth, "depth_label": depthLabel(depth),
 		})
 	}
