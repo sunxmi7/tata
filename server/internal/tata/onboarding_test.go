@@ -95,9 +95,48 @@ func TestGuideHiddenAfterProfileWithoutCompletedFlag(t *testing.T) {
 	if guide["gender"] != "男性" || guide["birth_date"] != "2021-11-24" {
 		t.Fatalf("profile lost: %#v", guide)
 	}
+	account := listOne(t, ts, token, "/api/app/v1/profile")
+	if account["gender"] != "男性" || account["birth_date"] != "2021-11-24" {
+		t.Fatalf("onboarding draft not synced to account: %#v", account)
+	}
+	prefs, _ := account["explore_preferences"].([]any)
+	if len(prefs) != 1 || prefs[0] != "感情与关系" {
+		t.Fatalf("explore prefs not synced: %#v", account["explore_preferences"])
+	}
 	again := listOne(t, ts, token, "/api/app/v1/onboarding?device_id="+deviceID)
 	if again["show_guide"] != false || again["guide_completed"] != true {
 		t.Fatalf("second logged-in relaunch: %#v", again)
+	}
+}
+
+func TestOnboardingDraftSyncsOnLogin(t *testing.T) {
+	store, ts := newMergeServer(t)
+	deviceID := fmt.Sprintf("device-draft-sync-%d", time.Now().UnixNano())
+	must(t, ts, "", http.MethodPut, "/api/app/v1/onboarding", map[string]any{
+		"device_id": deviceID, "gender": "女", "birth_date": "1999-05-01",
+		"explore_preferences": []string{"自我成长"},
+	})
+	email := fmt.Sprintf("draft-sync-%d@tata.local", time.Now().UnixNano())
+	otp := sendEmailCode(t, ts, "", email, "login")
+	session := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{
+		"email": email, "code": otp, "device_id": deviceID,
+	})
+	token := session["accessToken"].(string)
+	account := listOne(t, ts, token, "/api/app/v1/profile")
+	if account["gender"] != "女性" || account["birth_date"] != "1999-05-01" {
+		t.Fatalf("login did not copy draft: %#v", account)
+	}
+	var uid int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM app_users WHERE lower(email)=lower($1)`, email).Scan(&uid); err != nil {
+		t.Fatal(err)
+	}
+	must(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{"gender": "男性", "birth_date": "1988-01-02"})
+	must(t, ts, token, http.MethodPut, "/api/app/v1/onboarding", map[string]any{
+		"device_id": deviceID, "gender": "女", "birth_date": "1999-05-01",
+	})
+	kept := listOne(t, ts, token, "/api/app/v1/profile")
+	if kept["gender"] != "男性" || kept["birth_date"] != "1988-01-02" {
+		t.Fatalf("existing profile overwritten by draft: %#v", kept)
 	}
 }
 

@@ -308,6 +308,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 	a.ensureProfileDefaults(r.Context(), id)
 	a.consumeEmailCode(r.Context(), "login", email)
 	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
+	a.attachDeviceProfileDraft(r.Context(), id, req.DeviceID)
 	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "")

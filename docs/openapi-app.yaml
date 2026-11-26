@@ -771,7 +771,9 @@ paths:
       operationId: appPutOnboarding
       summary: 保存新人引导草稿
       description: |
-        公开。写入设备上的引导草稿。guide_completed 不消耗解读资格。登录后的正式档案仍走 PUT /profile。
+        公开。写入设备上的引导草稿。guide_completed 不消耗解读资格。
+        已登录时会把空着的账号性别/生日/探索偏好用本次草稿补上；未登录草稿在邮箱/微信/苹果登录（带同一 device_id）时同样补进档案。
+        账号已有值不覆盖。仍可用 PUT /profile 主动改正式档案。
       requestBody:
         required: true
         content:
@@ -835,6 +837,7 @@ paths:
       summary: 同步新人引导进度
       description: |
         必须登录。把这台设备上还没完成的引导占卜挂到当前账号；没有则新建一条。
+        同时会把设备引导草稿里的性别/生日/探索偏好补进仍为空的账号档案（不覆盖已有值）。
         question 必填，最长 200 个码点。status 可省略，或为 QUESTION_CREATED、SPREAD_SELECTED、SHUFFLING、CUTTING、CARDS_FIXED。
         成功 data 为占卜记录。
       parameters:

@@ -1,6 +1,7 @@
 package tata
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -63,6 +64,41 @@ func deviceHasProfile(g deviceGuide) bool {
 		return true
 	}
 	return len(parseExplorePreferences(g.preferences)) > 0
+}
+
+// attachDeviceProfileDraft copies guide gender/birth/preferences from the device
+// draft into the account profile, but only fills empty account fields.
+func (a *App) attachDeviceProfileDraft(ctx context.Context, uid int64, deviceID string) {
+	if uid <= 0 {
+		return
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return
+	}
+	var gender, birth, prefs string
+	err := a.Store.QueryRow(ctx, `SELECT COALESCE(gender,''), COALESCE(birth_date,''), COALESCE(explore_preferences,'[]')
+		FROM device_experiences WHERE lower(device_id)=lower($1)`, deviceID).Scan(&gender, &birth, &prefs)
+	if err != nil {
+		return
+	}
+	gender = strings.TrimSpace(gender)
+	birth = strings.TrimSpace(birth)
+	prefs = strings.TrimSpace(prefs)
+	if prefs == "" {
+		prefs = "[]"
+	}
+	if gender == "" && birth == "" && prefs == "[]" {
+		return
+	}
+	_, _ = a.Store.Exec(ctx, `UPDATE app_users SET
+		gender=COALESCE(NULLIF(btrim(COALESCE(gender,'')),''), NULLIF($2,'')),
+		birth_date=COALESCE(NULLIF(btrim(COALESCE(birth_date,'')),''), NULLIF($3,'')),
+		explore_preferences=CASE
+			WHEN COALESCE(explore_preferences,'') IN ('','[]') AND $4 NOT IN ('','[]') THEN $4
+			ELSE explore_preferences
+		END
+		WHERE id=$1`, uid, gender, birth, prefs)
 }
 
 func shouldShowGuide(g deviceGuide) bool {
@@ -215,6 +251,9 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 	g.found = true
 	g.guideDone = done
 	g.offered = true
+	if uid := a.optionalAppUser(r); uid > 0 {
+		a.attachDeviceProfileDraft(r.Context(), uid, deviceID)
+	}
 	view, err := a.onboardingView(r, g)
 	if err != nil {
 		return err
@@ -291,6 +330,7 @@ func (a *App) appSyncOnboarding(w http.ResponseWriter, r *http.Request) error {
 	if !validDeviceID(deviceID) {
 		return biz("缺少设备标识")
 	}
+	a.attachDeviceProfileDraft(r.Context(), uid, deviceID)
 	question := strings.TrimSpace(req.Question)
 	if question == "" {
 		return biz("请先填写问题")

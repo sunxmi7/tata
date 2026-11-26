@@ -135,6 +135,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	a.applyWeChatProfile(r, id, prof)
 	a.ensureProfileDefaults(r.Context(), id)
 	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
+	a.attachDeviceProfileDraft(r.Context(), id, req.DeviceID)
 	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "")
@@ -193,6 +194,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ensureProfileDefaults(r.Context(), id)
 	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
+	a.attachDeviceProfileDraft(r.Context(), id, req.DeviceID)
 	a.applyDeviceForfeit(r.Context(), id, req.DeviceID)
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "")
