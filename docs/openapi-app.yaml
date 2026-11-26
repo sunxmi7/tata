@@ -1423,8 +1423,9 @@ paths:
       summary: 推荐牌阵
       description: |
         不调用模型。按 PRD §6.4 本地问题→牌阵匹配：从问题检测快照（invalid/broad/specific + main_intent/main_structure）
-        对照嵌入的 19 套普通牌阵能力配置，返回 0 或 1 个 recommended_spreads。
-        match_status 为 MATCHED / NO_MATCH / NO_MATCH_MAIN_INTENT / INPUT_NOT_MATCHABLE；mapping_status 为 draft_v1。
+        对照嵌入的 19 套普通牌阵能力配置，返回 1 个 recommended_spreads（目录为空时才是 0）。
+        match_status：MATCHED（能力命中）/ FALLBACK（无命中或宽泛/无效时的目录兜底，附 fallback_reason）/
+        NO_MATCH / NO_MATCH_MAIN_INTENT / INPUT_NOT_MATCHABLE（仅当目录也无可用牌阵时）。mapping_status 为 draft_v1。
         每项含 id、name、description、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
         已登录带令牌。未登录不带令牌，query 带 device_id。
       parameters:
@@ -1918,6 +1919,7 @@ paths:
         必须登录。data 为 {days, cycle, tomorrow_date}。
         **全部占卜都进日历**：normal / tarotist / explore / daily，只要未删除且 business_date 非空；
         探索（此刻抉择、主题占卜）与普通/占卜师/今日一牌一视同仁，不单独排除。
+        明日运势仍按抽牌日进 `days`（business_date）；另提供 `cycle_daily` / `tomorrow_daily` 按 target_date 复用查找，避免到日「未查到」。
         month 按前缀匹配，例如 2026-10。type 可按四类过滤；不传 type =「全部」。
         日详情字段与定稿 574:2 对齐：今日一牌含牌名/正逆位/短文/缩略图；普通/探索含多张缩略图；占卜师含姓名与头像；时分取 created_at。
         另带 conversation_type / conversation_label / stage / stage_label / theme_key（与历史列表同套）。
@@ -4154,6 +4156,18 @@ components:
             App 按 business_date 归天、打点；按 type / conversation_type 画大卡与列表。
           items:
             $ref: '#/components/schemas/CalendarItem'
+        cycle_daily:
+          allOf:
+            - $ref: '#/components/schemas/CalendarItem'
+          nullable: true
+          description: |
+            运势目标日=cycle 的 daily 记录（含前一日提前抽的明日运势）。按 target_date 复用，不改 days 归天。
+            无则为省略/null。首页/日详情应优先用此字段或 POST /daily，勿只按 business_date=cycle 查找。
+        tomorrow_daily:
+          allOf:
+            - $ref: '#/components/schemas/CalendarItem'
+          nullable: true
+          description: 运势目标日=tomorrow_date 的 daily 记录；语义同 cycle_daily。
         cycle:
           type: string
           description: 当前业务日 YYYY-MM-DD。
@@ -4686,7 +4700,7 @@ components:
         recommended_spreads:
           type: array
           description: |
-            本地匹配结果，0 或 1 条。命中时 recommended=true。
+            推荐结果，通常 1 条（MATCHED 或 FALLBACK）；仅目录为空时为 0。recommended=true。
             每项含 id、name、description（牌阵含义）、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
           items:
             type: object
@@ -4713,9 +4727,12 @@ components:
         match_status:
           type: string
           description: |
-            MATCHED（命中 1 套）、NO_MATCH、NO_MATCH_MAIN_INTENT（无 supported D/C 覆盖主要诉求）、
-            INPUT_NOT_MATCHABLE（无效/宽泛/快照不完整）。旧值 RECOMMENDED 已改为 MATCHED。
-          enum: [MATCHED, NO_MATCH, NO_MATCH_MAIN_INTENT, INPUT_NOT_MATCHABLE]
+            MATCHED（能力命中）、FALLBACK（无命中/宽泛/无效时的目录兜底，见 fallback_reason）、
+            NO_MATCH、NO_MATCH_MAIN_INTENT、INPUT_NOT_MATCHABLE（目录也无可用牌阵时）。
+          enum: [MATCHED, FALLBACK, NO_MATCH, NO_MATCH_MAIN_INTENT, INPUT_NOT_MATCHABLE]
+        fallback_reason:
+          type: string
+          description: match_status=FALLBACK 时保留原匹配结论（如 INPUT_NOT_MATCHABLE / NO_MATCH_MAIN_INTENT）。
         mapping_status:
           type: string
           description: 能力映射配置状态；当前嵌入 draft_v1（PRD §6.4 草案，priority 为 draft_accepted_by_product）。

@@ -680,6 +680,45 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	if reading["business_date"] != drawDay || reading["target_date"] != reuseCycle {
 		t.Fatalf("target-day reuse dates: %#v", reading)
 	}
+	// Calendar exposes fortune-day pointer without moving draw-day bucket.
+	reuseCal2 := listOne(t, ts, reuseToken, "/api/app/v1/calendar")
+	cycleDaily, _ := reuseCal2["cycle_daily"].(map[string]any)
+	if cycleDaily == nil || asID(cycleDaily["id"]) != advanceID {
+		t.Fatalf("cycle_daily missing advance reading: %#v", reuseCal2["cycle_daily"])
+	}
+
+	// Mis-backfilled advance row: target_date wrongly equals draw day — still reuse on next day.
+	misToken, misUID := registerUser(t, ts, store, "misbackfill")
+	seedInvite(t, store, misUID, 1)
+	misCal := listOne(t, ts, misToken, "/api/app/v1/calendar")
+	misCycle := fmt.Sprint(misCal["cycle"])
+	misDay, _ := time.Parse("2006-01-02", misCycle)
+	misDraw := misDay.AddDate(0, 0, -1).Format("2006-01-02")
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle, cards, interpretation)
+		VALUES ($1,'daily','明日运势','COMPLETED',$2,$2,$2,'[{"name":"魔术师","orientation":"upright"}]','误回填明日。')`,
+		misUID, misDraw); err != nil {
+		t.Fatal(err)
+	}
+	var misID int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM readings WHERE user_id=$1 AND question='明日运势'`, misUID).Scan(&misID); err != nil {
+		t.Fatal(err)
+	}
+	msg, raw = call(t, ts, misToken, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
+	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "不重复扣") {
+		t.Fatalf("mis-backfill reuse: %s %s", msg, raw)
+	}
+	misReuse := decodeData(t, raw)
+	misReading, _ := misReuse["reading"].(map[string]any)
+	if asID(misReading["id"]) != misID {
+		t.Fatalf("mis-backfill should hit same reading: %#v", misReuse)
+	}
+	var healedTarget string
+	if err := store.QueryRow(t.Context(), `SELECT target_date FROM readings WHERE id=$1`, misID).Scan(&healedTarget); err != nil {
+		t.Fatal(err)
+	}
+	if healedTarget != misCycle {
+		t.Fatalf("target_date not healed: got %s want %s", healedTarget, misCycle)
+	}
 	// Draw-day calendar: tomorrow fortune lands on cycle day as 普通占卜.
 	drawCalDays, _ := listOne(t, ts, other, "/api/app/v1/calendar")["days"].([]any)
 	foundTomorrow := false

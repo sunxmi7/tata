@@ -406,24 +406,23 @@ func (a *App) localDetect(r *http.Request, uid int64, question string) (map[stri
 		}
 	}
 	status, _ := out["match_status"].(string)
-	if status == matchStatusMatched {
-		out["reason"] = "local_match"
-		if !member {
-			out["entitlement_note"] = "no_entitlement"
-		}
-		return out, nil
-	}
-	if !member {
-		out["reason"] = "no_entitlement"
-		return out, nil
-	}
 	switch status {
+	case matchStatusMatched:
+		out["reason"] = "local_match"
+	case matchStatusFallback:
+		out["reason"] = "fallback"
 	case matchStatusInputNotMatchable:
 		out["reason"] = "input_not_matchable"
 	case matchStatusNoMatchMainIntent:
 		out["reason"] = "no_match_main_intent"
 	default:
 		out["reason"] = "no_match"
+	}
+	if !member {
+		out["entitlement_note"] = "no_entitlement"
+		if status != matchStatusMatched && status != matchStatusFallback {
+			out["reason"] = "no_entitlement"
+		}
 	}
 	return out, nil
 }
@@ -1010,9 +1009,8 @@ func asInt64OK(v any) (int64, bool) {
 	}
 }
 
-// applyLocalRecommendToSpreadChoices marks at most one matched spread as recommended
-// in the in-memory list (does not rewrite admin DB flags), sorts it to the front,
-// and remembers it on the reading when matched.
+// applyLocalRecommendToSpreadChoices marks at most one spread as recommended
+// (local match or fallback). Does not blank the list when catalog is empty.
 func (a *App) applyLocalRecommendToSpreadChoices(r *http.Request, readingID int64, question string, spreads []map[string]any) int64 {
 	payload := map[string]any{"question": strings.TrimSpace(question)}
 	if err := a.attachRecommendation(r, payload); err != nil {
@@ -1020,9 +1018,7 @@ func (a *App) applyLocalRecommendToSpreadChoices(r *http.Request, readingID int6
 	}
 	list, _ := payload["recommended_spreads"].([]map[string]any)
 	if len(list) == 0 {
-		for _, item := range spreads {
-			item["recommended"] = false
-		}
+		// Keep any DB recommended flags already loaded; do not wipe to all-false.
 		return 0
 	}
 	matchedID, _ := list[0]["id"].(int64)
@@ -1885,10 +1881,55 @@ WHERE r.user_id=$1 AND r.deleted_at IS NULL AND r.business_date<>''`
 	if err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{
+	out := map[string]any{
 		"days": list, "cycle": cycle, "tomorrow_date": tomorrow,
-	})
+	}
+	// Fortune-day lookup for home/calendar day detail: reuse advance-drawn rows by target_date
+	// without moving the draw-day bucket in days[].
+	if cycleDaily := a.calendarDailyByFortuneDay(r, uid, cycle, cfg); cycleDaily != nil {
+		out["cycle_daily"] = cycleDaily
+	}
+	if tomorrowDaily := a.calendarDailyByFortuneDay(r, uid, tomorrow, cfg); tomorrowDaily != nil {
+		out["tomorrow_daily"] = tomorrowDaily
+	}
+	writeOK(w, out)
 	return nil
+}
+
+// calendarDailyByFortuneDay returns one daily reading whose fortune day is fortuneDay (target_date reuse).
+func (a *App) calendarDailyByFortuneDay(r *http.Request, uid int64, fortuneDay string, cfg map[string]string) map[string]any {
+	prevDay, err := prevBusinessDate(fortuneDay)
+	if err != nil {
+		return nil
+	}
+	var id int64
+	var typ, question, status, day, targetDate, themeKey, drawMode string
+	var skipDetect bool
+	var updated, created time.Time
+	var cards, interp *string
+	var tarotistID *int64
+	var tarotistName, tarotistAvatar string
+	err = a.Store.QueryRow(r.Context(), `SELECT r.id, r.type, r.question, r.status, r.business_date, COALESCE(r.target_date,''), r.updated_at, r.created_at, r.cards, r.interpretation, r.tarotist_id, COALESCE(r.theme_key,''), COALESCE(r.draw_mode,''), r.skip_detect, COALESCE(t.name,''), COALESCE(t.avatar_url,'')
+		FROM readings r
+		LEFT JOIN tarotists t ON t.id = r.tarotist_id
+		WHERE r.user_id=$1 AND r.type='daily' AND r.deleted_at IS NULL AND r.cards IS NOT NULL AND r.cards<>''
+			AND `+dailyFortuneMatchSQL+`
+		ORDER BY CASE WHEN r.target_date=$2 THEN 0 ELSE 1 END, r.id DESC LIMIT 1`, uid, fortuneDay, prevDay).
+		Scan(&id, &typ, &question, &status, &day, &targetDate, &updated, &created, &cards, &interp, &tarotistID, &themeKey, &drawMode, &skipDetect, &tarotistName, &tarotistAvatar)
+	if err != nil {
+		return nil
+	}
+	label, next := progressOfReading(status, skipDetect, drawMode)
+	item := map[string]any{
+		"id": id, "type": typ, "question": question, "status": status, "business_date": day,
+		"target_date": targetDate, "theme_key": themeKey, "draw_mode": drawMode, "skip_detect": skipDetect,
+		"has_result": true, "progress": label, "continue": next, "updated_at": updated, "created_at": created,
+		"cards": cards, "interpretation": interp, "tarotist_id": tarotistID,
+	}
+	cycle := a.userCycle(r, uid)
+	attachConversationMeta(item, cycle)
+	attachCalendarPreview(r, item, cfg, tarotistName, tarotistAvatar)
+	return item
 }
 
 func (a *App) appConfirmQuota(w http.ResponseWriter, r *http.Request) error {

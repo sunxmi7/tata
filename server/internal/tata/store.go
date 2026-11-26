@@ -212,6 +212,11 @@ UPDATE readings SET target_date=business_date
 	WHERE type='daily' AND target_date='' AND business_date<>'';
 UPDATE readings SET business_date=quota_cycle
 	WHERE type='daily' AND question='明日运势' AND COALESCE(quota_cycle,'')<>'' AND quota_cycle < business_date;
+-- Heal rows that kept target_date=draw day after early「抽牌日归天」writes (lost fortune day).
+UPDATE readings SET target_date=to_char((business_date::date + 1), 'YYYY-MM-DD')
+	WHERE type='daily' AND question='明日运势'
+		AND business_date<>'' AND target_date=business_date
+		AND (COALESCE(quota_cycle,'')='' OR quota_cycle=business_date);
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS skip_detect BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS reward_consumed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS numerology_map TEXT NOT NULL DEFAULT '';

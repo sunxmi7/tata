@@ -13,18 +13,19 @@ import (
 var spreadMatchConfigJSON []byte
 
 const (
-	matchStatusMatched            = "MATCHED"
-	matchStatusNoMatch            = "NO_MATCH"
-	matchStatusNoMatchMainIntent  = "NO_MATCH_MAIN_INTENT"
-	matchStatusInputNotMatchable  = "INPUT_NOT_MATCHABLE"
-	detectionStatusInvalid        = "invalid"
-	detectionStatusBroad          = "broad"
-	detectionStatusSpecific       = "specific"
-	coverageDirect                = "D"
-	coverageCombined              = "C"
-	mappingValidationSupported    = "supported"
-	structureMatchYes             = "MATCH"
-	structureMatchNo              = "NO_MATCH"
+	matchStatusMatched           = "MATCHED"
+	matchStatusNoMatch           = "NO_MATCH"
+	matchStatusNoMatchMainIntent = "NO_MATCH_MAIN_INTENT"
+	matchStatusInputNotMatchable = "INPUT_NOT_MATCHABLE"
+	matchStatusFallback          = "FALLBACK"
+	detectionStatusInvalid       = "invalid"
+	detectionStatusBroad         = "broad"
+	detectionStatusSpecific      = "specific"
+	coverageDirect               = "D"
+	coverageCombined             = "C"
+	mappingValidationSupported   = "supported"
+	structureMatchYes            = "MATCH"
+	structureMatchNo             = "NO_MATCH"
 )
 
 type intentCoverage struct {
@@ -329,6 +330,40 @@ func (a *App) loadOrdinarySpreadsForMatch(ctx context.Context) ([]dbSpreadRow, e
 	return out, rows.Err()
 }
 
+func recommendSpreadItem(r *http.Request, row dbSpreadRow, code, coverage string) map[string]any {
+	item := map[string]any{
+		"id": row.ID, "name": T(r.Context(), row.Name), "description": T(r.Context(), row.Desc),
+		"short_sentence": row.Short, "card_count": row.Count, "recommended": true,
+		"thumbnail":   absoluteAssetURL(r, deckPreviewURL(row.Thumb)),
+		"depth_group": row.Depth, "depth_label": depthLabel(row.Depth),
+	}
+	if code != "" {
+		item["spread_code"] = code
+	}
+	if coverage != "" {
+		item["coverage"] = coverage
+	}
+	return item
+}
+
+// pickFallbackSpread prefers DB recommended, then first quick-group, then first ordinary row.
+func pickFallbackSpread(rows []dbSpreadRow) (dbSpreadRow, bool) {
+	for _, row := range rows {
+		if row.DBRec {
+			return row, true
+		}
+	}
+	for _, row := range rows {
+		if row.Depth == "quick" {
+			return row, true
+		}
+	}
+	if len(rows) > 0 {
+		return rows[0], true
+	}
+	return dbSpreadRow{}, false
+}
+
 func (a *App) attachRecommendation(r *http.Request, out map[string]any) error {
 	cfg := embeddedSpreadMatchConfig
 	out["recommended_spreads"] = []map[string]any{}
@@ -347,27 +382,35 @@ func (a *App) attachRecommendation(r *http.Request, out map[string]any) error {
 		out["has_dual_options"] = true
 	}
 
-	if snap.DetectionStatus != detectionStatusSpecific || snap.MainIntent == "" || snap.MainStructure == "" {
-		out["match_status"] = matchStatusInputNotMatchable
-		return nil
-	}
-
 	rows, err := a.loadOrdinarySpreadsForMatch(r.Context())
 	if err != nil {
 		return err
 	}
-	best, status := cfg.match(snap, rows)
-	out["match_status"] = status
-	if status != matchStatusMatched {
+
+	if snap.DetectionStatus != detectionStatusSpecific || snap.MainIntent == "" || snap.MainStructure == "" {
+		out["match_status"] = matchStatusInputNotMatchable
+		// Broad/invalid: still give one selectable default so App 选阵屏不空。
+		if row, ok := pickFallbackSpread(rows); ok {
+			out["recommended_spreads"] = []map[string]any{recommendSpreadItem(r, row, "", "")}
+			out["match_status"] = matchStatusFallback
+			out["fallback_reason"] = matchStatusInputNotMatchable
+		}
 		return nil
 	}
-	item := map[string]any{
-		"id": best.row.ID, "name": T(r.Context(), best.row.Name), "description": T(r.Context(), best.row.Desc),
-		"short_sentence": best.row.Short, "card_count": best.row.Count, "recommended": true,
-		"thumbnail":   absoluteAssetURL(r, deckPreviewURL(best.row.Thumb)),
-		"depth_group": best.row.Depth, "depth_label": depthLabel(best.row.Depth),
-		"spread_code": best.cfg.Code, "coverage": best.mainCoverage,
+
+	best, status := cfg.match(snap, rows)
+	out["match_status"] = status
+	if status == matchStatusMatched {
+		out["recommended_spreads"] = []map[string]any{
+			recommendSpreadItem(r, best.row, best.cfg.Code, best.mainCoverage),
+		}
+		return nil
 	}
-	out["recommended_spreads"] = []map[string]any{item}
+	// Specific but no capability hit: fall back so recommend never returns an empty list when catalog exists.
+	if row, ok := pickFallbackSpread(rows); ok {
+		out["recommended_spreads"] = []map[string]any{recommendSpreadItem(r, row, "", "")}
+		out["match_status"] = matchStatusFallback
+		out["fallback_reason"] = status
+	}
 	return nil
 }

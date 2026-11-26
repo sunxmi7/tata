@@ -117,16 +117,37 @@ func TestRecommendLocalMatchAPI(t *testing.T) {
 
 	broad := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "最近运势如何", "type": "normal"})
 	broadRec := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", asID(broad["id"])), map[string]any{})
-	if broadRec["match_status"] != matchStatusInputNotMatchable || len(broadRec["recommended_spreads"].([]any)) != 0 {
-		t.Fatalf("broad: %#v", broadRec)
+	if broadRec["match_status"] != matchStatusFallback || len(broadRec["recommended_spreads"].([]any)) != 1 {
+		t.Fatalf("broad should fallback to 1 spread: %#v", broadRec)
+	}
+	if broadRec["fallback_reason"] != matchStatusInputNotMatchable {
+		t.Fatalf("broad fallback_reason: %#v", broadRec["fallback_reason"])
 	}
 
 	invalid := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "????", "type": "normal"})
 	invalidRec := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", asID(invalid["id"])), map[string]any{})
-	if invalidRec["match_status"] != matchStatusInputNotMatchable {
-		t.Fatalf("invalid: %#v", invalidRec)
+	if invalidRec["match_status"] != matchStatusFallback || len(invalidRec["recommended_spreads"].([]any)) != 1 {
+		t.Fatalf("invalid should fallback: %#v", invalidRec)
 	}
 	_ = http.StatusOK
+}
+
+func TestSpreadChoicesFallbackKeepsRecommended(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "choicesfallback")
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "最近运势如何", "type": "normal"})
+	choices := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/spread-choices", asID(reading["id"])))
+	msgs, _ := choices["messages"].([]any)
+	spreads, _ := msgs[0].(map[string]any)["spreads"].([]any)
+	recCount := 0
+	for _, raw := range spreads {
+		if raw.(map[string]any)["recommended"] == true {
+			recCount++
+		}
+	}
+	if recCount != 1 {
+		t.Fatalf("broad spread-choices should still mark 1 recommended: count=%d %#v", recCount, spreads)
+	}
 }
 
 func TestSpreadChoicesOverlaysLocalRecommend(t *testing.T) {

@@ -1607,6 +1607,26 @@ func nextBusinessDate(cycle string) (string, error) {
 	return t.AddDate(0, 0, 1).Format("2006-01-02"), nil
 }
 
+func prevBusinessDate(cycle string) (string, error) {
+	t, err := time.Parse("2006-01-02", cycle)
+	if err != nil {
+		return "", err
+	}
+	return t.AddDate(0, 0, -1).Format("2006-01-02"), nil
+}
+
+// dailyFortuneMatchSQL matches a daily reading by fortune day ($2).
+// Also recovers mis-backfilled「明日运势」rows that kept target_date=draw day ($3=prev day).
+const dailyFortuneMatchSQL = `(
+	target_date=$2
+	OR (COALESCE(target_date,'')='' AND business_date=$2)
+	OR (
+		question='明日运势'
+		AND business_date=$3
+		AND (target_date=$2 OR target_date=$3 OR COALESCE(target_date,'')='')
+	)
+)`
+
 func (a *App) appCancelPaywall(w http.ResponseWriter, r *http.Request) error {
 	uid, err := a.appActor(r)
 	if err != nil {

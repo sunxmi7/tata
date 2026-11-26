@@ -1557,27 +1557,32 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 	if err != nil {
 		return 0, "", "", "", nil, false, err
 	}
-	// Uniqueness / reuse key is the fortune day (target_date), with legacy fallback
-	// where older rows stored that day in business_date only.
-	const dailyTargetMatch = `(target_date=$2 OR (COALESCE(target_date,'')='' AND business_date=$2))`
+	// Uniqueness / reuse key is the fortune day (target_date), with legacy fallbacks.
+	prevDay, err := prevBusinessDate(targetDate)
+	if err != nil {
+		return 0, target, drawDate, targetDate, nil, false, err
+	}
 	var usedSlots int
 	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings
-		WHERE user_id=$1 AND type='daily' AND `+dailyTargetMatch+`
-		AND cards IS NOT NULL AND cards <> ''`, uid, targetDate).Scan(&usedSlots); err != nil {
+		WHERE user_id=$1 AND type='daily' AND `+dailyFortuneMatchSQL+`
+		AND cards IS NOT NULL AND cards <> ''`, uid, targetDate, prevDay).Scan(&usedSlots); err != nil {
 		return 0, target, drawDate, targetDate, nil, false, err
 	}
 	if usedSlots >= 1 {
 		var existingID int64
 		err = a.Store.QueryRow(r.Context(), `SELECT id FROM readings
-			WHERE user_id=$1 AND type='daily' AND deleted_at IS NULL AND `+dailyTargetMatch+`
+			WHERE user_id=$1 AND type='daily' AND deleted_at IS NULL AND `+dailyFortuneMatchSQL+`
 			AND cards IS NOT NULL AND cards <> ''
-			ORDER BY id DESC LIMIT 1`, uid, targetDate).Scan(&existingID)
+			ORDER BY CASE WHEN target_date=$2 THEN 0 ELSE 1 END, id DESC LIMIT 1`, uid, targetDate, prevDay).Scan(&existingID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, target, drawDate, targetDate, nil, false, biz("该日已使用，删除记录后不能再抽")
 		}
 		if err != nil {
 			return 0, target, drawDate, targetDate, nil, false, err
 		}
+		// Heal mis-backfilled advance rows so later lookups hit target_date directly.
+		_, _ = a.Store.Exec(r.Context(), `UPDATE readings SET target_date=$1, updated_at=now()
+			WHERE id=$2 AND type='daily' AND question='明日运势' AND (target_date='' OR target_date=business_date)`, targetDate, existingID)
 		item, loadErr := a.loadReadingAbs(r.Context(), r, existingID)
 		if loadErr != nil {
 			return 0, target, drawDate, targetDate, nil, false, loadErr
@@ -1589,6 +1594,7 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 		if targetDate != cycle {
 			msg = T(r.Context(), "该日已有结果，不重复扣额度")
 		}
+		attachConversationMeta(item, cycle)
 		a.attachDailyHome(r.Context(), r, item, target, drawDate, targetDate)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"code": 1, "message": msg,
@@ -1602,9 +1608,9 @@ func (a *App) openDaily(w http.ResponseWriter, r *http.Request, stream bool) (id
 	}
 	defer tx.Rollback(r.Context())
 	err = tx.QueryRow(r.Context(), `SELECT id FROM readings
-		WHERE user_id=$1 AND type='daily' AND deleted_at IS NULL AND `+dailyTargetMatch+`
+		WHERE user_id=$1 AND type='daily' AND deleted_at IS NULL AND `+dailyFortuneMatchSQL+`
 		AND (cards IS NULL OR cards='')
-		ORDER BY id DESC LIMIT 1 FOR UPDATE`, uid, targetDate).Scan(&id)
+		ORDER BY id DESC LIMIT 1 FOR UPDATE`, uid, targetDate, prevDay).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = tx.QueryRow(r.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle)
 			VALUES ($1,'daily',$2,'QUESTION_CREATED',$3,$4,$5) RETURNING id`, uid, question, drawDate, targetDate, cycle).Scan(&id)
