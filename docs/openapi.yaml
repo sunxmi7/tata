@@ -23,7 +23,7 @@ info:
 
     ## 鉴权
     公开目录不需要 token：`GET /preset-questions`、`/spreads`、`/banners`、`/tarotists`、`/explore/topics`、`/campaigns`、`/campaigns/{id}`、`/help/*`、`/iap/skus`、`/iap/config`。创建占卜、额度、档案、今日一牌等仍要登录。其余需要登录（）的接口：在 **Headers** 加参数 `Authorization`，值写成 `Bearer <accessToken>`（Bearer 后面有一个空格）。不要放进请求体。
-    Access token 为 HS256 JWT，`typ=access`，约 2 小时过期。
+    Access token 为 HS256 JWT，`typ=access`；App 约 7 天过期，管理端约 2 小时过期。
     - App：`aud=app`。登录用户 `sub` 为 `app_users.id`。`role` 为空。
     - 管理端：`aud=admin`。`sub` 为 `operators.id`，`role` 为 `admin` 或 `readonly`。
     两种令牌不能互换。已合并账号（`merged_into` 非空）、不存在的用户、已停用的操作员会被拒绝。
@@ -1706,7 +1706,7 @@ components:
       properties:
         accessToken:
           type: string
-          description: App JWT，放进 Authorization Bearer。约 2 小时过期。不签发 refresh。
+          description: App JWT，放进 Authorization Bearer。约 7 天过期。不签发 refresh。
         id:
           type: integer
           format: int64
@@ -2640,6 +2640,18 @@ components:
           type: integer
           description: 当前实现固定为 3，不是从模型输出解析的条数。
           example: 3
+        recommended_spreads:
+          type: array
+          description: |
+            运营勾选 recommended=true 的已启用普通牌阵。可多条。
+            每项含 id、name、description、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
+          items:
+            type: object
+            additionalProperties: true
+        match_status:
+          type: string
+        mapping_status:
+          type: string
     CreateReadingBody:
       type: object
       additionalProperties: false

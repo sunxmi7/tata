@@ -206,7 +206,7 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 		switch task {
 		case "detect":
 			step := flowStep{Task: "detect", Input: question}
-			payload, derr := a.localDetect(r.Context(), uid, question)
+			payload, derr := a.localDetect(r, uid, question)
 			if derr != nil {
 				step.Error = derr.Error()
 			} else {

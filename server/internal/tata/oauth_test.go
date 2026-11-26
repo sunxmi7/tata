@@ -133,6 +133,29 @@ func TestWechatAppleUnconfiguredHTTP(t *testing.T) {
 	}
 }
 
+func TestMergedWechatAppleCannotLogin(t *testing.T) {
+	store, ts := newMergeServer(t)
+	wxCode := fmt.Sprintf("wx-merged-%d", time.Now().UnixNano())
+	data := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]string{"code": wxCode})
+	uid := asID(data["id"])
+	_, primary := registerUser(t, ts, store, "wxprimary")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET merged_into=$1 WHERE id=$2`, primary, uid); err != nil {
+		t.Fatal(err)
+	}
+	if msg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/wechat", map[string]string{"code": wxCode}); msg != "账号已合并" {
+		t.Fatalf("merged wechat: %s", msg)
+	}
+	appleTok := fmt.Sprintf("apple-merged-%d", time.Now().UnixNano())
+	apple := create(t, ts, "", "/api/app/v1/auth/apple", map[string]string{"identity_token": appleTok})
+	appleID := asID(apple["id"])
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET merged_into=$1 WHERE id=$2`, primary, appleID); err != nil {
+		t.Fatal(err)
+	}
+	if msg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/apple", map[string]string{"identity_token": appleTok}); msg != "账号已合并" {
+		t.Fatalf("merged apple: %s", msg)
+	}
+}
+
 func TestWechatAppleLoginAndBind(t *testing.T) {
 	store, ts := newMergeServer(t)
 	wxCode := fmt.Sprintf("wx-login-%d", time.Now().UnixNano())

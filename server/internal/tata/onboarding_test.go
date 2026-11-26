@@ -249,8 +249,13 @@ func TestRecommendUsesConfiguredSpread(t *testing.T) {
 	payload := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", rid), map[string]any{})
 	found := false
 	for _, raw := range payload["recommended_spreads"].([]any) {
-		if raw.(map[string]any)["name"] == "时间流" {
-			found = true
+		item := raw.(map[string]any)
+		if item["name"] != "时间流" {
+			continue
+		}
+		found = true
+		if item["description"] == nil || item["description"] == "" || item["card_count"] != float64(3) || item["recommended"] != true || item["thumbnail"] == nil || item["thumbnail"] == "" {
+			t.Fatalf("recommend fields incomplete: %#v", item)
 		}
 	}
 	if !found || payload["match_status"] != "RECOMMENDED" || payload["mapping_status"] != "unconfigured" {

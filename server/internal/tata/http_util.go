@@ -98,11 +98,15 @@ type redisLocker interface {
 }
 
 func (a *App) signAccess(aud string, sub int64, role string) (string, error) {
+	ttl := 2 * time.Hour
+	if aud == "app" {
+		ttl = 7 * 24 * time.Hour
+	}
 	claims := jwt.MapClaims{
 		"aud":  aud,
 		"sub":  sub,
 		"role": role,
-		"exp":  time.Now().Add(2 * time.Hour).Unix(),
+		"exp":  time.Now().Add(ttl).Unix(),
 		"typ":  "access",
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.JWTSecret)

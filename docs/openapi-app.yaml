@@ -30,7 +30,7 @@ info:
     未登录占卜不带 `Authorization`，用 `device_id`。创建、列表、详情、选阵、推荐、灵数、灵数补抽和对话记录可以这样调。请求里带了 `Authorization` 但令牌无效，返回 HTTP 401。
     解读、追问、删除、额度、档案、今日一牌必须登录。在 **Headers** 加 `Authorization: Bearer <accessToken>`（Bearer 后面有一个空格）。
     token 只来自邮箱验证码、微信或苹果登录的 `data.accessToken`。首次登录创建账号。不要放进请求体或 Query。
-    Access token 为 HS256 JWT，`typ=access`，约 2 小时过期。`aud=app`，`sub` 为 `app_users.id`。
+    Access token 为 HS256 JWT，`typ=access`，约 7 天过期。`aud=app`，`sub` 为 `app_users.id`。
     已合并账号（`merged_into` 非空）或不存在的用户会被拒绝。App 登录接口不签发 refresh token。漏带或无效返回 HTTP 401「未登录或令牌无效」。
 
     全局 CORS 允许头：`Authorization`、`Content-Type`、`Idempotency-Key`、`Accept-Language`、`X-Language`、`Accept`。`OPTIONS` 返回 204，没有单独业务路径。
@@ -1416,6 +1416,7 @@ paths:
       summary: 推荐牌阵
       description: |
         不调用模型。返回 recommended_spreads：已启用、普通占卜、recommended=true 的牌阵。
+        每项含 id、name、description、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label，与 spread-choices 里单条牌阵字段对齐，供推荐卡片展示含义与缩略图。
         已登录带令牌。未登录不带令牌，query 带 device_id。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
@@ -3957,7 +3958,7 @@ components:
       properties:
         accessToken:
           type: string
-          description: App JWT，放进 Authorization Bearer。约 2 小时过期。不签发 refresh。
+          description: App JWT，放进 Authorization Bearer。约 7 天过期。不签发 refresh。
         id:
           type: integer
           format: int64
@@ -4650,6 +4651,39 @@ components:
           type: integer
           description: 当前实现固定为 3，不是从模型输出解析的条数。
           example: 3
+        recommended_spreads:
+          type: array
+          description: |
+            运营勾选 recommended=true 的已启用普通牌阵。可多条。
+            每项含 id、name、description（牌阵含义）、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                format: int64
+              name:
+                type: string
+              description:
+                type: string
+              short_sentence:
+                type: string
+              card_count:
+                type: integer
+              recommended:
+                type: boolean
+              thumbnail:
+                type: string
+              depth_group:
+                type: string
+              depth_label:
+                type: string
+        match_status:
+          type: string
+          description: 有推荐牌阵时为 RECOMMENDED，否则 NO_MATCH。
+        mapping_status:
+          type: string
+          description: 问题到牌阵的映射未配置时为 unconfigured。
     CreateReadingBody:
       type: object
       additionalProperties: false

@@ -101,8 +101,9 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	mergeWeChatHints(&prof, req)
 	var id int64
 	var cancelled *time.Time
+	var merged *int64
 	created := false
-	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE wechat_openid=$1`, prof.ID).Scan(&id, &cancelled)
+	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at, merged_into FROM app_users WHERE wechat_openid=$1`, prof.ID).Scan(&id, &cancelled, &merged)
 	if err != nil {
 		if a.claimed(r, "wechat", prof.ID) {
 			writeErr(w, r, http.StatusOK, "该微信已注销，不能重复注册")
@@ -117,6 +118,10 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
+		return
+	}
+	if merged != nil {
+		writeErr(w, r, http.StatusOK, "账号已合并")
 		return
 	}
 	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID); err != nil {
@@ -155,8 +160,9 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	}
 	var id int64
 	var cancelled *time.Time
+	var merged *int64
 	created := false
-	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at FROM app_users WHERE apple_sub=$1`, sub).Scan(&id, &cancelled)
+	err = a.Store.QueryRow(r.Context(), `SELECT id, cancelled_at, merged_into FROM app_users WHERE apple_sub=$1`, sub).Scan(&id, &cancelled, &merged)
 	if err != nil {
 		if a.claimed(r, "apple", sub) {
 			writeErr(w, r, http.StatusOK, "该苹果账号已注销，不能重复注册")
@@ -171,6 +177,10 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 	}
 	if cancelled != nil {
 		writeErr(w, r, http.StatusOK, "账号已注销")
+		return
+	}
+	if merged != nil {
+		writeErr(w, r, http.StatusOK, "账号已合并")
 		return
 	}
 	if err := a.rememberLoginDevice(r.Context(), id, req.DeviceID); err != nil {
@@ -323,7 +333,7 @@ func (a *App) appRecommend(w http.ResponseWriter, r *http.Request) error {
 	if err := a.Store.QueryRow(r.Context(), `SELECT question FROM readings WHERE id=$1`, id).Scan(&question); err != nil {
 		return err
 	}
-	payload, err := a.localDetect(r.Context(), uid, question)
+	payload, err := a.localDetect(r, uid, question)
 	if err != nil {
 		return err
 	}
@@ -332,12 +342,12 @@ func (a *App) appRecommend(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) attachRecommendation(ctx context.Context, out map[string]any) error {
+func (a *App) attachRecommendation(r *http.Request, out map[string]any) error {
 	out["recommended_spreads"] = []map[string]any{}
 	out["match_status"] = "NO_MATCH"
 	out["mapping_status"] = "unconfigured"
-	rows, err := a.Store.Query(ctx, `SELECT id, name, card_count, depth_group FROM spreads
-		WHERE enabled=true AND theme_key='' AND recommended=true ORDER BY sort_order, id`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail, depth_group
+		FROM spreads WHERE enabled=true AND theme_key='' AND recommended=true ORDER BY sort_order, id`)
 	if err != nil {
 		return err
 	}
@@ -345,13 +355,16 @@ func (a *App) attachRecommendation(ctx context.Context, out map[string]any) erro
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var name, depth string
+		var name, desc, short, thumb, depth string
 		var count int
-		if err := rows.Scan(&id, &name, &count, &depth); err != nil {
+		var recommended bool
+		if err := rows.Scan(&id, &name, &desc, &short, &count, &recommended, &thumb, &depth); err != nil {
 			return err
 		}
 		list = append(list, map[string]any{
-			"id": id, "name": name, "card_count": count,
+			"id": id, "name": T(r.Context(), name), "description": T(r.Context(), desc),
+			"short_sentence": short, "card_count": count, "recommended": recommended,
+			"thumbnail": absoluteAssetURL(r, deckPreviewURL(thumb)),
 			"depth_group": depth, "depth_label": depthLabel(depth),
 		})
 	}
@@ -377,7 +390,7 @@ func (a *App) rememberRecommendation(ctx context.Context, readingID int64, paylo
 	_, _ = a.Store.Exec(ctx, `UPDATE readings SET recommended_spread_id=$1 WHERE id=$2 AND spread_id IS NULL`, id, readingID)
 }
 
-func (a *App) localDetect(ctx context.Context, uid int64, question string) (map[string]any, error) {
+func (a *App) localDetect(r *http.Request, uid int64, question string) (map[string]any, error) {
 	q := strings.TrimSpace(question)
 	out := map[string]any{
 		"question":          q,
@@ -393,13 +406,13 @@ func (a *App) localDetect(ctx context.Context, uid int64, question string) (map[
 		out["match_status"] = "NO_MATCH"
 		return out, nil
 	}
-	if err := a.attachRecommendation(ctx, out); err != nil {
+	if err := a.attachRecommendation(r, out); err != nil {
 		return nil, err
 	}
 	member := false
 	var err error
 	if uid > 0 {
-		member, err = hasActiveMembership(ctx, a.Store, uid)
+		member, err = hasActiveMembership(r.Context(), a.Store, uid)
 		if err != nil {
 			return nil, err
 		}
