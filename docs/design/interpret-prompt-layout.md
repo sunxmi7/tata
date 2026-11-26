@@ -2,18 +2,16 @@
 
 产品原文：`docs/design/interpret-rules-v1.md`（来自《塔塔解读规则.md》）。
 
-## 仓库现状（改前）
+## 仓库分层
 
 | 层级 | 位置 | 作用 |
 |---|---|---|
-| System | `server/internal/readingflow/prompt.go` 常量 | 按 binding task（detect/rewrite/recommend/interpret/tarotist）写死短系统提示 |
-| User | `server/internal/tata/generate.go` `buildInterpretPrompt` | 拼「不得改牌 + 问题/主题 + 牌面 JSON + 大阿尔卡纳参考」 |
-| 调用 | `aijob.executeInterpret` → `runEinoStream(task, userPrompt)` | task 对 normal/daily/explore 都是 `interpret`，系统提示相同 |
-| 供应商 | `bindings` 表 | 只绑 vendor/model，**没有**可编辑 prompt 配置表/Admin 页 |
+| System | `readingflow/prompts/*.md` + `InterpretSystem(mode)` | 普通/今日/明日/探索规则包 |
+| User | `tata/generate.go` `buildInterpretPrompt` | 问题/主题/牌阵 + **牌位轻量展开** + 牌面 JSON + 大阿尔卡纳参考 |
+| 调用 | `aijob.executeInterpret` | 按 reading type 选 mode，注入 system；加载 `spreads.positions` |
+| 供应商 | `bindings` | 只绑 vendor/model；**不做** Admin 热更新 prompt |
 
-旧 interpret 系统提示要求「逐张解释后给总评」，与规则文档「整体叙事、不拆重复模块」冲突。
-
-## 本次拆分
+## Prompt 拆分
 
 | 文件 | 内容 |
 |---|---|
@@ -22,24 +20,23 @@
 | `readingflow/prompts/daily_today.md` | 今日运势 |
 | `readingflow/prompts/daily_tomorrow.md` | 明日运势 |
 | `readingflow/prompts/explore.md` | 探索 |
-| `readingflow.InterpretRulesVersion` | 版本钉：`interpret-rules-v1-2026-11-25` |
+| `readingflow.InterpretRulesVersion` | `interpret-rules-v1-2026-11-25` |
 
-组合：`InterpretSystem(mode) = common + mode 模块 + 版本行`。塔罗师仍用人设短提示（规则适用范围不含塔罗师）。
+塔罗师仍用人设短提示（规则适用范围不含塔罗师）。年报 **不纳入** 本规则包，继续独立 `buildYearlyPrompt`。
 
-## 如何接入
+## 牌位轻量展开（已定）
 
-1. `executeInterpret` 按 `readings.type` + 问题文案选 mode，把 `InterpretSystem(mode)` 放进 Eino `{system}`。
-2. User 侧仍用 `buildInterpretPrompt`（已去掉「逐张总评」措辞）。
-3. 生成后用 `InterpretationLeakReason` 拦明显指令泄漏；异常则 `FAILED_RETRYABLE`。
+- 数据：`spreads.positions` 的 `name` + `meaning`（即 description）。
+- 普通占卜 / 探索（及塔罗师共用解牌材料）：按**抽牌顺序**输出  
+  `序号. 牌位名：含义 / 牌名 正逆位`。
+- 今日 / 明日：只输出 `牌位：槽位名`，不展开含义。
+- 不做诉求标签（I 代码）级展开。
 
 ## 版本化
 
-- 产品稿改版本：更新 `docs/design/interpret-rules-v1.md`，同步改 `prompts/*.md`，bump `InterpretRulesVersion`。
-- 先走 **embed 文件 + Git**（同 `major_meanings.json` / `legal/*.md`）。Admin DB 可编辑 prompt **未做**，需产品确认是否要运营热更新后再加表。
+- 产品稿改版本：更新 `interpret-rules-v1.md`，同步 `prompts/*.md`，bump `InterpretRulesVersion`。
+- 运维方式：embed 文件 + Git 发版（不做 Admin 热更新）。
 
-## 后续（需拍板）
+## 生成后校验
 
-1. 是否把 yearly 也纳入同一规则包。
-2. 是否做 Admin「解读 Prompt」热更新（库表 + 版本 + 灰度）。
-3. 牌位含义是否在 user prompt 中结构化展开（现主要靠牌面 JSON 里的 `position_name`）。
-4. 更强的输出清洗 / 自动重试策略与额度关系。
+`InterpretationLeakReason` 拦截明显工作性前缀 / 异常格式；异常则 `FAILED_RETRYABLE`。

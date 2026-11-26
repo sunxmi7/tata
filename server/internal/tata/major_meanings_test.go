@@ -68,7 +68,7 @@ func TestBuildPromptTarotistStillHasMeanings(t *testing.T) {
 
 func TestBuildInterpretPromptExploreUsesTheme(t *testing.T) {
 	cards := `[{"position":1,"position_name":"当前问题的答案倾向与核心影响因素","card_id":0,"name":"愚者","orientation":"upright"}]`
-	out := buildInterpretPrompt("explore", "", "Yes or No", "单张是非牌阵", cards)
+	out := buildInterpretPrompt("explore", "", "Yes or No", "单张是非牌阵", cards, nil)
 	if strings.Contains(out, "问题：") {
 		t.Fatalf("should not fake a user question: %s", out)
 	}
@@ -88,7 +88,7 @@ func TestBuildInterpretPromptExploreUsesTheme(t *testing.T) {
 
 func TestBuildInterpretPromptKeepsRealQuestion(t *testing.T) {
 	cards := `[{"position":1,"name":"愚者","orientation":"upright"}]`
-	out := buildInterpretPrompt("explore", "他近期会主动联系我吗？", "Yes or No", "单张是非牌阵", cards)
+	out := buildInterpretPrompt("explore", "他近期会主动联系我吗？", "Yes or No", "单张是非牌阵", cards, nil)
 	if !strings.Contains(out, "问题：他近期会主动联系我吗？") {
 		t.Fatalf("expected real question: %s", out)
 	}
@@ -103,5 +103,36 @@ func TestBuildInterpretPromptKeepsRealQuestion(t *testing.T) {
 	}
 	if strings.Contains(out, "主题：") {
 		t.Fatalf("theme should not override real question: %s", out)
+	}
+}
+
+func TestFormatPositionsBlockLightweight(t *testing.T) {
+	cards := `[{"position":1,"position_name":"过去","card_id":0,"name":"愚者","orientation":"upright"},{"position":2,"position_name":"现在","card_id":1,"name":"魔术师","orientation":"reversed"}]`
+	positions := []position{
+		{Index: 1, Name: "过去", Meaning: "已经发生或仍在影响的背景"},
+		{Index: 2, Name: "现在", Meaning: "当下状态与主要力量"},
+		{Index: 3, Name: "未来", Meaning: "可能的发展方向"},
+	}
+	normal := buildInterpretPrompt("normal", "工作怎么办？", "", "时间流", cards, positions)
+	if !strings.Contains(normal, "牌位（按抽牌顺序）：") {
+		t.Fatalf("missing positions header: %s", normal)
+	}
+	if !strings.Contains(normal, "1. 过去：已经发生或仍在影响的背景 / 愚者 正位") {
+		t.Fatalf("missing first position line: %s", normal)
+	}
+	if !strings.Contains(normal, "2. 现在：当下状态与主要力量 / 魔术师 逆位") {
+		t.Fatalf("missing second position line: %s", normal)
+	}
+	if strings.Contains(normal, "3. 未来") {
+		t.Fatalf("should follow drawn cards only, not unused positions: %s", normal)
+	}
+
+	daily := buildInterpretPrompt("daily", "今日一牌", "", "", `[{"position":1,"position_name":"今日","card_id":0,"name":"愚者","orientation":"upright"}]`,
+		[]position{{Index: 1, Name: "今日", Meaning: "当天整体状态"}})
+	if !strings.Contains(daily, "牌位：今日") {
+		t.Fatalf("daily should only list slot name: %s", daily)
+	}
+	if strings.Contains(daily, "当天整体状态") || strings.Contains(daily, "牌位（按抽牌顺序）") {
+		t.Fatalf("daily should not expand meaning: %s", daily)
 	}
 }

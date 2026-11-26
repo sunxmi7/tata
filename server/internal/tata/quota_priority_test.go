@@ -492,7 +492,7 @@ func TestExploreEmptyQuestionUsesThemeContext(t *testing.T) {
 	if gotTheme != themeTitle || gotSpread != spreadName {
 		t.Fatalf("theme context: got %q/%q want %q/%q", gotTheme, gotSpread, themeTitle, spreadName)
 	}
-	prompt := buildInterpretPrompt("explore", "", gotTheme, gotSpread, `[{"position":1,"name":"愚者","orientation":"upright"}]`)
+	prompt := buildInterpretPrompt("explore", "", gotTheme, gotSpread, `[{"position":1,"name":"愚者","orientation":"upright"}]`, nil)
 	if !strings.Contains(prompt, "主题："+themeTitle) || !strings.Contains(prompt, "牌阵："+spreadName) {
 		t.Fatalf("prompt missing theme context: %s", prompt)
 	}

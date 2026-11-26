@@ -230,8 +230,9 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 				kind = typ
 			}
 			themeTitle, spreadName, _ := a.interpretThemeContext(r.Context(), id)
+			positions := a.loadReadingPositions(r.Context(), id)
 			saved, genErr := a.generate(r.Context(), id, false)
-			step := flowStep{Task: task, Input: buildInterpretPrompt(kind, question, themeTitle, spreadName, cards), Persisted: genErr == nil}
+			step := flowStep{Task: task, Input: buildInterpretPrompt(kind, question, themeTitle, spreadName, cards, positions), Persisted: genErr == nil}
 			if genErr != nil {
 				step.Error = genErr.Error()
 			} else {

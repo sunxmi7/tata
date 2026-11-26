@@ -48,7 +48,7 @@ func (a *App) binding(ctx context.Context, task string) (vendorID int64, name, m
 }
 
 func buildPrompt(kind, question, cards string) string {
-	return buildInterpretPrompt(kind, question, "", "", cards)
+	return buildInterpretPrompt(kind, question, "", "", cards, nil)
 }
 
 // interpretPromptMode selects which interpret-rules module to load into the system prompt.
@@ -70,7 +70,8 @@ func interpretPromptMode(kind, question string) string {
 
 // buildInterpretPrompt 组装用户侧解读材料（系统规则在 readingflow.InterpretSystem）。
 // explore 且用户未提问时，用主题分类与牌阵名作为场景，不伪造用户问题。
-func buildInterpretPrompt(kind, question, themeTitle, spreadName, cards string) string {
+// positions 来自当前牌阵配置；普通/探索展开 name+meaning，今日/明日只带槽位名。
+func buildInterpretPrompt(kind, question, themeTitle, spreadName, cards string, positions []position) string {
 	var b strings.Builder
 	b.WriteString("只根据下列材料生成正式解读正文。不得改牌、牌位或正逆位。不要输出思考过程、规则说明或工作备注。\n")
 	if kind == "tarotist" {
@@ -97,9 +98,122 @@ func buildInterpretPrompt(kind, question, themeTitle, spreadName, cards string) 
 	if spreadName != "" && !wroteSpread {
 		fmt.Fprintf(&b, "牌阵：%s\n", spreadName)
 	}
+	if block := formatPositionsBlock(kind, cards, positions); block != "" {
+		b.WriteString(block)
+	}
 	fmt.Fprintf(&b, "牌面：%s\n", cards)
 	if block := formatMajorMeaningsBlock(cards); block != "" {
 		b.WriteString(block)
+	}
+	return b.String()
+}
+
+func parseDrawnCards(cardsJSON string) []drawnCard {
+	if cardsJSON == "" || cardsJSON == "null" {
+		return nil
+	}
+	var drawn []drawnCard
+	if err := json.Unmarshal([]byte(cardsJSON), &drawn); err != nil {
+		return nil
+	}
+	return drawn
+}
+
+func positionAt(positions []position, card drawnCard, order int) (position, bool) {
+	if card.Position > 0 {
+		for _, p := range positions {
+			idx := p.Index
+			if idx <= 0 {
+				continue
+			}
+			if idx == card.Position {
+				return p, true
+			}
+		}
+	}
+	if order >= 0 && order < len(positions) {
+		return positions[order], true
+	}
+	return position{}, false
+}
+
+// formatPositionsBlock expands spread positions for the user prompt.
+// daily: slot names only; normal/explore/tarotist: name + meaning in draw order.
+func formatPositionsBlock(kind, cardsJSON string, positions []position) string {
+	drawn := parseDrawnCards(cardsJSON)
+	if len(drawn) == 0 && len(positions) == 0 {
+		return ""
+	}
+	if kind == "daily" {
+		names := make([]string, 0, max(len(drawn), 1))
+		if len(drawn) == 0 {
+			if len(positions) > 0 && strings.TrimSpace(positions[0].Name) != "" {
+				names = append(names, strings.TrimSpace(positions[0].Name))
+			} else {
+				names = append(names, "运势")
+			}
+		} else {
+			for i, c := range drawn {
+				name := strings.TrimSpace(c.PositionName)
+				if p, ok := positionAt(positions, c, i); ok && name == "" {
+					name = strings.TrimSpace(p.Name)
+				}
+				if name == "" {
+					name = "运势"
+				}
+				names = append(names, name)
+			}
+		}
+		return "牌位：" + strings.Join(names, "、") + "\n"
+	}
+
+	var b strings.Builder
+	b.WriteString("牌位（按抽牌顺序）：\n")
+	if len(drawn) == 0 {
+		for i, p := range positions {
+			idx := p.Index
+			if idx <= 0 {
+				idx = i + 1
+			}
+			name := strings.TrimSpace(p.Name)
+			if name == "" {
+				name = fmt.Sprintf("位置%d", idx)
+			}
+			line := fmt.Sprintf("%d. %s", idx, name)
+			if meaning := strings.TrimSpace(p.Meaning); meaning != "" {
+				line += "：" + meaning
+			}
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
+	for i, c := range drawn {
+		idx := c.Position
+		if idx <= 0 {
+			idx = i + 1
+		}
+		name := strings.TrimSpace(c.PositionName)
+		meaning := ""
+		if p, ok := positionAt(positions, c, i); ok {
+			if name == "" {
+				name = strings.TrimSpace(p.Name)
+			}
+			meaning = strings.TrimSpace(p.Meaning)
+		}
+		if name == "" {
+			name = fmt.Sprintf("位置%d", idx)
+		}
+		line := fmt.Sprintf("%d. %s", idx, name)
+		if meaning != "" {
+			line += "：" + meaning
+		}
+		cardName := strings.TrimSpace(c.Name)
+		if cardName != "" {
+			line += " / " + cardName + " " + orientationLabel(c.Orientation)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
 	}
 	return b.String()
 }
@@ -111,6 +225,22 @@ func (a *App) interpretThemeContext(ctx context.Context, id int64) (themeTitle, 
 		LEFT JOIN spreads s ON s.id = r.spread_id
 		WHERE r.id = $1`, id).Scan(&themeTitle, &spreadName)
 	return themeTitle, spreadName, err
+}
+
+func (a *App) loadReadingPositions(ctx context.Context, readingID int64) []position {
+	var raw string
+	err := a.Store.QueryRow(ctx, `SELECT COALESCE(s.positions, '[]')
+		FROM readings r
+		LEFT JOIN spreads s ON s.id = r.spread_id
+		WHERE r.id = $1`, readingID).Scan(&raw)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var positions []position
+	if err := json.Unmarshal([]byte(raw), &positions); err != nil {
+		return nil
+	}
+	return positions
 }
 
 func deref(s *string) string {
