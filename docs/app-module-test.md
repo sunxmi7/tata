@@ -230,8 +230,8 @@
 与抽牌共用接口，重点看选阵屏数据。
 
 - [ ] `GET /api/app/v1/spreads`：推荐角标、示意图 thumbnail（没配则默认牌背）
-- [ ] `GET /api/app/v1/readings/{id}/spread-choices`：一条类型十六，含抽牌方式
-- [ ] `POST /api/app/v1/readings/{id}/spread`：只接受启用中的牌阵，并带 `draw_mode`
+- [ ] `GET /api/app/v1/readings/{id}/spread-choices`：普通占卜一条类型十六，含抽牌方式；探索只返回主题牌阵且不带 draw_modes
+- [ ] `POST /api/app/v1/readings/{id}/spread`：只接受启用中的牌阵；普通占卜带 `draw_mode`，探索/塔罗师不要带
 
 ---
 

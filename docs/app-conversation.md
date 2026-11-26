@@ -285,7 +285,11 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 
 `GET /api/app/v1/readings/{id}/spread-choices`
 
-返回一条类型十六。不再带 `more_spreads`。完整分组目录仍走 `GET /spreads`。登录用户 data 顶层可带 `deck` / `deck_back_url`。
+返回一条类型十六。不再带 `more_spreads`。完整分组目录仍走 `GET /spreads`；探索主题牌阵也可先看 `GET /explore/topics?theme_key=`。登录用户 data 顶层可带 `deck` / `deck_back_url`。
+
+- 普通占卜：`theme_key=''` 的牌阵，带 `draw_modes`（常规/灵数）。
+- 探索：只返回该次 `theme_key` 的主题牌阵（创建未带则全部探索阵），**不**带 `draw_modes`；不要提交 `draw_mode`。
+- 塔罗师：普通牌阵列表，不带 `draw_modes`。
 
 ```json
 {
