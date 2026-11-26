@@ -9,19 +9,27 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+func withPromptVars(task string, vars map[string]any) map[string]any {
+	if vars == nil {
+		vars = map[string]any{}
+	}
+	for _, key := range []string{"question", "cards", "persona", "system"} {
+		if _, ok := vars[key]; !ok {
+			vars[key] = ""
+		}
+	}
+	if s, _ := vars["system"].(string); strings.TrimSpace(s) == "" {
+		vars["system"] = DefaultSystem(task)
+	}
+	return vars
+}
+
 // RunTask compiles one Eino chain, ChatTemplate then ChatModel, and invokes it.
 // Vendor token usage on the response is reported through WithUsageHook.
 func RunTask(ctx context.Context, spec ModelSpec, task string, vars map[string]any) (text string, err error) {
 	var usage Usage
 	defer func() { notifyUsage(ctx, spec, task, usage, err) }()
-	if vars == nil {
-		vars = map[string]any{}
-	}
-	for _, key := range []string{"question", "cards", "persona"} {
-		if _, ok := vars[key]; !ok {
-			vars[key] = ""
-		}
-	}
+	vars = withPromptVars(task, vars)
 	chatModel, err := newChatModel(ctx, spec)
 	if err != nil {
 		return "", err
@@ -50,14 +58,7 @@ func RunTask(ctx context.Context, spec ModelSpec, task string, vars map[string]a
 func RunTaskStream(ctx context.Context, spec ModelSpec, task string, vars map[string]any, onChunk func(string) error) (text string, err error) {
 	var usage Usage
 	defer func() { notifyUsage(ctx, spec, task, usage, err) }()
-	if vars == nil {
-		vars = map[string]any{}
-	}
-	for _, key := range []string{"question", "cards", "persona"} {
-		if _, ok := vars[key]; !ok {
-			vars[key] = ""
-		}
-	}
+	vars = withPromptVars(task, vars)
 	chatModel, err := newChatModel(ctx, spec)
 	if err != nil {
 		return "", err

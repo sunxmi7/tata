@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"tata/server/internal/readingflow"
 )
 
 type jobEvent struct {
@@ -395,8 +397,13 @@ func (a *App) executeInterpret(id int64) {
 	}
 	jobCtx = mergeAIBill(jobCtx, aiBill{UserID: uid, ReadingID: id, JobID: run.jobID, Kind: "interpret"})
 
+	mode := interpretPromptMode(kind, deref(question))
+	system := readingflow.InterpretSystem(mode)
 	lastWrite := time.Now().Add(-time.Second)
-	_, _, text, callErr := a.runEinoStream(jobCtx, taskFor(kind), prompt, func(chunk string) error {
+	_, _, text, callErr := a.runEinoStreamVars(jobCtx, taskFor(kind), map[string]any{
+		"question": prompt,
+		"system":   system,
+	}, func(chunk string) error {
 		partial := run.appendDelta(chunk)
 		if time.Since(lastWrite) >= 200*time.Millisecond {
 			lastWrite = time.Now()
@@ -407,6 +414,11 @@ func (a *App) executeInterpret(id int64) {
 	})
 	if callErr != nil {
 		_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, callErr.Error(), id)
+		fail(biz("解读失败，可重试，未重新扣费"))
+		return
+	}
+	if reason := readingflow.InterpretationLeakReason(text); reason != "" {
+		_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, "解读输出异常:"+reason, id)
 		fail(biz("解读失败，可重试，未重新扣费"))
 		return
 	}

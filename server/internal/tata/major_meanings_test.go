@@ -92,6 +92,15 @@ func TestBuildInterpretPromptKeepsRealQuestion(t *testing.T) {
 	if !strings.Contains(out, "问题：他近期会主动联系我吗？") {
 		t.Fatalf("expected real question: %s", out)
 	}
+	if strings.Contains(out, "逐张解释后给总评") {
+		t.Fatalf("old summary instruction leaked into user prompt: %s", out)
+	}
+	if interpretPromptMode("daily", "明日运势") != "daily_tomorrow" || interpretPromptMode("daily", "今日一牌") != "daily_today" {
+		t.Fatalf("daily mode mapping failed")
+	}
+	if interpretPromptMode("normal", "x") != "normal" || interpretPromptMode("explore", "") != "explore" {
+		t.Fatalf("kind mode mapping failed")
+	}
 	if strings.Contains(out, "主题：") {
 		t.Fatalf("theme should not override real question: %s", out)
 	}

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"tata/server/internal/readingflow"
 )
 
 func (a *App) generate(ctx context.Context, id int64, adminRetry bool) (map[string]any, error) {
@@ -49,19 +51,35 @@ func buildPrompt(kind, question, cards string) string {
 	return buildInterpretPrompt(kind, question, "", "", cards)
 }
 
-// buildInterpretPrompt 组装解读提示词。
+// interpretPromptMode selects which interpret-rules module to load into the system prompt.
+func interpretPromptMode(kind, question string) string {
+	switch strings.TrimSpace(kind) {
+	case "daily":
+		if strings.Contains(question, "明日") {
+			return readingflow.ModeDailyTomorrow
+		}
+		return readingflow.ModeDailyToday
+	case "explore":
+		return readingflow.ModeExplore
+	case "tarotist":
+		return readingflow.ModeTarotist
+	default:
+		return readingflow.ModeNormal
+	}
+}
+
+// buildInterpretPrompt 组装用户侧解读材料（系统规则在 readingflow.InterpretSystem）。
 // explore 且用户未提问时，用主题分类与牌阵名作为场景，不伪造用户问题。
 func buildInterpretPrompt(kind, question, themeTitle, spreadName, cards string) string {
 	var b strings.Builder
-	b.WriteString("你只解读，不得改牌、牌位或正逆位。\n")
+	b.WriteString("只根据下列材料生成正式解读正文。不得改牌、牌位或正逆位。不要输出思考过程、规则说明或工作备注。\n")
 	if kind == "tarotist" {
 		b.WriteString("按所选塔罗师人设表达，但牌义不能歪曲。\n")
-	} else {
-		b.WriteString("不要套用塔罗师人设。逐张解释后给总评。\n")
 	}
 	q := strings.TrimSpace(question)
 	themeTitle = strings.TrimSpace(themeTitle)
 	spreadName = strings.TrimSpace(spreadName)
+	wroteSpread := false
 	if q != "" {
 		fmt.Fprintf(&b, "问题：%s\n", q)
 	} else if kind == "explore" && (themeTitle != "" || spreadName != "") {
@@ -71,9 +89,13 @@ func buildInterpretPrompt(kind, question, themeTitle, spreadName, cards string) 
 		}
 		if spreadName != "" {
 			fmt.Fprintf(&b, "牌阵：%s\n", spreadName)
+			wroteSpread = true
 		}
 	} else {
 		fmt.Fprintf(&b, "问题：%s\n", q)
+	}
+	if spreadName != "" && !wroteSpread {
+		fmt.Fprintf(&b, "牌阵：%s\n", spreadName)
 	}
 	fmt.Fprintf(&b, "牌面：%s\n", cards)
 	if block := formatMajorMeaningsBlock(cards); block != "" {
