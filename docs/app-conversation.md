@@ -153,7 +153,7 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 | 一 | `cards` / `spread` | server | 星标「牌面预览」，多张牌 | `title`、`cards` |
 | 十九 | `cards` / `single` | server | 标题「牌面」，左边有尾巴，一张牌 | `title`、`turn_id`、`cards` |
 | 七 | `cards` / `pick` | server | 牌背按牌位排，上面是用户输入的数字，不对的牌位标红 | `slots` |
-| 十六 | `cards` / `choose` | server | 先确认牌阵和张数，再选择抽牌方式。牌阵卡、更多牌阵、常规/灵数抽牌在同一块灰底里 | `title`、`spreads`、`more_spreads`、`draw_mode_label`、`draw_modes` |
+| 十六 | `cards` / `choose` | server | 先确认牌阵和张数，再选择抽牌方式。牌阵卡与常规/灵数抽牌在同一块灰底里 | `title`、`spreads`（含 `positions`）、`draw_mode_label`、`draw_modes`。不返回 `more_spreads`；完整目录走 `GET /spreads`。登录时 data 顶层可带 `deck` / `deck_back_url` |
 | 三 | `interpretation` / `body` | server | 一整段解读，没有标题，没有尾巴 | `text`。追问回答再加 `turn_id`、`seq` |
 | 六 | `interpretation` / `detect` | server | 「塔塔 · 问题检测」加「已完成」，再加「为什么建议修改？」和说明 | `title`、`status`、`reason_title`、`text` |
 | 八 | `interpretation` / `guide` | server | 标题「输入专属数字」、示例输入框、两条灰色规则 | `title`、`placeholder`、`rules` |
@@ -285,34 +285,34 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 
 `GET /api/app/v1/readings/{id}/spread-choices`
 
-返回一条类型十六。更多牌阵的完整分组目录仍走 `GET /spreads`。
+返回一条类型十六。不再带 `more_spreads`。完整分组目录仍走 `GET /spreads`。登录用户 data 顶层可带 `deck` / `deck_back_url`。
 
 ```json
 {
   "reading_id": 1569,
   "has_more": false,
+  "deck_back_url": "https://example.com/uploads/decks/back.png",
   "messages": [
     {
       "kind": "cards",
       "from": "server",
       "style": "choose",
       "title": "先确认牌阵和张数，再选择抽牌方式。",
-      "more_spreads": "更多牌阵",
       "draw_mode_label": "抽牌方式",
       "draw_modes": [
         { "id": "normal", "label": "常规抽牌", "hint": "通过感应抽牌，开启你的塔罗探索。" },
         { "id": "numerology", "label": "灵数抽牌", "hint": "输入专属数字，揭晓属于你的塔罗牌。" }
       ],
       "spreads": [
-        { "id": 1, "name": "时间流", "description": "三张牌串联成完整因果线。", "short_sentence": "", "card_count": 3, "recommended": true, "selected": false, "thumbnail": "" },
-        { "id": 2, "name": "一张牌", "description": "", "short_sentence": "", "card_count": 1, "recommended": false, "selected": false, "thumbnail": "" }
+        { "id": 1, "name": "时间流", "description": "三张牌串联成完整因果线。", "short_sentence": "", "card_count": 3, "positions": [{"index":1,"name":"过去","meaning":""},{"index":2,"name":"现在","meaning":""},{"index":3,"name":"未来","meaning":""}], "recommended": true, "selected": false, "thumbnail": "" },
+        { "id": 2, "name": "一张牌", "description": "", "short_sentence": "", "card_count": 1, "positions": [{"index":1,"name":"焦点","meaning":""}], "recommended": false, "selected": false, "thumbnail": "" }
       ]
     }
   ]
 }
 ```
 
-带推荐的一张 `recommended` 为 `true`，画面上是「推荐牌阵」。`description` 是牌阵含义。
+`recommended` 由该次问题的本地匹配覆盖：命中一张为 `true` 并置顶。`description` 是牌阵含义。
 
 用户点中后：
 

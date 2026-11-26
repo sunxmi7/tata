@@ -955,8 +955,7 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	}
 	// Overlay PRD §6.4 local match onto response recommended flags so App that
 	// only reads spread-choices still sees the question-matched spread first.
-	matchedID := a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
-	_ = matchedID
+	_ = a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
 	msg := spreadChoiceMessage(spreads)
 	out := map[string]any{
 		"reading_id": id,
@@ -1060,7 +1059,6 @@ func conversationDrawModes() []map[string]any {
 }
 
 func spreadChoiceMessage(spreads []map[string]any) map[string]any {
-	// Full list already returned (has_more=false); omit more_spreads CTA copy.
 	return map[string]any{
 		"kind": "cards", "from": "server", "style": "choose",
 		"title":           spreadChoiceTitle(),

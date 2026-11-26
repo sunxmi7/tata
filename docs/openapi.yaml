@@ -633,12 +633,9 @@ components:
             $ref: "#/components/schemas/DrawnCard"
         spreads:
           type: array
-          description: 类型十六当前可选牌阵卡。
+          description: 类型十六当前可选牌阵卡（含 positions）。不再返回 more_spreads。
           items:
             $ref: "#/components/schemas/ConversationSpreadChoice"
-        more_spreads:
-          type: string
-          description: 类型十六「更多牌阵」入口文案，固定为「更多牌阵」。完整目录另走 GET /spreads。
         draw_mode_label:
           type: string
           description: 类型十六抽牌方式区标题，一般为「抽牌方式」。
@@ -686,9 +683,14 @@ components:
         card_count:
           type: integer
           description: 张数。
+        positions:
+          type: array
+          description: 阵位列表，供布局。
+          items:
+            $ref: "#/components/schemas/Position"
         recommended:
           type: boolean
-          description: true 时画面显示「推荐牌阵」。
+          description: true 时画面显示「推荐牌阵」（spread-choices 上由本地匹配覆盖）。
         selected:
           type: boolean
           description: 当前占卜是否已选中该阵。
@@ -968,13 +970,13 @@ components:
           description: 是否对 App 可见。目录接口只返回启用中的。
         charged:
           type: boolean
-          description: 该牌阵是否计入收费占卜。
+          description: 已废弃旧收费开关，仅库内残留；管理端 UI 不再编辑，更新省略时保留原值。结算看 quota_cost。
         recommended:
           type: boolean
-          description: 选阵屏「推荐牌阵」角标。全表最多一张为 true。未推荐为 false，不编造。
+          description: 库内运营角标字段。App 选阵屏 GET /spread-choices 会按问题本地匹配覆盖；目录 GET /spreads 仍回传本字段。
         thumbnail:
           type: string
-          description: 选阵屏牌阵示意图完整 URL。未配置时为当前服务地址下的内置默认牌背，例如 http://127.0.0.1:8080/uploads/card-default.png。已配置的 http(s) 地址原样返回。
+          description: 牌阵缩略图完整 URL。管理端 UI 已不再上传示意图；未配则为内置默认牌背。已配置的 http(s) 地址原样返回。
         theme_key:
           type: string
           description: 探索牌阵主题键。空则未分组。对应文字总结版主题。
@@ -1022,15 +1024,15 @@ components:
         charged:
           type: boolean
           nullable: true
-          description: 省略视为 false。
+          description: 已废弃。新建省略视为 false；更新省略保留库内原值。管理端 UI 不提交本字段。
         recommended:
           type: boolean
           nullable: true
-          description: 新建省略视为 false。更新省略保持原值。设为 true 时取消其他牌阵的推荐。
+          description: 新建省略视为 false。更新省略保持原值。管理端表单不再单独编辑，提交时回传原值。
         thumbnail:
           type: string
           nullable: true
-          description: 牌阵示意图 URL。新建省略为空。更新省略保持原值。空字符串清除。
+          description: 缩略图 URL。新建省略为空。更新省略保持原值。管理端 UI 已不再上传示意图。
         theme_key:
           type: string
           nullable: true
@@ -5870,13 +5872,15 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Authorization"
       description: |
-        必须登录。同一用户、同一 business_date 已有牌面则 code=1，reused=true，charged=false，不重复扣费。
+        必须登录。同一用户、同一 `target_date`（运势目标日）已有牌面则 code=1，reused=true，charged=false，不重复扣费。
+        `business_date` 为抽牌日（日历/历史归天）；`target_date` 为运势日。明日提前抽在抽牌日可见，目标日再调 today 复用。
         否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置、额度不足或请开通会员为 QuotaBlockEnvelope。
         扣费成功后：请求带了 `cards`（1 张）则用 App 交上的牌；否则服务端抽一张，再生成解读。
         生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
-        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、has_result。不编造宜忌文案。
+        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail、target、business_date、target_date、has_result。
+        明日运势历史/日历按普通占卜展示（conversation_type=moment），仍可用 target=tomorrow / target_date 识别。
       requestBody:
         required: true
         content:
@@ -7131,7 +7135,7 @@ paths:
       description: 含停用牌阵。只读角色可访问。
       responses:
         "200":
-          description: data 为 Spread 数组，含 enabled、charged 与 recommended。
+          description: data 为 Spread 数组（含 enabled、quota_cost；charged 为废弃残留字段）。
           content:
             application/json:
               schema:
@@ -7151,7 +7155,7 @@ paths:
       summary: 新建牌阵
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 需要 role=admin。名称非空，card_count>=1，positions 长度必须等于牌数。recommended=true 时取消其他牌阵的推荐。
+      description: 需要 role=admin。名称非空，card_count>=1，positions 长度必须等于牌数。主编辑字段为名称/说明/牌位/分组或探索主题/额度消耗/启用；不再要求配置旧收费 charged 或示意图。
       requestBody:
         required: true
         content:
@@ -7174,7 +7178,7 @@ paths:
       tags: [管理端内容]
       operationId: adminUpdateSpread
       summary: 更新牌阵
-      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、快捷问题、启用、是否计费、推荐标记和示意图。recommended=true 时取消其他牌阵的推荐。
+      description: 已被占卜使用时不能改牌数或牌位，只能改名称、说明、快捷问题、启用、分组/主题与额度消耗等。charged 为废弃字段（省略保留）；示意图与运营推荐角标管理端 UI 已下线，请求体省略则保留库内原值。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - $ref: "#/components/parameters/PathId"
@@ -7805,7 +7809,7 @@ paths:
       tags: [管理端内容]
       operationId: adminPutCopy
       summary: 保存运营文案
-      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格（name/cover_url|thumbnail/back_url/description/tags）与可选 faces[{card_id,image_url}]（写入 deck_faces，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表。legal 不可写（改仓库 md）。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
+      description: 需要 role=admin。yearly 写 app_config；cards 写 cards 表（yi/thumbnail）与模板/默认图；decks 写牌组风格（name/back_url/description/tags；cover_url|thumbnail 为可选残留，管理端 UI 不再上传封面）与可选 faces[{card_id,image_url}]（写入 deck_faces，至少保留一套启用）；help 可改分类名和排序，或改已有问题的标题、正文、排序；campaigns 更新已有表。legal 不可写（改仓库 md）。新建帮助问题用 POST /copy/help，删除用 DELETE /copy/help/{article_id}。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: kind

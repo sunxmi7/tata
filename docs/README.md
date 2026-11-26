@@ -36,8 +36,8 @@ App 路由现为 **76** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **账号**：`account_display` 脱敏邮箱，无则微信/Apple；新增 6 位 `public_id`。App 不绑、不展示手机号。
 - **会员/额度**：订阅 SKU 带 `benefits`（`followup.count` 取 `quota_settings.followup_limit`，种子 5）。塔塔币 6 档已下线，改为额度补充包 `pack_quota_20/60/100`。追问上限管理端 `PUT /quota-params` 可改，null 不限制。免费用户每日免费全局 1 次；会员扣 `quota_balance`。邀请独立账本，最多 5 人、每人 +3。
 - **历史列表**：每条带 `short_text` / `card_name` / `status_label` / `card_thumbnail`（单牌 URL → 模板 → 默认图 → 内置 `/uploads/card-default.png`；无牌名才为 null）。另带 `conversation_type`（`daily` / `moment` / `theme`）与按类型区分的 `stage` / `stage_label`；`daily` 含 `target`（今日/明日）与 `target_date`（运势日），`business_date` 为抽牌日。提前抽的明日运势按普通占卜（`moment` / 普通占卜）展示，仍可用 `target=tomorrow` 识别。**此刻抉择 vs 主题占卜**：二者底层都是 `type=explore`，App 用 `type=explore && conversation_type=moment|theme`（或 `conversation_label` / `theme_key`）区分，不能只看 `type`。探索创建可传 `theme_key`，选阵后也会从牌阵回填。详情 `GET /readings/{id}` 一次返回进度 + `messages`（可 `limit`/`offset`）；已下线单独的 `/readings/{id}/messages`。
-- **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。`available[]` 含 `description` / `tags`（未填为空串与空数组，不编造）。种子仅 `rider-waite` / 莱德韦特；管理端 `PUT /copy/decks` 可改介绍、标签与预览图。未上架 code 仍拒。
-- **牌阵推荐 / 示意图**：`GET /spreads` 含 `recommended` 与 `thumbnail`。种子「时间流」为推荐；示意图未配用内置默认牌背。管理端勾选推荐时全表最多一张。
+- **牌面风格**：`GET/PUT /api/app/v1/deck-preference`。`available[]` 含 `description` / `tags`（未填为空串与空数组，不编造）。种子仅 `rider-waite` / 莱德韦特；管理端牌组表单只维护卡背与卡面（封面上传已下线，库内 `cover_url`/`thumbnail` 可残留）。未上架 code 仍拒。
+- **牌阵推荐 / 缩略图**：选阵屏以 `GET /spread-choices` 为准——`recommended` 按问题本地匹配覆盖，并带 `positions`、`deck_back_url`。`GET /spreads` 仍回传库内 `recommended`/`thumbnail`；管理端已去掉示意图上传、运营推荐勾选与旧收费开关（`charged` 仅库内残留）。
 - **日历**：`GET /calendar` 增加 `type` 过滤；日详情项含牌名 / 正逆位 / 短文 / 多张缩略图 / 占卜师 / `created_at`。
 - **消息中心**：接口领先于 UI，先行落底。
 - **今日一牌文案 / 牌面缩略图**：正位寄语和今日宜、逆位寄语和今日宜在 `cards`。`yi` 是正位今日宜的覆盖，空则用 `upright_yi`。逆位用 `reversed_yi`。响应里 `card_message` 是对应正逆位的寄语。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。管理端「牌面」维护这些字段。
