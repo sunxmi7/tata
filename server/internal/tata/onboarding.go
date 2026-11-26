@@ -47,8 +47,9 @@ type deviceGuide struct {
 
 func (a *App) loadDeviceGuide(r *http.Request, deviceID string) (deviceGuide, error) {
 	var g deviceGuide
+	// Case-insensitive: onboarding writes and login merge must share one key.
 	err := a.Store.QueryRow(r.Context(), `SELECT guide_completed, guide_offered, consumed, trial_forfeited, gender, birth_date, explore_preferences
-		FROM device_experiences WHERE device_id=$1`, deviceID).Scan(&g.guideDone, &g.offered, &g.consumed, &g.forfeited, &g.gender, &g.birth, &g.preferences)
+		FROM device_experiences WHERE lower(device_id)=lower($1) ORDER BY CASE WHEN device_id=$1 THEN 0 ELSE 1 END, created_at DESC NULLS LAST LIMIT 1`, deviceID).Scan(&g.guideDone, &g.offered, &g.consumed, &g.forfeited, &g.gender, &g.birth, &g.preferences)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
@@ -57,6 +58,15 @@ func (a *App) loadDeviceGuide(r *http.Request, deviceID string) (deviceGuide, er
 	}
 	g.found = true
 	return g, nil
+}
+
+// normalizeOnboardingDevice lowercases device_id so draft save and login merge hit the same row.
+func normalizeOnboardingDevice(raw string) (string, error) {
+	id := canonicalDevice(raw)
+	if id == "" {
+		return "", biz("缺少设备标识")
+	}
+	return id, nil
 }
 
 func deviceHasProfile(g deviceGuide) bool {
@@ -130,9 +140,9 @@ func (a *App) markGuideSeen(r *http.Request, deviceID string, complete bool) err
 }
 
 func (a *App) appGetOnboarding(w http.ResponseWriter, r *http.Request) error {
-	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
-	if !validDeviceID(deviceID) {
-		return biz("缺少设备标识")
+	deviceID, err := normalizeOnboardingDevice(r.URL.Query().Get("device_id"))
+	if err != nil {
+		return err
 	}
 	g, err := a.loadDeviceGuide(r, deviceID)
 	if err != nil {
@@ -196,9 +206,9 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	deviceID := strings.TrimSpace(req.DeviceID)
-	if !validDeviceID(deviceID) {
-		return biz("缺少设备标识")
+	deviceID, err := normalizeOnboardingDevice(req.DeviceID)
+	if err != nil {
+		return err
 	}
 	g, err := a.loadDeviceGuide(r, deviceID)
 	if err != nil {
@@ -240,8 +250,8 @@ func (a *App) appPutOnboarding(w http.ResponseWriter, r *http.Request) error {
 	}
 	if g.found {
 		if _, err := a.Store.Exec(r.Context(), `UPDATE device_experiences
-			SET guide_completed=$1, guide_offered=TRUE, gender=$2, birth_date=$3, explore_preferences=$4
-			WHERE device_id=$5`, done, gender, birth, prefs, deviceID); err != nil {
+			SET device_id=$5, guide_completed=$1, guide_offered=TRUE, gender=$2, birth_date=$3, explore_preferences=$4
+			WHERE lower(device_id)=lower($5)`, done, gender, birth, prefs, deviceID); err != nil {
 			return err
 		}
 	} else if _, err := a.Store.Exec(r.Context(), `INSERT INTO device_experiences(device_id, guide_completed, guide_offered, gender, birth_date, explore_preferences)
@@ -273,9 +283,9 @@ func (a *App) appAbandonOnboarding(w http.ResponseWriter, r *http.Request) error
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	deviceID := strings.TrimSpace(req.DeviceID)
-	if !validDeviceID(deviceID) {
-		return biz("缺少设备标识")
+	deviceID, nerr := normalizeOnboardingDevice(req.DeviceID)
+	if nerr != nil {
+		return nerr
 	}
 	var asked int
 	if uid > 0 {
@@ -326,9 +336,9 @@ func (a *App) appSyncOnboarding(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	deviceID := strings.TrimSpace(req.DeviceID)
-	if !validDeviceID(deviceID) {
-		return biz("缺少设备标识")
+	deviceID, nerr := normalizeOnboardingDevice(req.DeviceID)
+	if nerr != nil {
+		return nerr
 	}
 	a.attachDeviceProfileDraft(r.Context(), uid, deviceID)
 	question := strings.TrimSpace(req.Question)

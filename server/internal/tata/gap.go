@@ -1238,11 +1238,11 @@ func pageMessages(all []map[string]any, limit, offset int) ([]map[string]any, bo
 }
 
 func (a *App) loadConversation(r *http.Request, id int64) ([]map[string]any, error) {
-	var question, cardsRaw, interpretation string
+	var question, cardsRaw, interpretation, readingType string
 	var spreadCount int
-	if err := a.Store.QueryRow(r.Context(), `SELECT question, COALESCE(cards,''), COALESCE(interpretation,''),
+	if err := a.Store.QueryRow(r.Context(), `SELECT type, question, COALESCE(cards,''), COALESCE(interpretation,''),
 		COALESCE((SELECT card_count FROM spreads WHERE id=readings.spread_id), 0)
-		FROM readings WHERE id=$1`, id).Scan(&question, &cardsRaw, &interpretation, &spreadCount); err != nil {
+		FROM readings WHERE id=$1`, id).Scan(&readingType, &question, &cardsRaw, &interpretation, &spreadCount); err != nil {
 		return nil, err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT turn_id, seq, role, kind, style, content FROM reading_messages WHERE reading_id=$1 ORDER BY turn_id, seq`, id)
@@ -1272,7 +1272,8 @@ func (a *App) loadConversation(r *http.Request, id int64) ([]map[string]any, err
 		return nil, err
 	}
 	messages := []map[string]any{}
-	if text := strings.TrimSpace(question); text != "" {
+	// Daily stores system slot names as question; do not surface them as「你的问题」above interpretation.
+	if text := strings.TrimSpace(question); text != "" && readingType != "daily" {
 		messages = append(messages, labeledQuestion(text))
 	}
 	cards := a.conversationCards(r, cardsRaw)

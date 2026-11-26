@@ -140,6 +140,31 @@ func TestOnboardingDraftSyncsOnLogin(t *testing.T) {
 	}
 }
 
+func TestOnboardingDraftMergesAcrossDeviceIDCase(t *testing.T) {
+	store, ts := newMergeServer(t)
+	base := fmt.Sprintf("CaseMix-%d", time.Now().UnixNano())
+	must(t, ts, "", http.MethodPut, "/api/app/v1/onboarding", map[string]any{
+		"device_id": strings.ToUpper(base), "gender": "男", "birth_date": "2001-02-03",
+	})
+	email := fmt.Sprintf("case-mix-%d@tata.local", time.Now().UnixNano())
+	otp := sendEmailCode(t, ts, "", email, "login")
+	session := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{
+		"email": email, "code": otp, "device_id": strings.ToLower(base),
+	})
+	token := session["accessToken"].(string)
+	account := listOne(t, ts, token, "/api/app/v1/profile")
+	if account["gender"] != "男性" || account["birth_date"] != "2001-02-03" {
+		t.Fatalf("case-mismatched device_id failed to merge draft: %#v", account)
+	}
+	var stored string
+	if err := store.QueryRow(t.Context(), `SELECT device_id FROM device_experiences WHERE lower(device_id)=lower($1)`, base).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != strings.ToLower(base) {
+		t.Fatalf("device_id not canonicalized: %q", stored)
+	}
+}
+
 func TestAnonymousReadingFollowsDevice(t *testing.T) {
 	store, ts := newMergeServer(t)
 	deviceID := fmt.Sprintf("device-anon-%d", time.Now().UnixNano())
