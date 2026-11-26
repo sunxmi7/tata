@@ -334,11 +334,12 @@ func TestWeChatBindFillsEmptyProfile(t *testing.T) {
 	app.WeChat = stubWeChat{nickname: "绑定来的昵称"}
 	ts := httptest.NewServer(app.Handler())
 	t.Cleanup(ts.Close)
-	token := register(t, ts, uniqueEmail("wx-bind-name"))
+	email := uniqueEmail("wx-bind-name")
+	token := register(t, ts, email)
 	before := listOne(t, ts, token, "/api/app/v1/profile")
 	emailNick, _ := before["name"].(string)
-	if !validGeneratedNickname(emailNick) {
-		t.Fatalf("email nickname: %#v", before["name"])
+	if emailNick != nicknameFromEmailLocal(email) {
+		t.Fatalf("email nickname: %#v want %q", before["name"], nicknameFromEmailLocal(email))
 	}
 	code := fmt.Sprintf("wx-bind-name-%d", time.Now().UnixNano())
 	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": code})

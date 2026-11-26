@@ -76,15 +76,48 @@ func randN(n int) int {
 	return int(binary.BigEndian.Uint64(buf[:]) % uint64(n))
 }
 
+// nicknameFromEmailLocal builds a display name from the email local-part (before @).
+// Keeps letters, digits, underscore and hyphen; trims to 32 runes. Empty if unusable.
+func nicknameFromEmailLocal(email string) string {
+	email = strings.TrimSpace(strings.ToLower(email))
+	at := strings.Index(email, "@")
+	if at <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range email[:at] {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		}
+	}
+	nick := strings.Trim(b.String(), "-_")
+	if nick == "" {
+		return ""
+	}
+	runes := []rune(nick)
+	if len(runes) > 32 {
+		nick = string(runes[:32])
+	}
+	return nick
+}
+
 func (a *App) ensureProfileDefaults(ctx context.Context, uid int64) {
 	if a == nil || a.Store == nil || uid <= 0 {
 		return
 	}
-	var name string
-	if err := a.Store.QueryRow(ctx, `SELECT COALESCE(name,'') FROM app_users WHERE id=$1`, uid).Scan(&name); err != nil {
+	var name, email string
+	if err := a.Store.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(email,'') FROM app_users WHERE id=$1`, uid).Scan(&name, &email); err != nil {
 		return
 	}
 	if strings.TrimSpace(name) != "" {
+		return
+	}
+	// Email accounts: prefer sanitized local-part; never overwrite an existing nickname.
+	if nick := nicknameFromEmailLocal(email); nick != "" {
+		_, _ = a.Store.Exec(ctx, `UPDATE app_users SET name=$1 WHERE id=$2 AND name=''`, nick, uid)
 		return
 	}
 	_ = a.assignRandomNickname(ctx, uid)

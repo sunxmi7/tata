@@ -18,8 +18,10 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 
 	profile := listOne(t, ts, token, "/api/app/v1/profile")
 	name, _ := profile["name"].(string)
-	if !validGeneratedNickname(name) || profile["nickname"] != name {
-		t.Fatalf("random nickname: %#v", profile)
+	email, _ := profile["email"].(string)
+	wantNick := nicknameFromEmailLocal(email)
+	if name == "" || name != wantNick || profile["nickname"] != name {
+		t.Fatalf("email prefix nickname: %#v want %q", profile, wantNick)
 	}
 	avatar, _ := profile["avatar_url"].(string)
 	if !strings.Contains(avatar, defaultAvatarName) || profile["bio"] != "" {
@@ -29,7 +31,6 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 		t.Fatalf("profile should not expose phone: %#v", profile)
 	}
 	display, _ := profile["account_display"].(string)
-	email, _ := profile["email"].(string)
 	if display == "" || display == email || !strings.Contains(display, "***") {
 		t.Fatalf("account_display should be masked email, got %#v email=%s", profile["account_display"], email)
 	}
