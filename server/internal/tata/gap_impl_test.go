@@ -397,10 +397,14 @@ func TestSpreadRecommended(t *testing.T) {
 	if len(groups) != 3 || groups[0].(map[string]any)["title"] != "一、快速指引（1-3张）" || groups[1].(map[string]any)["title"] != "二、进阶分析（4-7张）" || groups[2].(map[string]any)["title"] != "三、深度全景（10张）" {
 		t.Fatalf("spread groups: %#v", groups)
 	}
-	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "推荐哪几套", "type": "normal"})
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "我应该接受这份工作吗？", "type": "normal"})
 	firstRec := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", asID(reading["id"])), map[string]any{})
-	if !recommendHas(t, firstRec, "时间流") {
-		t.Fatalf("seed recommend: %#v", firstRec["recommended_spreads"])
+	if firstRec["match_status"] != "MATCHED" || !recommendHas(t, firstRec, "单张牌占卜") {
+		t.Fatalf("local match recommend: %#v", firstRec)
+	}
+	items, _ := firstRec["recommended_spreads"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("want exactly 1 recommended spread: %#v", firstRec)
 	}
 
 	created := create(t, ts, admin.access, "/api/admin/v1/spreads", map[string]any{
@@ -411,8 +415,9 @@ func TestSpreadRecommended(t *testing.T) {
 	})
 	newID := asID(created["id"])
 	again := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", asID(reading["id"])), map[string]any{})
-	if !recommendHas(t, again, "时间流") || !recommendHas(t, again, "多维解读") {
-		t.Fatalf("both recommended: %#v", again["recommended_spreads"])
+	// Unmapped admin spreads must not enter the local matcher; still exactly one result.
+	if !recommendHas(t, again, "单张牌占卜") || recommendHas(t, again, "多维解读") || len(again["recommended_spreads"].([]any)) != 1 {
+		t.Fatalf("matcher ignores unmapped recommended flag: %#v", again["recommended_spreads"])
 	}
 	appList := appSpreadItems(t, ts, token)
 	var createdRow map[string]any

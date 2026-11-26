@@ -1421,8 +1421,10 @@ paths:
       operationId: appRecommend
       summary: 推荐牌阵
       description: |
-        不调用模型。返回 recommended_spreads：已启用、普通占卜、recommended=true 的牌阵。
-        每项含 id、name、description、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label，与 spread-choices 里单条牌阵字段对齐，供推荐卡片展示含义与缩略图。
+        不调用模型。按 PRD §6.4 本地问题→牌阵匹配：从问题检测快照（invalid/broad/specific + main_intent/main_structure）
+        对照嵌入的 19 套普通牌阵能力配置，返回 0 或 1 个 recommended_spreads。
+        match_status 为 MATCHED / NO_MATCH / NO_MATCH_MAIN_INTENT / INPUT_NOT_MATCHABLE；mapping_status 为 draft_v1。
+        每项含 id、name、description、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
         已登录带令牌。未登录不带令牌，query 带 device_id。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
@@ -4660,7 +4662,7 @@ components:
         recommended_spreads:
           type: array
           description: |
-            运营勾选 recommended=true 的已启用普通牌阵。可多条。
+            本地匹配结果，0 或 1 条。命中时 recommended=true。
             每项含 id、name、description（牌阵含义）、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
           items:
             type: object
@@ -4686,10 +4688,22 @@ components:
                 type: string
         match_status:
           type: string
-          description: 有推荐牌阵时为 RECOMMENDED，否则 NO_MATCH。
+          description: |
+            MATCHED（命中 1 套）、NO_MATCH、NO_MATCH_MAIN_INTENT（无 supported D/C 覆盖主要诉求）、
+            INPUT_NOT_MATCHABLE（无效/宽泛/快照不完整）。旧值 RECOMMENDED 已改为 MATCHED。
+          enum: [MATCHED, NO_MATCH, NO_MATCH_MAIN_INTENT, INPUT_NOT_MATCHABLE]
         mapping_status:
           type: string
-          description: 问题到牌阵的映射未配置时为 unconfigured。
+          description: 能力映射配置状态；当前嵌入 draft_v1（PRD §6.4 草案，priority 为 draft_accepted_by_product）。
+        detection_status:
+          type: string
+          description: 问题检测状态 invalid / broad / specific。
+        main_intent:
+          type: string
+          description: 主要诉求代码，如 I01、I04A。
+        main_structure:
+          type: string
+          description: 主结构代码，如 S01、S02。
     CreateReadingBody:
       type: object
       additionalProperties: false

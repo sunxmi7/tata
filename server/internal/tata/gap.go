@@ -344,42 +344,6 @@ func (a *App) appRecommend(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) attachRecommendation(r *http.Request, out map[string]any) error {
-	out["recommended_spreads"] = []map[string]any{}
-	out["match_status"] = "NO_MATCH"
-	out["mapping_status"] = "unconfigured"
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail, depth_group
-		FROM spreads WHERE enabled=true AND theme_key='' AND recommended=true ORDER BY sort_order, id`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	list := []map[string]any{}
-	for rows.Next() {
-		var id int64
-		var name, desc, short, thumb, depth string
-		var count int
-		var recommended bool
-		if err := rows.Scan(&id, &name, &desc, &short, &count, &recommended, &thumb, &depth); err != nil {
-			return err
-		}
-		list = append(list, map[string]any{
-			"id": id, "name": T(r.Context(), name), "description": T(r.Context(), desc),
-			"short_sentence": short, "card_count": count, "recommended": recommended,
-			"thumbnail":   absoluteAssetURL(r, deckPreviewURL(thumb)),
-			"depth_group": depth, "depth_label": depthLabel(depth),
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	out["recommended_spreads"] = list
-	if len(list) > 0 {
-		out["match_status"] = "RECOMMENDED"
-	}
-	return nil
-}
-
 func (a *App) rememberRecommendation(ctx context.Context, readingID int64, payload map[string]any) {
 	list, _ := payload["recommended_spreads"].([]map[string]any)
 	if len(list) == 0 {
@@ -405,7 +369,9 @@ func (a *App) localDetect(r *http.Request, uid int64, question string) (map[stri
 	}
 	if q == "" {
 		out["reason"] = "empty"
-		out["match_status"] = "NO_MATCH"
+		out["match_status"] = matchStatusInputNotMatchable
+		out["mapping_status"] = embeddedSpreadMatchConfig.MappingStatus
+		out["detection_status"] = detectionStatusInvalid
 		return out, nil
 	}
 	if err := a.attachRecommendation(r, out); err != nil {
@@ -419,11 +385,26 @@ func (a *App) localDetect(r *http.Request, uid int64, question string) (map[stri
 			return nil, err
 		}
 	}
+	status, _ := out["match_status"].(string)
+	if status == matchStatusMatched {
+		out["reason"] = "local_match"
+		if !member {
+			out["entitlement_note"] = "no_entitlement"
+		}
+		return out, nil
+	}
 	if !member {
 		out["reason"] = "no_entitlement"
 		return out, nil
 	}
-	out["reason"] = "fallback_unconfigured"
+	switch status {
+	case matchStatusInputNotMatchable:
+		out["reason"] = "input_not_matchable"
+	case matchStatusNoMatchMainIntent:
+		out["reason"] = "no_match_main_intent"
+	default:
+		out["reason"] = "no_match"
+	}
 	return out, nil
 }
 

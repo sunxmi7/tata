@@ -286,18 +286,18 @@ func TestRecommendUsesConfiguredSpread(t *testing.T) {
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "这份工作还要不要继续", "type": "normal"})
 	rid := asID(reading["id"])
 	payload := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/recommend", rid), map[string]any{})
-	found := false
-	for _, raw := range payload["recommended_spreads"].([]any) {
-		item := raw.(map[string]any)
-		if item["name"] != "时间流" {
-			continue
-		}
-		found = true
-		if item["description"] == nil || item["description"] == "" || item["card_count"] != float64(3) || item["recommended"] != true || item["thumbnail"] == nil || item["thumbnail"] == "" {
-			t.Fatalf("recommend fields incomplete: %#v", item)
-		}
+	items, _ := payload["recommended_spreads"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("want exactly 1 spread: %#v", payload)
 	}
-	if !found || payload["match_status"] != "RECOMMENDED" || payload["mapping_status"] != "unconfigured" {
+	item := items[0].(map[string]any)
+	if item["name"] != "单张牌占卜" {
+		t.Fatalf("I01 should prefer 单张牌占卜: %#v", item)
+	}
+	if item["description"] == nil || item["description"] == "" || item["card_count"] != float64(1) || item["recommended"] != true || item["thumbnail"] == nil || item["thumbnail"] == "" {
+		t.Fatalf("recommend fields incomplete: %#v", item)
+	}
+	if payload["match_status"] != "MATCHED" || payload["mapping_status"] != "draft_v1" || payload["main_intent"] != "I01" {
 		t.Fatalf("recommend: %#v", payload)
 	}
 }

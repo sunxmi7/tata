@@ -2712,14 +2712,22 @@ components:
         recommended_spreads:
           type: array
           description: |
-            运营勾选 recommended=true 的已启用普通牌阵。可多条。
+            本地 PRD §6.4 匹配结果，0 或 1 条。
             每项含 id、name、description、short_sentence、card_count、recommended、thumbnail、depth_group、depth_label。
           items:
             type: object
             additionalProperties: true
         match_status:
           type: string
+          description: MATCHED / NO_MATCH / NO_MATCH_MAIN_INTENT / INPUT_NOT_MATCHABLE
         mapping_status:
+          type: string
+          description: draft_v1
+        detection_status:
+          type: string
+        main_intent:
+          type: string
+        main_structure:
           type: string
     CreateReadingBody:
       type: object

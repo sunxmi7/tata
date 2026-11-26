@@ -61,7 +61,7 @@ func TestAppWorkflowDetectAndRecommendStayLocal(t *testing.T) {
 		"steps": []string{"detect", "recommend"},
 	})
 	raw := mustJSON(out["steps"])
-	if !strings.Contains(raw, "model_called") || !strings.Contains(raw, "false") || !strings.Contains(raw, "正式推荐未配置") || !strings.Contains(raw, "时间流") {
+	if !strings.Contains(raw, "model_called") || !strings.Contains(raw, "false") || !strings.Contains(raw, "正式推荐未配置") || !strings.Contains(raw, "单张牌占卜") {
 		t.Fatalf("workflow steps: %s", raw)
 	}
 	var jobs int
