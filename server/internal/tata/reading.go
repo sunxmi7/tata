@@ -1507,7 +1507,7 @@ func (a *App) appDaily(w http.ResponseWriter, r *http.Request) error {
 		writeOK(w, failed)
 		return nil
 	}
-	// generate() loads without request cycle; re-attach so tomorrow → moment/普通占卜.
+	// generate() loads without request cycle; re-attach so tomorrow keeps daily type + 普通占卜 label.
 	attachConversationMeta(item, drawDate)
 	a.attachDailyHome(r.Context(), r, item, target, drawDate, targetDate)
 	writeOK(w, item)

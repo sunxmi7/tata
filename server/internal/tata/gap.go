@@ -1929,6 +1929,12 @@ func (a *App) calendarDailyByFortuneDay(r *http.Request, uid int64, fortuneDay s
 	cycle := a.userCycle(r, uid)
 	attachConversationMeta(item, cycle)
 	attachCalendarPreview(r, item, cfg, tarotistName, tarotistAvatar)
+	// Home / day-detail pointers need the full解读正文; days[] list still strips it.
+	if interp != nil {
+		item["interpretation"] = *interp
+	} else {
+		item["interpretation"] = nil
+	}
 	return item
 }
 

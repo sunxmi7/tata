@@ -1838,7 +1838,7 @@ paths:
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
         成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、target_date、has_result。不编造宜忌文案。
-        明日运势在历史/日历展示为普通占卜（conversation_type=moment，conversation_label=普通占卜），仍保留 type=daily、target=tomorrow、target_date。
+        明日运势在历史/日历展示名为普通占卜（conversation_label=普通占卜），conversation_type 仍为 daily 以便「运势解读」屏；仍保留 type=daily、target=tomorrow、target_date。
       requestBody:
         required: true
         content:
@@ -1882,7 +1882,7 @@ paths:
         与 daily 相同的登录、扣费、抽牌与复用规则。额度拦截仍返回普通 JSON 的 QuotaBlockEnvelope。
         通过后 Content-Type 为 text/event-stream：
         - `delta`：`data: {"text":"增量片段"}`，多次。
-        - `done`：`data: {"reading": Reading}`；复用已完成记录时带 `"reused": true`，无 delta。
+        - `done`：`data: {"reading": Reading}`；复用已完成记录时带 `"reused": true`，并先发一条完整正文的 `delta`（便于只累积 delta 的客户端画出「运势解读」）。
         - `error`：`data: {"message":"..."}`，生成失败（已置 FAILED_RETRYABLE，未重新扣费）。
       parameters:
         - $ref: '#/components/parameters/Authorization'
@@ -1923,7 +1923,8 @@ paths:
         month 按前缀匹配，例如 2026-10。type 可按四类过滤；不传 type =「全部」。
         日详情字段与定稿 574:2 对齐：今日一牌含牌名/正逆位/短文/缩略图；普通/探索含多张缩略图；占卜师含姓名与头像；时分取 created_at。
         另带 conversation_type / conversation_label / stage / stage_label / theme_key（与历史列表同套）。
-        不返回完整牌面 JSON 与解读正文，短文从 interpretation 截取，不编造。
+        days[] 不返回完整牌面 JSON 与解读正文，短文从 interpretation 截取，不编造。
+        cycle_daily / tomorrow_daily 供首页/日详情，额外带 interpretation 全文。
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - name: month
@@ -3095,18 +3096,18 @@ components:
           enum: ['', daily, moment, theme]
           description: |
             历史对话三类（App 分 UI 用这个）：
-            - daily：今日运势（type=daily 且 target=today）
-            - moment：普通占卜（type=normal，或 type=daily 且 target=tomorrow）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no|either_or）
+            - daily：今日/明日运势（type=daily；用 target=today|tomorrow 区分）
+            - moment：普通占卜（type=normal）/ 占卜师（type=tarotist）/ 此刻抉择（type=explore 且 theme_key 为 yes_or_no|either_or）
             - theme：主题占卜（type=explore 且其余 theme_key）
             - 空字符串：explore 尚未有 theme_key
             判定：type=explore && conversation_type=moment → 此刻抉择；
             type=explore && conversation_type=theme → 主题占卜；
-            type=daily && target=tomorrow → 按普通占卜展示（仍可用 target / target_date 识别明日运势）。
+            type=daily && target=tomorrow → conversation_type 仍为 daily（运势解读屏），conversation_label 为「普通占卜」。
         conversation_label:
           type: string
           description: |
             列表/详情展示名：今日运势、普通占卜、占卜师、此刻抉择、主题占卜。
-            提前抽的明日运势展示为「普通占卜」（不再单独用「明日运势」标签）。
+            提前抽的明日运势展示为「普通占卜」（不再单独用「明日运势」标签）；解读屏仍按 conversation_type=daily。
             conversation_type 为空时为空字符串。
         stage:
           type: string
@@ -4077,7 +4078,7 @@ components:
         target:
           type: string
           enum: [today, tomorrow, '']
-          description: 仅 daily 有意义。明日运势仍为 tomorrow，但 conversation_* / type_label 按普通占卜展示。
+          description: 仅 daily 有意义。明日运势为 tomorrow；conversation_label / type_label 按普通占卜展示，conversation_type 仍为 daily。
         question:
           type: string
           description: 问题原文。无则为空。
@@ -4163,11 +4164,12 @@ components:
           description: |
             运势目标日=cycle 的 daily 记录（含前一日提前抽的明日运势）。按 target_date 复用，不改 days 归天。
             无则为省略/null。首页/日详情应优先用此字段或 POST /daily，勿只按 business_date=cycle 查找。
+            与 days[] 不同，本字段带 interpretation 全文供「运势解读」展示。
         tomorrow_daily:
           allOf:
             - $ref: '#/components/schemas/CalendarItem'
           nullable: true
-          description: 运势目标日=tomorrow_date 的 daily 记录；语义同 cycle_daily。
+          description: 运势目标日=tomorrow_date 的 daily 记录；语义同 cycle_daily（含 interpretation 全文）。
         cycle:
           type: string
           description: 当前业务日 YYYY-MM-DD。

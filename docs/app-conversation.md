@@ -39,12 +39,12 @@
 
 | conversation_type | conversation_label | 来源 |
 |---|---|---|
-| `daily` | 今日运势 | `type=daily` 且 `target=today` |
-| `moment` | 普通占卜 / 占卜师 / 此刻抉择 | `normal`、`tarotist`，explore 且 `theme_key` 为 `yes_or_no` / `either_or`，或提前抽的明日运势（`type=daily` 且 `target=tomorrow`） |
+| `daily` | 今日运势 / 普通占卜 | `type=daily`（`target=today` → 今日运势；`target=tomorrow` → 标签为普通占卜，仍走运势解读屏） |
+| `moment` | 普通占卜 / 占卜师 / 此刻抉择 | `normal`、`tarotist`，explore 且 `theme_key` 为 `yes_or_no` / `either_or` |
 | `theme` | 主题占卜 | explore 且其余主题键 |
 | `""` | 空 | explore 尚未有 `theme_key`（创建未传、也未选阵） |
 
-明日运势：`business_date` = 抽牌日（进日历/历史那天），`target_date` = 运势日；目标日再请求今日一牌会按 `target_date` 复用，不重抽。识别明日运势请看 `target` / `target_date`，不要只靠 `conversation_label`。
+明日运势：`business_date` = 抽牌日（进日历/历史那天），`target_date` = 运势日；目标日再请求今日一牌会按 `target_date` 复用，不重抽。`conversation_type` 仍为 `daily`（避免「运势解读」空内容）；列表名用 `conversation_label=普通占卜`。识别明日请看 `target` / `target_date`。
 
 ### App 怎么区分「此刻抉择」和「主题占卜」（必读）
 

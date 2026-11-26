@@ -29,8 +29,9 @@ func validateExploreThemeKey(key string) error {
 }
 
 // conversationTypeOf maps storage fields to the three history conversation kinds.
-// daily → 今日/明日；moment → 普通占卜 + 探索此刻抉择；theme → 主题占卜。
+// daily → 今日/明日运势；moment → 普通占卜 + 探索此刻抉择；theme → 主题占卜。
 // Explore without theme_key yet returns "" until create/spread fills it.
+// Tomorrow fortune stays daily (运势解读 UI); only its label is「普通占卜」.
 func conversationTypeOf(kind, themeKey string) string {
 	switch kind {
 	case "daily":
@@ -75,9 +76,9 @@ func conversationLabelOf(kind, themeKey, target string) string {
 }
 
 func conversationTypeForItem(kind, themeKey, target string) string {
-	if kind == "daily" && target == "tomorrow" {
-		return "moment"
-	}
+	// Tomorrow fortune keeps conversation_type=daily (App「运势解读」屏).
+	// Only conversation_label is「普通占卜」; callers still pass target for clarity.
+	_ = target
 	return conversationTypeOf(kind, themeKey)
 }
 
