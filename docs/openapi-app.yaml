@@ -1182,6 +1182,8 @@ paths:
       description: |
         一次返回进度与对话。新客户端优先看 conversation_type + stage；progress 仍按 status 给旧文案。
         data 在 Reading 之上带 reading_id、messages、has_more。不传 limit（或 ≤0）时 messages 从 offset 起给剩余全部。
+        draw_mode=numerology 且尚未落牌（status 为 SPREAD_SELECTED/SHUFFLING/CUTTING）时，messages 末尾含类型八引导，
+        continue=numerology、stage=pending_numerology；不必先调 POST /numerology numbers=[] 也能进输入页。
         未登录不带令牌，query 带 device_id。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
@@ -1682,9 +1684,14 @@ paths:
       operationId: appNumerologyMessages
       summary: 灵数抽牌
       description: |
-        选完牌阵之后提交 numbers。个数须等于牌阵张数，1–78，不可重复。
-        还没填数字时 messages 含类型八。数字不齐时含类型十，数字重复时含类型九，不落牌。
-        数字齐了按这一问的 78 张映射落牌，data 为 reading_id、has_more、messages。
+        仅 draw_mode=numerology。选完牌阵后调用；服务端没有 /draw、/shuffle、/cut。
+        请求体 numbers：空数组返回类型八引导；个数须等于牌阵张数且 1–78 不重复才落牌。
+        数字不齐 → 类型十；重复 → 类型九；均不落牌。齐了按本问 78 张映射落成 CARDS_FIXED。
+        任意 numbers（含空数组、校验失败）的 data 都带 reading_id、has_more、messages，
+        以及 status、continue、stage、draw_mode、reading，避免客户端把缺 meta 当成失败。
+        正确顺序：POST /spread（draw_mode=numerology）→（可选）POST /numerology numbers=[] 取引导
+        → POST /numerology 交齐数字 → POST /interpret。也可只靠 GET /readings/{id}：未落牌时
+        messages 已含类型八，continue=numerology、stage=pending_numerology。
         未登录不带令牌，query 带 device_id。不要把 device_id 放进请求体。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
@@ -5480,6 +5487,22 @@ components:
           items:
             type: object
             additionalProperties: true
+        status:
+          type: string
+          description: 当前占卜状态。POST /numerology 始终回传，便于路由。
+        continue:
+          type: string
+          description: 下一步动作提示。灵数未落牌为 numerology；落牌后为 interpret。
+        stage:
+          type: string
+          description: 细粒度阶段。灵数未落牌为 pending_numerology。
+        draw_mode:
+          type: string
+          description: 抽牌方式。灵数流程为 numerology。
+        reading:
+          type: object
+          additionalProperties: true
+          description: POST /numerology 附带的完整占卜摘要（与 GET 同形字段）。
         deck:
           type: object
           additionalProperties: true

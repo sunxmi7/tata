@@ -587,4 +587,12 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 
 这条占卜的 `draw_mode` 必须是 `numerology`。确认后的解读、历史顺序和常规抽牌相同。牌上多一个 `number`。需求 7.3 的补抽是再输入 1 个数字，沿用这套 78 张映射，追加到历史里，不覆盖原来的牌。设计图的「去抽牌 / 跳过」没有单独的灵数页，所以类型十七只出现在 `draw_mode` 为 `normal` 的普通占卜追问后面。
 
-**与普通抽牌的 API 边界：** 服务端没有洗牌 / 切牌 / 抽牌接口（普通与灵数皆然）。灵数只多一步 `POST /numerology` 落牌；落牌后 `GET /readings/{id}` 与 `POST /interpret` 的 data 与普通同形，不另造洗切抽响应。选阵后未落牌时 `continue=numerology`、`stage=pending_numerology` 仅作客户端路由提示。
+**与普通抽牌的 API 边界：** 服务端没有洗牌 / 切牌 / 抽牌接口（普通与灵数皆然）。灵数只多一步 `POST /numerology` 落牌；落牌后 `GET /readings/{id}` 与 `POST /interpret` 的 data 与普通同形，不另造洗切抽响应。选阵后未落牌时 `continue=numerology`、`stage=pending_numerology` 作客户端路由提示。
+
+**App 必调顺序（灵数）：**
+
+1. `POST /readings` → `POST /readings/{id}/spread`（`draw_mode=numerology`）
+2. 打开输入页：`POST /readings/{id}/numerology` 且 `numbers: []`（拿类型八），**或**直接 `GET /readings/{id}`（未落牌时 messages 已含类型八）
+3. `POST /readings/{id}/numerology` 交齐数字 → `continue=interpret` → `POST /interpret`
+
+`POST /numerology` 任意 numbers（含空数组、校验失败）都会在 data 里带上 `status` / `continue` / `stage` / `draw_mode` / `reading`，不要因缺这些字段把 200 当成失败。若访问日志只有反复 `GET /readings/{id}`、没有 `/spread` 或 `/numerology`，说明客户端还没进入灵数提交，应先确认选阵是否带了 `draw_mode=numerology`，以及是否按上面第 2 步取引导。

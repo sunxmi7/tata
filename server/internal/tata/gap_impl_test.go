@@ -101,7 +101,14 @@ func TestNumerologyDrawMapsDeck(t *testing.T) {
 	if !strings.Contains(string(shortRaw), "请再输入") {
 		t.Fatalf("short draw: %s", shortRaw)
 	}
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/numerology", rid), map[string]any{"numbers": []int{1, 9, 12}})
+	emptyGuide := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/numerology", rid), map[string]any{"numbers": []int{}})
+	if emptyGuide["continue"] != "numerology" || emptyGuide["stage"] != "pending_numerology" {
+		t.Fatalf("empty guide meta: %#v", emptyGuide)
+	}
+	locked := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/numerology", rid), map[string]any{"numbers": []int{1, 9, 12}})
+	if locked["continue"] != "interpret" || locked["status"] != "CARDS_FIXED" {
+		t.Fatalf("locked numerology meta: continue=%v status=%v", locked["continue"], locked["status"])
+	}
 	drawn := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
 	raw, _ := json.Marshal(drawn["cards"])
 	var cards []drawnCard
@@ -110,6 +117,12 @@ func TestNumerologyDrawMapsDeck(t *testing.T) {
 	}
 	if len(cards) != 3 || cards[0].Number != 1 || cards[1].Number != 9 || cards[2].Number != 12 {
 		t.Fatalf("count follows spread: %s", raw)
+	}
+	// After cards are fixed, GET must not keep injecting the type-八 guide.
+	for _, item := range messageList(t, drawn) {
+		if item["style"] == "guide" {
+			t.Fatalf("guide after CARDS_FIXED: %#v", item)
+		}
 	}
 	if cards[0].Orientation != "upright" && cards[0].Orientation != "reversed" {
 		t.Fatalf("orientation: %#v", cards[0])
@@ -1103,11 +1116,38 @@ func TestConventionalFlowCoversEveryType(t *testing.T) {
 	numer := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "用数字看看", "type": "normal"})
 	numerID := asID(numer["id"])
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", numerID), map[string]any{"spread_id": spreadID, "draw_mode": "numerology"})
+	// App may only poll GET after tapping 灵数 — guide must already be in messages.
+	resume := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", numerID))
+	if resume["continue"] != "numerology" || resume["stage"] != "pending_numerology" {
+		t.Fatalf("get resume routing: continue=%v stage=%v", resume["continue"], resume["stage"])
+	}
+	gotGuideOnGet := false
+	for _, item := range messageList(t, resume) {
+		if item["style"] == "guide" {
+			gotGuideOnGet = true
+			break
+		}
+	}
+	if !gotGuideOnGet {
+		t.Fatalf("GET pending numerology missing guide: %#v", resume["messages"])
+	}
 	guide := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/numerology", numerID), map[string]any{"numbers": []int{}})
+	if guide["continue"] != "numerology" || guide["stage"] != "pending_numerology" || guide["draw_mode"] != "numerology" {
+		t.Fatalf("empty numerology meta: %#v", guide)
+	}
+	if guide["status"] == nil || guide["reading"] == nil {
+		t.Fatalf("empty numerology missing status/reading: %#v", guide)
+	}
 	note(messageList(t, guide))
 	short := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/numerology", numerID), map[string]any{"numbers": []int{12}})
+	if short["continue"] != "numerology" || short["stage"] != "pending_numerology" {
+		t.Fatalf("short numerology should stay pending: %#v", short)
+	}
 	note(messageList(t, short))
 	dup := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/numerology", numerID), map[string]any{"numbers": []int{12, 12, 58}})
+	if dup["continue"] != "numerology" {
+		t.Fatalf("dup numerology meta: %#v", dup)
+	}
 	note(messageList(t, dup))
 	markedDup := false
 	for _, item := range messageList(t, dup) {

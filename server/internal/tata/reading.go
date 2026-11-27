@@ -1468,6 +1468,7 @@ func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	messages = a.withPendingNumerologyGuide(r, id, item, messages)
 	limit, offset := 0, 0
 	if s := r.URL.Query().Get("limit"); s != "" {
 		limit, _ = strconv.Atoi(s)
@@ -1481,6 +1482,62 @@ func (a *App) appGetReading(w http.ResponseWriter, r *http.Request) error {
 	item["has_more"] = hasMore
 	writeOK(w, item)
 	return nil
+}
+
+// withPendingNumerologyGuide injects type-八 guide into GET detail when the client
+// resumes a numerology reading before POST /numerology (empty numbers). Matches logs
+// where App only polls GET /readings/{id} after tapping 灵数.
+func (a *App) withPendingNumerologyGuide(r *http.Request, id int64, item map[string]any, messages []map[string]any) []map[string]any {
+	if item == nil {
+		return messages
+	}
+	if fmtString(item["draw_mode"]) != "numerology" {
+		return messages
+	}
+	switch fmtString(item["status"]) {
+	case "SPREAD_SELECTED", "SHUFFLING", "CUTTING":
+	default:
+		return messages
+	}
+	if readingHasLockedCards(item["cards"]) {
+		return messages
+	}
+	for _, msg := range messages {
+		if fmtString(msg["style"]) == "guide" {
+			return messages
+		}
+	}
+	var cardCount int
+	if err := a.Store.QueryRow(r.Context(), `SELECT COALESCE(s.card_count,0) FROM readings r
+		LEFT JOIN spreads s ON s.id=r.spread_id WHERE r.id=$1`, id).Scan(&cardCount); err != nil || cardCount <= 0 {
+		return messages
+	}
+	return append(messages, numerologyGuide(cardCount))
+}
+
+func readingHasLockedCards(raw any) bool {
+	switch t := raw.(type) {
+	case nil:
+		return false
+	case string:
+		s := strings.TrimSpace(t)
+		return s != "" && s != "[]" && s != "null"
+	case *string:
+		if t == nil {
+			return false
+		}
+		s := strings.TrimSpace(*t)
+		return s != "" && s != "[]" && s != "null"
+	case json.RawMessage:
+		s := strings.TrimSpace(string(t))
+		return s != "" && s != "[]" && s != "null"
+	case []any:
+		return len(t) > 0
+	case []map[string]any:
+		return len(t) > 0
+	default:
+		return false
+	}
 }
 
 func (a *App) appDeleteReading(w http.ResponseWriter, r *http.Request) error {

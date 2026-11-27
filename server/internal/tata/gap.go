@@ -1114,6 +1114,18 @@ func numerologyInputRows(cardCount int) int {
 	return (cardCount + 5) / 6
 }
 
+func (a *App) attachNumerologyReadingMeta(r *http.Request, id int64, out map[string]any) {
+	item, err := a.loadReadingAbs(r.Context(), r, id)
+	if err != nil || item == nil {
+		return
+	}
+	out["reading"] = item
+	out["status"] = item["status"]
+	out["continue"] = item["continue"]
+	out["stage"] = item["stage"]
+	out["draw_mode"] = item["draw_mode"]
+}
+
 func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) error {
 	_, id, _, err := a.beginReading(r)
 	if err != nil {
@@ -1144,7 +1156,10 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 	messages := []map[string]any{}
 	if len(req.Numbers) == 0 {
 		messages = append(messages, numerologyGuide(cardCount))
-		writeOK(w, map[string]any{"reading_id": id, "messages": messages, "has_more": false})
+		out := map[string]any{"reading_id": id, "messages": messages, "has_more": false}
+		// Resume/open guide must carry continue/stage so App does not treat empty meta as failure.
+		a.attachNumerologyReadingMeta(r, id, out)
+		writeOK(w, out)
 		return nil
 	}
 	slots := make([]map[string]any, cardCount)
@@ -1221,14 +1236,8 @@ func (a *App) appNumerologyMessages(w http.ResponseWriter, r *http.Request) erro
 		if err := a.fixNumerologyCards(r.Context(), id, req.Numbers, positions); err != nil {
 			return err
 		}
-		if item, loadErr := a.loadReadingAbs(r.Context(), r, id); loadErr == nil {
-			out["reading"] = item
-			out["status"] = item["status"]
-			out["continue"] = item["continue"]
-			out["stage"] = item["stage"]
-			out["draw_mode"] = item["draw_mode"]
-		}
 	}
+	a.attachNumerologyReadingMeta(r, id, out)
 	writeOK(w, out)
 	return nil
 }
