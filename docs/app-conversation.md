@@ -20,18 +20,32 @@
 
 本版原件到类型二十。没有类型十三。空态只有类型八。选牌阵到抽牌方式是一整条类型十六。
 
-## 常规抽牌怎么走
+## 常规抽牌怎么走（App 可照抄）
 
-1. `GET /api/app/v1/preset-questions` 取预设问题。用户选中的那一句，就是这次的问题。
-2. 预设都不满意时，用户自己输入。`POST /api/app/v1/question-suggestions` 按这句话做问题推荐。用户选中推荐里的一句，就用那一句。
-3. 推荐也不满意，就用用户自己输入的那句。
-4. `POST /api/app/v1/readings` 用这句最终问题创建占卜，返回占卜 ID。已经知道抽牌方式时带上 `draw_mode`。
-5. `GET /api/app/v1/readings/{id}/spread-choices` 拉牌阵选项，`POST /api/app/v1/readings/{id}/spread` 提交选中的牌阵，并带上最终的 `draw_mode`。
-6. 洗牌、抽牌在客户端完成。
-7. `POST /api/app/v1/readings/{id}/interpret` 把占卜 ID、牌阵 ID、抽好的牌一起交上来。服务端用占卜 ID 查出问题，再解读。
-8. 之后的追问、补抽、历史，都返回同一份 `messages`。
+### A. 点预设（跳过检测）
 
-预设列表本身不写历史；点预设后应 `POST /readings` 且 `source=preset`（`skip_detect=true`，`continue=spread`，直接进选阵）。用户手输问题走 `POST /question-suggestions`（登录会有 `reading_id`，`continue=detect`），确认问题后再 `POST /readings`（不要带 `source=preset`）。洗牌、抽牌还没随解读请求交上来时，服务端只停在「问题加已选牌阵」。
+1. `GET /api/app/v1/preset-questions`
+2. `POST /api/app/v1/readings`  
+   `{"question":"<预设 body>","type":"normal","source":"preset"}`  
+   （可选 `draw_mode`）→ `skip_detect=true`，`continue=spread`
+3. `GET /api/app/v1/readings/{id}/spread-choices` → `POST .../spread`（带 `spread_id` + `draw_mode`）
+4. 客户端洗/抽 → `POST .../interpret`
+
+### B. 手输问题（先检测，再确认开局）
+
+1. 用户输入 → `POST /api/app/v1/question-suggestions`  
+   `{"question":"<手输文案>"}`  
+   - 登录：`data.reading_id`（检测草稿，历史可见）、`continue=detect`、`skip_detect=false`、`messages`（类型六；宽泛时还有推荐）
+   - 未登录：无 `reading_id`，仍有 `messages`
+   - 请求头必须是 `Authorization: Bearer <accessToken>`（`Bearer` 大小写敏感）才有 `reading_id`
+2. 用户点推荐句 **或** 保留原句 → 得到「最终问题」文案（客户端本地选定即可；改文案可再打一次 suggestions）
+3. **确认开局（必做）** `POST /api/app/v1/readings`  
+   `{"question":"<最终问题>","type":"normal"}`  
+   **不要** `source=preset`。  
+   登录时服务端会**复用**步骤 1 的检测草稿（同一 `id`），只更新 `question`，不会再插第二条 `QUESTION_CREATED`。
+4. 用返回的 `id`：`GET .../spread-choices` → `POST .../spread` → 客户端洗/抽 → `POST .../interpret`
+
+不要用 suggestions 的 `reading_id` 跳过步骤 3 直接选阵当「已确认」；确认语义在 `POST /readings`。没有 `PUT /readings/{id}/question`。
 
 ## 历史对话类型
 
@@ -206,7 +220,7 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 { "question": "这是我自己输入的问题" }
 ```
 
-返回的 `messages` 顺序是类型六、类型十二、类型十四、类型四、类型五。推荐句子来自预设题库。用户不选，就仍用自己输入的那句去创建。
+登录 data 另含 `reading_id`、`continue=detect`、`skip_detect=false`（检测草稿）。宽泛时 `messages` 顺序是类型六、十二、十四、四、五；无效/具体通常只有类型六。推荐句子来自预设题库。用户点选推荐句或保留原句后，再用最终文案 `POST /readings` 确认开局（见上文流程 B）。
 
 ```json
 {

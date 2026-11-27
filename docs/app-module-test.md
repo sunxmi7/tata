@@ -188,7 +188,7 @@
 
 ### 4.2 改问题（抽牌前）
 
-这期没有 `PUT /readings/{id}/question`。问题在创建时一次定好；创建前可用 `POST /question-suggestions` 换更清晰的问法。
+这期没有 `PUT /readings/{id}/question`。手输先 `POST /question-suggestions`（登录有 `reading_id`），选定最终文案后再 `POST /readings` 确认（登录复用检测草稿 id）；预设直接 `POST /readings` 且 `source=preset`。
 
 ### 4.3 选阵 → 客户端抽牌 → 解读
 

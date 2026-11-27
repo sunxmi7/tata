@@ -82,6 +82,20 @@ func TestQuestionSuggestionsVaryByInput(t *testing.T) {
 		t.Fatalf("detect reading missing from GET /readings: %#v", hist)
 	}
 
+	// Confirm after detect: POST /readings reuses the detect draft (same id).
+	finalQ := "我该不该接受这份新工作？"
+	created := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": finalQ, "type": "normal"})
+	if asID(created["id"]) != rid {
+		t.Fatalf("create after detect should reuse draft: detect=%d create=%v", rid, created["id"])
+	}
+	if created["question"] != finalQ || created["continue"] != "detect" || created["skip_detect"] != false {
+		t.Fatalf("reused create payload: %#v", created)
+	}
+	var nOpen int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM readings WHERE user_id=$1 AND type='normal' AND skip_detect=false AND status='QUESTION_CREATED' AND deleted_at IS NULL`, uid).Scan(&nOpen); err != nil || nOpen != 1 {
+		t.Fatalf("expected one open hand-input draft, got %d err=%v", nOpen, err)
+	}
+
 	specific := create(t, ts, "", "/api/app/v1/question-suggestions", map[string]any{"question": "我应该接受这份工作吗？"})
 	specificMsgs := messageList(t, specific)
 	if len(specificMsgs) != 1 || specificMsgs[0]["style"] != "detect" {
