@@ -201,6 +201,35 @@ func TestExploreSpreadChoicesUsesThemeSpreads(t *testing.T) {
 	})
 }
 
+func TestSelectSpreadBlankDrawModeTreatedAsOmitted(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "blankdrawmode")
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"question": "他还会联系我吗", "source": "preset",
+	})
+	rid := asID(reading["id"])
+	var spreadID int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE theme_key='' AND enabled=true AND card_count=1 ORDER BY id LIMIT 1`).Scan(&spreadID); err != nil {
+		t.Fatal(err)
+	}
+	// Blank must not return「抽牌方式不正确」; logged-in normal still needs a real mode.
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{
+		"spread_id": spreadID, "draw_mode": "",
+	})
+	if msg == "抽牌方式不正确" {
+		t.Fatalf("blank draw_mode should be omitted, got %q", msg)
+	}
+	if msg != "请先选择抽牌方式" {
+		t.Fatalf("want 请先选择抽牌方式, got %q", msg)
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{
+		"spread_id": spreadID, "draw_mode": "   ",
+	})
+	if msg == "抽牌方式不正确" {
+		t.Fatalf("whitespace draw_mode should be omitted, got %q", msg)
+	}
+}
+
 func TestExploreSelectSpreadAllowsNumerology(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, _ := registerUser(t, ts, store, "explorenumerology")

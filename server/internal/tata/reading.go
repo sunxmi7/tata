@@ -690,7 +690,8 @@ func (a *App) appCreateReading(w http.ResponseWriter, r *http.Request) error {
 		if _, err := parseDrawMode(drawMode); err != nil {
 			return err
 		}
-		if req.Type != "normal" {
+		// Same as POST /spread: ordinary + explore may set normal/numerology.
+		if req.Type != "normal" && req.Type != "explore" {
 			return biz("抽牌方式不正确")
 		}
 	}
@@ -1001,19 +1002,21 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 	}
 	resolved := storedMode
 	if req.DrawMode != nil {
-		mode, err := parseDrawMode(*req.DrawMode)
-		if err != nil {
-			return err
-		}
-		// Ordinary and explore may lock normal/numerology. Daily (and other
-		// kinds) still reject an explicit draw_mode. Explore spread-choices
-		// may omit draw_modes UI, but clients that send numerology must work
-		// the same receive path as ordinary (POST /numerology → interpret).
-		switch kind {
-		case "normal", "explore":
-			resolved = mode
-		default:
-			return biz("抽牌方式不正确")
+		raw := strings.TrimSpace(*req.DrawMode)
+		// Empty / whitespace = omitted (not "不正确"); App often sends "".
+		if raw != "" {
+			mode, err := parseDrawMode(raw)
+			if err != nil {
+				return err
+			}
+			// Ordinary and explore may lock normal/numerology. Daily/tarotist
+			// still reject an explicit draw_mode.
+			switch kind {
+			case "normal", "explore":
+				resolved = mode
+			default:
+				return biz("抽牌方式不正确")
+			}
 		}
 	}
 	if resolved != storedMode {
