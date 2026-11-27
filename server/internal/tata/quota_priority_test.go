@@ -627,7 +627,7 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	if tomorrow["business_date"] != cycle || tomorrow["target_date"] != wantTarget {
 		t.Fatalf("tomorrow dates: business=%v target=%v cycle=%s tomorrow=%s", tomorrow["business_date"], tomorrow["target_date"], cycle, wantTarget)
 	}
-	if tomorrow["conversation_type"] != "moment" || tomorrow["conversation_label"] != "普通占卜" || tomorrow["target"] != "tomorrow" {
+	if tomorrow["conversation_type"] != "daily" || tomorrow["conversation_label"] != "普通占卜" || tomorrow["target"] != "tomorrow" {
 		t.Fatalf("tomorrow conversation: %#v", tomorrow)
 	}
 	var storedBiz, storedTarget string

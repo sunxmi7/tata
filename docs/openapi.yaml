@@ -5880,7 +5880,7 @@ paths:
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
         成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail、target、business_date、target_date、has_result。
-        明日运势历史/日历按普通占卜展示（conversation_type=moment），仍可用 target=tomorrow / target_date 识别。
+        明日运势历史/日历展示名为普通占卜（conversation_label），conversation_type 仍为 daily，可用 target=tomorrow / target_date 识别。
       requestBody:
         required: true
         content:
@@ -5924,7 +5924,7 @@ paths:
         与 daily 相同的登录、扣费、抽牌与复用规则。额度拦截仍返回普通 JSON 的 QuotaBlockEnvelope。
         通过后 Content-Type 为 text/event-stream：
         - `delta`：`data: {"text":"增量片段"}`，多次。
-        - `done`：`data: {"reading": Reading}`；复用已完成记录时带 `"reused": true`，无 delta。
+        - `done`：`data: {"reading": Reading}`；复用已完成记录时带 `"reused": true`，并先发一条完整正文的 `delta`。
         - `error`：`data: {"message":"..."}`，生成失败（已置 FAILED_RETRYABLE，未重新扣费）。
       parameters:
         - $ref: "#/components/parameters/Authorization"

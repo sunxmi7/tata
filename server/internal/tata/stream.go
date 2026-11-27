@@ -204,6 +204,11 @@ func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
 		if status == "COMPLETED" {
 			send := sseStart(w)
 			a.attachDailyHome(r.Context(), r, existing, target, drawDate, targetDate)
+			// Reuse has no generation deltas; emit full正文 once so App「运势解读」
+			// that only accumulates delta text still paints on reopen.
+			if text := strings.TrimSpace(interpText(existing["interpretation"])); text != "" {
+				send("delta", map[string]any{"text": text})
+			}
 			send("done", map[string]any{"reading": existing, "reused": true})
 			return nil
 		}

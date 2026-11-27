@@ -50,7 +50,7 @@ func TestConversationLabelAndStage(t *testing.T) {
 	if got := conversationLabelOf("daily", "", "tomorrow"); got != "普通占卜" {
 		t.Fatalf("daily tomorrow: %q", got)
 	}
-	if got := conversationTypeForItem("daily", "", "tomorrow"); got != "moment" {
+	if got := conversationTypeForItem("daily", "", "tomorrow"); got != "daily" {
 		t.Fatalf("daily tomorrow type: %q", got)
 	}
 	if got := conversationLabelOf("daily", "", "today"); got != "今日运势" {
@@ -109,10 +109,10 @@ func TestHistoryConversationFields(t *testing.T) {
 	if theme == nil || theme["stage"] != "pending_spread" || theme["stage_label"] != "待选牌阵" {
 		t.Fatalf("theme: %#v", theme)
 	}
-	// Advance-drawn tomorrow fortune is filed as 普通占卜 (moment) on the draw day.
-	daily := byType["moment|普通占卜"]
-	if daily == nil || daily["target"] != "tomorrow" || daily["stage"] != "cards_fixed" {
-		t.Fatalf("daily tomorrow as moment: %#v", daily)
+	// Advance-drawn tomorrow fortune: label 普通占卜, type stays daily for 运势解读 UI.
+	daily := byType["daily|普通占卜"]
+	if daily == nil || daily["target"] != "tomorrow" || daily["stage"] != "pending_interpret" {
+		t.Fatalf("daily tomorrow as daily+普通占卜: %#v", daily)
 	}
 	if daily["business_date"] != "2099-01-01" || daily["target_date"] != "2099-01-02" {
 		t.Fatalf("daily dates: %#v", daily)
