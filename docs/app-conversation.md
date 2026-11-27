@@ -586,3 +586,5 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 `12、79、58` 时，79 的 `mark` 是「超出范围」，这个数字不占张数，所以同时返回「请再输入 1 个数字」。
 
 这条占卜的 `draw_mode` 必须是 `numerology`。确认后的解读、历史顺序和常规抽牌相同。牌上多一个 `number`。需求 7.3 的补抽是再输入 1 个数字，沿用这套 78 张映射，追加到历史里，不覆盖原来的牌。设计图的「去抽牌 / 跳过」没有单独的灵数页，所以类型十七只出现在 `draw_mode` 为 `normal` 的普通占卜追问后面。
+
+**与普通抽牌的 API 边界：** 服务端没有洗牌 / 切牌 / 抽牌接口（普通与灵数皆然）。灵数只多一步 `POST /numerology` 落牌；落牌后 `GET /readings/{id}` 与 `POST /interpret` 的 data 与普通同形，不另造洗切抽响应。选阵后未落牌时 `continue=numerology`、`stage=pending_numerology` 仅作客户端路由提示。

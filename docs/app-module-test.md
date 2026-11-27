@@ -192,22 +192,28 @@
 
 ### 4.3 选阵 → 客户端抽牌 → 解读
 
-服务端没有 detect / shuffle / cut / draw。洗牌、切牌、抽牌在客户端完成。
+服务端没有 detect / shuffle / cut / draw。洗牌、切牌、抽牌（含动画）只在客户端完成；`continue` 里的 `shuffle` / `cut` / `draw` 是客户端路由提示，不是后端接口。
+
+**契约（普通与灵数同形）：**
 
 1. `GET /api/app/v1/readings/{id}/spread-choices`（未登录带 `?device_id=`）
-2. `POST /api/app/v1/readings/{id}/spread` `{"spread_id":1,"draw_mode":"normal"}`
-3. 客户端抽好牌后，`POST /api/app/v1/readings/{id}/interpret` 带上牌面（必须登录）
+2. `POST /api/app/v1/readings/{id}/spread` 带 `spread_id` + `draw_mode`（`normal` 或 `numerology`）
+3. 落牌方式不同，解读接收相同：
+   - **普通** `draw_mode=normal`：客户端洗切抽 → `POST .../interpret` 带牌面
+   - **灵数** `draw_mode=numerology`：`POST .../numerology` 交 `numbers`（个数=牌阵张数，1–78 不重复）把状态写成 `CARDS_FIXED` → 再 `POST .../interpret`（可不带牌面）
+4. `GET /readings/{id}` 与成功的 `POST /interpret` data 同形（Reading 字段 + `messages` + `has_more`）。灵数不需要、也不提供单独的洗牌/切牌/抽牌后端响应。
 
-灵数：`draw_mode` 为 `numerology` 后，`POST /api/app/v1/readings/{id}/numerology` 交 `numbers`，个数等于牌阵张数，1–78 不重复。
+选阵后、灵数尚未落牌时：`continue=numerology`，`stage=pending_numerology`（避免客户端误进普通洗切屏）。牌面锁定后与普通一样：`continue=interpret`。
 
 - [ ] 普通占卜没选 `draw_mode` 就提交牌阵，应「请先选择抽牌方式」
 - [ ] 灵数数字不齐或重复时，返回类型九 / 十，不落牌
+- [ ] 灵数落牌成功后详情 / interpret 与普通同形，`status=CARDS_FIXED` 或解读完成后的 `COMPLETED`
 
 ### 4.4 解读
 
-`POST /api/app/v1/readings/{id}/interpret` 必须登录，body 带 `spread_id` 和 `cards`。
+`POST /api/app/v1/readings/{id}/interpret` 必须登录。普通抽牌 body 带 `spread_id` 和 `cards`；灵数牌已由 `/numerology` 落库时可空 body。
 
-- [ ] 供应商已绑：`data.messages` 含类型二、一、三
+- [ ] 供应商已绑：`data` 含 Reading 字段（含 `status` / `continue` / `interpretation`）+ `messages`（类型二、一、三）
 - [ ] 未绑：失败可重试，不重复扣费
 - [ ] 流式（可选）：`POST /api/app/v1/readings/{id}/interpret/stream`
 

@@ -16,9 +16,11 @@ func progressOf(status string) (label, next string) {
 	return progressOfReading(status, false, "")
 }
 
-// progressOfReading returns progress label and continue action.
+// progressOfReading returns progress label and continue action (client UI hints).
+// There is no App API for shuffle / cut / draw — those continue values are client-only.
 // skipDetect=true (preset/explore) skips question detect → continue=spread.
-// draw_mode=numerology skips shuffle/cut → continue=numerology until cards are fixed.
+// draw_mode=numerology: continue=numerology until POST /numerology sets CARDS_FIXED;
+// after that continue=interpret like ordinary readings.
 func progressOfReading(status string, skipDetect bool, drawMode string) (label, next string) {
 	numerology := strings.TrimSpace(drawMode) == "numerology"
 	switch status {

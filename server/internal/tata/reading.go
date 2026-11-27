@@ -1296,9 +1296,8 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.generate(r.Context(), id, false); err != nil {
 		return err
 	}
-	// Return the same shape as GET /readings/{id}: reading fields + messages.
-	// Clients that navigate by status/continue/stage (esp. numerology → interpret)
-	// need these fields; messages-only replies looked like「解读没进去」。
+	// Same shape as GET /readings/{id}: Reading fields + messages + has_more.
+	// Ordinary and numerology share this receive pattern after cards are fixed.
 	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err

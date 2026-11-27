@@ -1524,7 +1524,7 @@ paths:
         请求体带 spread_id 和客户端已经抽好的牌。牌已经落库时可以不带 body。
         牌名必须是牌库里的名字，orientation 只能是 upright 或 reversed，张数必须等于牌阵张数，同一张牌不能出现两次。
         成功 data 与 GET /readings/{id} 同形：Reading 字段（含 status / continue / stage / interpretation）+ reading_id + messages + has_more。
-        messages 从类型二、类型一、类型三开始。客户端应用 status=COMPLETED 与 messages 进入解读屏（灵数落牌后尤其如此）。
+        普通抽牌与灵数落牌后共用这一接收形态；messages 从类型二、类型一、类型三开始。客户端按 status=COMPLETED 与 messages 进入解读屏。
         explore 允许问题为空（主题占卜无提问环节）；空问题时按所选主题分类与牌阵解读，不回写 question。登录用户先过 play 门槛。未绑定供应商会把状态写成 FAILED_RETRYABLE。
       parameters:
         - $ref: '#/components/parameters/Authorization'
