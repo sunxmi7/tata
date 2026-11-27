@@ -37,12 +37,43 @@ func TestProgressOfReadingContinue(t *testing.T) {
 		{"SPREAD_SELECTED", false, "numerology", "numerology"},
 		{"SHUFFLING", false, "numerology", "numerology"},
 		{"CARDS_FIXED", false, "numerology", "interpret"},
+		{"CARDS_FIXED", false, "normal", "interpret"},
 	}
 	for _, c := range cases {
 		_, next := progressOfReading(c.status, c.skip, c.mode)
 		if next != c.want {
 			t.Fatalf("%s skip=%v mode=%s: continue=%q want %q", c.status, c.skip, c.mode, next, c.want)
 		}
+	}
+}
+
+func TestNumerologyMetaDoesNotFakeCardsFixed(t *testing.T) {
+	// Even if a row somehow has cards while status is still SHUFFLING, the API
+	// must not invent CARDS_FIXED / continue=interpret. Truthful status drives
+	// continue; POST /numerology is what locks to CARDS_FIXED.
+	item := map[string]any{
+		"type": "normal", "theme_key": "", "business_date": "", "target_date": "",
+		"draw_mode": "numerology", "skip_detect": false, "status": "SHUFFLING",
+		"cards": `[{"name":"愚者","orientation":"upright"}]`,
+	}
+	attachConversationMeta(item, "2099-01-01")
+	if item["continue"] != "numerology" {
+		t.Fatalf("continue=%v want numerology", item["continue"])
+	}
+	if item["stage"] != "pending_numerology" {
+		t.Fatalf("stage=%v want pending_numerology", item["stage"])
+	}
+	item2 := map[string]any{
+		"type": "normal", "theme_key": "", "business_date": "", "target_date": "",
+		"draw_mode": "numerology", "skip_detect": false, "status": "CARDS_FIXED",
+		"cards": `[{"name":"愚者","orientation":"upright"}]`,
+	}
+	attachConversationMeta(item2, "2099-01-01")
+	if item2["continue"] != "interpret" {
+		t.Fatalf("CARDS_FIXED continue=%v want interpret", item2["continue"])
+	}
+	if item2["stage"] != "cards_fixed" {
+		t.Fatalf("CARDS_FIXED stage=%v want cards_fixed", item2["stage"])
 	}
 }
 
