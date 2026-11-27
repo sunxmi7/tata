@@ -813,12 +813,6 @@ func (a *App) createNormal(ctx context.Context, uid int64, question, kind string
 			return nil, err
 		}
 	}
-	var id int64
-	err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode, theme_key) VALUES ($1,$2,$3,$4,'QUESTION_CREATED',$5,$6,$7,$8,$9) RETURNING id`,
-		nullID(uid), kind, question, tarotistID, first, onboard, boundDevice, drawMode, themeKey).Scan(&id)
-	if err != nil {
-		return nil, err
-	}
 	cycle := cycleOf(time.Now())
 	if uid > 0 {
 		cycle = cycleFor(time.Now(), userTimezone(ctx, tx, uid))
@@ -826,8 +820,32 @@ func (a *App) createNormal(ctx context.Context, uid int64, question, kind string
 	if kind == "explore" {
 		skip = true
 	}
-	if _, err := tx.Exec(ctx, `UPDATE readings SET business_date=$1, skip_detect=$2 WHERE id=$3`, cycle, skip, id); err != nil {
-		return nil, err
+	var id int64
+	// Hand-input confirm: reuse the open detect draft from POST /question-suggestions
+	// so "detect then POST /readings" does not leave a second QUESTION_CREATED row.
+	if uid > 0 && kind == "normal" && !skip {
+		err = tx.QueryRow(ctx, `SELECT id FROM readings
+			WHERE user_id=$1 AND type='normal' AND skip_detect=false AND status='QUESTION_CREATED' AND deleted_at IS NULL
+			ORDER BY id DESC LIMIT 1 FOR UPDATE`, uid).Scan(&id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if id > 0 {
+			if _, err := tx.Exec(ctx, `UPDATE readings SET question=$1, business_date=$2, skip_detect=false, draw_mode=$3, device_id=$4, updated_at=now() WHERE id=$5`,
+				question, cycle, drawMode, boundDevice, id); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if id == 0 {
+		err = tx.QueryRow(ctx, `INSERT INTO readings(user_id, type, question, tarotist_id, status, first_experience, onboard_experience, device_id, draw_mode, theme_key) VALUES ($1,$2,$3,$4,'QUESTION_CREATED',$5,$6,$7,$8,$9) RETURNING id`,
+			nullID(uid), kind, question, tarotistID, first, onboard, boundDevice, drawMode, themeKey).Scan(&id)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE readings SET business_date=$1, skip_detect=$2 WHERE id=$3`, cycle, skip, id); err != nil {
+			return nil, err
+		}
 	}
 	if drawMode == "numerology" {
 		if err := storeNumerologyMap(ctx, tx, id); err != nil {

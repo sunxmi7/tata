@@ -727,8 +727,10 @@ paths:
         无效或具体：只返回类型六（detect），文案与 reason_title 随结论变化；具体不生成推荐问法。
         宽泛：messages 顺序是类型六、十二、十四、四、五；推荐按输入关键词匹配 preset_questions 的 scene/category，
         有时间词时优先保留时间范围生成相关问法，再用同场景题库补满，默认 3 条。不是固定取 featured 前三条。
-        登录用户：会 upsert 一条 skip_detect=false 的普通占卜写入历史，data 带回 reading_id、continue=detect。
-        未登录：data 只有 has_more 与 messages。
+        登录用户：会 upsert 一条 skip_detect=false 的普通占卜（检测草稿）写入历史，data 带回 reading_id、continue=detect、skip_detect=false。
+        未登录：无 reading_id；仍有 messages、continue、skip_detect。
+        检测后用户选定最终问题（推荐句或原句）须再 POST /readings 确认开局；登录时会复用该检测草稿 id，不另插一条。
+        Authorization 须为 `Bearer <accessToken>`（大小写敏感）；无效令牌会静默按未登录处理（无 reading_id）。
       requestBody:
         required: true
         content:
@@ -742,7 +744,7 @@ paths:
                   question: 这是我自己输入的问题
       responses:
         '200':
-          description: data 为 has_more 与 messages。
+          description: data 为 SuggestionMessages（登录另含 reading_id）。
           content:
             application/json:
               schema:
@@ -1142,6 +1144,9 @@ paths:
       description: |
         状态从 QUESTION_CREATED 开始。问题最长 200 个码点。返回占卜记录，含 id 和 draw_mode。
         draw_mode 为 normal 或 numerology。还没选可以不传，记录上先是空字符串。今日运势不要带；探索也可在选阵时再提交。第一次写成 numerology 时生成这一问的 78 张映射，映射不返回给 App。
+        手输确认：登录用户在 POST /question-suggestions 之后再调本接口（不要 source=preset）时，
+        若已有 skip_detect=false 且 status=QUESTION_CREATED 的检测草稿，则复用该 id 并更新 question，不新建第二条。
+        预设请带 source=preset（skip_detect=true，continue=spread），不会复用检测草稿。
         登录用户的 normal / tarotist 在此按共享优先级扣 play；塔罗师首次可走 ai_trial。
         未登录不带令牌，请求体必须有 device_id，不预扣，quota_outcome=anonymous。塔罗师必须登录。
         explore 不在此扣费（quota_outcome=deferred）。
@@ -5520,7 +5525,7 @@ components:
           description: 仅 spread-choices。当前牌组卡背绝对 URL；未登录或无牌组时省略。
     SuggestionMessages:
       type: object
-      required: [has_more, messages]
+      required: [has_more, messages, continue, skip_detect]
       properties:
         has_more:
           type: boolean
@@ -5529,6 +5534,17 @@ components:
           items:
             type: object
             additionalProperties: true
+        continue:
+          type: string
+          description: 恒为 detect（建议下一步为问题检测屏）。
+          example: detect
+        skip_detect:
+          type: boolean
+          description: 恒为 false（手输检测路径）。
+        reading_id:
+          type: integer
+          format: int64
+          description: 仅登录且令牌有效时出现。检测草稿 id；确认开局仍须 POST /readings（会复用此 id）。
     InterpretBody:
       type: object
       additionalProperties: false
