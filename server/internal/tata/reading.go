@@ -1296,11 +1296,24 @@ func (a *App) appInterpret(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.generate(r.Context(), id, false); err != nil {
 		return err
 	}
-	view, err := a.conversationReply(r, id)
+	// Return the same shape as GET /readings/{id}: reading fields + messages.
+	// Clients that navigate by status/continue/stage (esp. numerology → interpret)
+	// need these fields; messages-only replies looked like「解读没进去」。
+	item, err := a.loadReadingAbs(r.Context(), r, id)
 	if err != nil {
 		return err
 	}
-	writeOK(w, view)
+	if err := a.attachPendingRedraw(r.Context(), id, item); err != nil {
+		return err
+	}
+	messages, err := a.loadConversation(r, id)
+	if err != nil {
+		return err
+	}
+	item["reading_id"] = id
+	item["messages"] = messages
+	item["has_more"] = false
+	writeOK(w, item)
 	return nil
 }
 

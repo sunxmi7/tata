@@ -800,10 +800,17 @@ func (a *App) appQuestionSuggestions(w http.ResponseWriter, r *http.Request) err
 	}
 	question := strings.TrimSpace(req.Question)
 	det := detectQuestion(question)
+	reasonTitle := "为什么建议修改？"
+	switch det.Kind {
+	case questionSpecific:
+		reasonTitle = "为什么可以直接选阵？"
+	case questionInvalid:
+		reasonTitle = "为什么看不出问题？"
+	}
 	messages := []map[string]any{{
 		"kind": "interpretation", "from": "server", "style": "detect",
-		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": "为什么建议修改？",
-		"text": det.DetectText,
+		"title": "塔塔 · 问题检测", "status": "已完成", "reason_title": reasonTitle,
+		"text": det.DetectText, "detection_status": string(det.Kind),
 	}}
 	readingID, _ := a.ensureDetectReading(r, question)
 	wrap := func(extra map[string]any) map[string]any {

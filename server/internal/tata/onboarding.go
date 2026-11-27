@@ -78,17 +78,31 @@ func deviceHasProfile(g deviceGuide) bool {
 
 // attachDeviceProfileDraft copies guide gender/birth/preferences from the device
 // draft into the account profile, but only fills empty account fields.
+// If deviceID is empty (login forgot to send it), fall back to the newest draft
+// linked via user_devices so onboarding gender/birth still sync.
 func (a *App) attachDeviceProfileDraft(ctx context.Context, uid int64, deviceID string) {
 	if uid <= 0 {
 		return
 	}
 	deviceID = strings.TrimSpace(deviceID)
-	if deviceID == "" {
-		return
-	}
 	var gender, birth, prefs string
-	err := a.Store.QueryRow(ctx, `SELECT COALESCE(gender,''), COALESCE(birth_date,''), COALESCE(explore_preferences,'[]')
-		FROM device_experiences WHERE lower(device_id)=lower($1)`, deviceID).Scan(&gender, &birth, &prefs)
+	var err error
+	if deviceID != "" {
+		err = a.Store.QueryRow(ctx, `SELECT COALESCE(gender,''), COALESCE(birth_date,''), COALESCE(explore_preferences,'[]')
+			FROM device_experiences WHERE lower(device_id)=lower($1)`, deviceID).Scan(&gender, &birth, &prefs)
+	} else {
+		err = a.Store.QueryRow(ctx, `SELECT COALESCE(d.gender,''), COALESCE(d.birth_date,''), COALESCE(d.explore_preferences,'[]')
+			FROM user_devices ud
+			JOIN device_experiences d ON lower(d.device_id)=lower(ud.device_id)
+			WHERE ud.user_id=$1
+			  AND (
+				NULLIF(btrim(COALESCE(d.gender,'')),'') IS NOT NULL
+				OR NULLIF(btrim(COALESCE(d.birth_date,'')),'') IS NOT NULL
+				OR COALESCE(d.explore_preferences,'') NOT IN ('','[]')
+			  )
+			ORDER BY d.created_at DESC NULLS LAST
+			LIMIT 1`, uid).Scan(&gender, &birth, &prefs)
+	}
 	if err != nil {
 		return
 	}

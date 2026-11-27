@@ -198,14 +198,20 @@ func attachConversationMeta(item map[string]any, todayCycle string) {
 	if status == "QUESTION_CREATED" && skip {
 		stage, stageLabel = "pending_spread", "待选牌阵"
 	}
-	// Numerology never resumes into shuffle/cut stages.
+	progress, next := progressOfReading(status, skip, drawMode)
+	// Numerology never resumes into shuffle/cut. If faces are already locked but
+	// status lagged on SHUFFLING/CUTTING, send the client to interpret.
 	if strings.TrimSpace(drawMode) == "numerology" {
 		switch status {
 		case "SPREAD_SELECTED", "SHUFFLING", "CUTTING":
-			stage, stageLabel = "pending_numerology", "待灵数抽牌"
+			if readingHasLockedCards(item["cards"]) {
+				stage, stageLabel = stageOf(conv, "CARDS_FIXED")
+				progress, next = progressOfReading("CARDS_FIXED", skip, drawMode)
+			} else {
+				stage, stageLabel = "pending_numerology", "待灵数抽牌"
+			}
 		}
 	}
-	progress, next := progressOfReading(status, skip, drawMode)
 	item["conversation_type"] = conv
 	item["conversation_label"] = label
 	item["stage"] = stage
@@ -236,4 +242,26 @@ func fmtString(v any) string {
 		}
 	}
 	return ""
+}
+
+func readingHasLockedCards(raw any) bool {
+	switch t := raw.(type) {
+	case nil:
+		return false
+	case string:
+		s := strings.TrimSpace(t)
+		return s != "" && s != "[]" && s != "null"
+	case *string:
+		if t == nil {
+			return false
+		}
+		s := strings.TrimSpace(*t)
+		return s != "" && s != "[]" && s != "null"
+	case []any:
+		return len(t) > 0
+	case []map[string]any:
+		return len(t) > 0
+	default:
+		return false
+	}
 }
