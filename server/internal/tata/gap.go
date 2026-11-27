@@ -914,12 +914,28 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var selected sql.NullInt64
-	var question string
-	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id, COALESCE(question,'') FROM readings WHERE id=$1`, id).Scan(&selected, &question); err != nil {
+	var question, kind, themeKey string
+	if err := a.Store.QueryRow(r.Context(), `SELECT spread_id, COALESCE(question,''), type, COALESCE(theme_key,'') FROM readings WHERE id=$1`, id).
+		Scan(&selected, &question, &kind, &themeKey); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail, positions FROM spreads
-		WHERE enabled=true AND theme_key='' ORDER BY recommended DESC, id`)
+	q := `SELECT id, name, description, short_sentence, card_count, recommended, thumbnail, positions FROM spreads WHERE enabled=true`
+	args := []any{}
+	switch kind {
+	case "explore":
+		// Explore selectSpread rejects theme_key=''；必须返回主题牌阵，不能给普通阵。
+		themeKey = strings.TrimSpace(themeKey)
+		if themeKey != "" {
+			q += ` AND theme_key=$1`
+			args = append(args, themeKey)
+		} else {
+			q += ` AND theme_key<>''`
+		}
+		q += ` ORDER BY sort_order, id`
+	default:
+		q += ` AND theme_key='' ORDER BY recommended DESC, id`
+	}
+	rows, err := a.Store.Query(r.Context(), q, args...)
 	if err != nil {
 		return err
 	}
@@ -954,8 +970,17 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	}
 	// Overlay PRD §6.4 local match onto response recommended flags so App that
 	// only reads spread-choices still sees the question-matched spread first.
-	_ = a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
+	// Explore uses theme catalog spreads; skip question-match overlay.
+	if kind != "explore" {
+		_ = a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
+	}
 	msg := spreadChoiceMessage(spreads)
+	if kind != "normal" {
+		// draw_mode 仅普通占卜可提交；探索/塔罗师展示抽牌方式会误导客户端。
+		delete(msg, "draw_mode_label")
+		delete(msg, "draw_modes")
+		msg["title"] = "请选择牌阵。"
+	}
 	out := map[string]any{
 		"reading_id": id,
 		"has_more":   false,

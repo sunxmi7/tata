@@ -150,6 +150,52 @@ func TestSpreadChoicesFallbackKeepsRecommended(t *testing.T) {
 	}
 }
 
+func TestExploreSpreadChoicesUsesThemeSpreads(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "explorechoices")
+	var themeSpreadID int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE theme_key='yes_or_no' AND enabled=true ORDER BY id LIMIT 1`).Scan(&themeSpreadID); err != nil {
+		t.Fatal(err)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"type": "explore", "source": "explore", "theme_key": "yes_or_no",
+	})
+	rid := asID(reading["id"])
+	choices := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/spread-choices", rid))
+	msgs, _ := choices["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages: %#v", choices)
+	}
+	choose := msgs[0].(map[string]any)
+	if choose["draw_modes"] != nil || choose["draw_mode_label"] != nil {
+		t.Fatalf("explore must not expose draw_modes: %#v", choose)
+	}
+	if choose["title"] != "请选择牌阵。" {
+		t.Fatalf("explore title: %#v", choose["title"])
+	}
+	spreads, _ := choose["spreads"].([]any)
+	if len(spreads) == 0 {
+		t.Fatalf("empty explore spreads: %#v", choose)
+	}
+	found := false
+	for _, raw := range spreads {
+		row := raw.(map[string]any)
+		if asID(row["id"]) == themeSpreadID {
+			found = true
+		}
+		// Must not leak normal (theme_key='') catalog ids that selectSpread rejects.
+		if name, _ := row["name"].(string); name == "时间流" || name == "单张牌占卜" {
+			t.Fatalf("explore choices leaked normal spread: %#v", row)
+		}
+	}
+	if !found {
+		t.Fatalf("missing yes_or_no spread %d: %#v", themeSpreadID, spreads)
+	}
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{
+		"spread_id": themeSpreadID,
+	})
+}
+
 func TestSpreadChoicesOverlaysLocalRecommend(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, _ := registerUser(t, ts, store, "choicesmatch")

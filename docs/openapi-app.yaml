@@ -1452,10 +1452,12 @@ paths:
       operationId: appSpreadChoices
       summary: 牌阵选项
       description: |
-        返回这一次占卜的牌阵选项，包在 messages 里，一条类型十六（kind=cards，style=choose）：选牌阵 + 常规/灵数抽牌。
+        返回这一次占卜的牌阵选项，包在 messages 里，一条类型十六（kind=cards，style=choose）。
+        普通占卜：theme_key 为空的牌阵 + 常规/灵数抽牌方式；recommended 按该次问题的本地匹配（与 POST /recommend 同源 §6.4）覆盖。
+        探索：只返回对应 theme_key 的主题牌阵（创建未带 theme_key 时返回全部探索阵）；不带 draw_modes（探索不能提交 draw_mode）。
+        塔罗师：普通牌阵列表，不带 draw_modes。
         spreads[] 含 positions（阵位）。登录用户另在 data 顶层带 deck / deck_back_url（当前牌组卡背，供布局）。
-        recommended 按该次问题的本地匹配（与 POST /recommend 同源 §6.4）覆盖：命中则仅该阵为 true 并置顶；未命中则全部 false。
-        不再返回 more_spreads。完整分组目录走 GET /spreads。
+        不再返回 more_spreads。完整分组目录走 GET /spreads；探索主题目录也可走 GET /explore/topics。
         未登录不带令牌，query 带 device_id。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
