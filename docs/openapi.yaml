@@ -2901,9 +2901,18 @@ components:
         code:
           type: string
           description: 必填。邮箱验证码，6 位数字，5 分钟有效。先调 POST /auth/email/code 且 scene=login。不对或过期返回「验证码不正确或已过期」。
+        device_id:
+          type: string
+          description: |
+            选填。与 GET/PUT /onboarding 使用同一设备标识（建议小写一致）。登录/首次注册时：
+            挂这台设备尚未归属的占卜；把引导草稿里的性别/生日/探索偏好补进仍为空的账号档案（不覆盖已有）；记入 user_devices。
+            不传则不会自动绑上该设备的新人引导草稿。
         invite_code:
           type: string
           description: 选填。邀请人 6 位 public_id。校验失败不挡登录；成功则给邀请人 +3 次并写入奖励记录。同一账号只能绑定一次。
+        invite_source:
+          type: string
+          description: 选填。link 表示从邀请链接来，其他值按手填邀请码。
     WechatBody:
       type: object
       additionalProperties: false
@@ -2912,9 +2921,17 @@ components:
         code:
           type: string
           description: 必填。微信开放平台移动应用 SDK 返回的临时授权码。iOS / Android 共用同一套 appId。服务端拿它向微信换 openid 或 unionid，客户端不要传 openid。
+        device_id:
+          type: string
+          description: |
+            选填。与 GET/PUT /onboarding 同一设备标识。登录/首次注册时挂未归属占卜、补空档案引导草稿（性别/生日/探索偏好）、记设备。
+            不传则不会自动绑上该设备的新人引导草稿。
         invite_code:
           type: string
           description: 选填。邀请人 6 位 public_id。校验失败不挡登录。
+        invite_source:
+          type: string
+          description: 选填。link 表示从邀请链接来，其他值按手填邀请码。
         nickname:
           type: string
           description: 选填。微信接口没返回昵称时写入档案。已有 name 不覆盖。
@@ -2932,9 +2949,17 @@ components:
         identity_token:
           type: string
           description: 必填。仅 iOS。Sign in with Apple 返回的 identity_token（JWT）。服务端用 Apple JWKS 校验后取 sub，客户端不要传 sub。安卓没有苹果登录。
+        device_id:
+          type: string
+          description: |
+            选填。与 GET/PUT /onboarding 同一设备标识。登录/首次注册时挂未归属占卜、补空档案引导草稿（性别/生日/探索偏好）、记设备。
+            不传则不会自动绑上该设备的新人引导草稿。
         invite_code:
           type: string
           description: 选填。邀请人 6 位 public_id。校验失败不挡登录。
+        invite_source:
+          type: string
+          description: 选填。link 表示从邀请链接来，其他值按手填邀请码。
     EmailBindBody:
       type: object
       additionalProperties: false
@@ -4954,7 +4979,9 @@ paths:
         邮箱和验证码必填。没有单独注册接口：未注册邮箱首次用验证码登录会创建账号；已有账号则登录。不再发放注册奖励。
         先调 POST /auth/email/code，scene=login。已注册邮箱也可以发码。验证码不对或过期返回「验证码不正确或已过期」。
         该邮箱曾注销过则「该邮箱已注销，不能重复注册」。账号已注销返回「账号已注销」。
-        带 device_id 时，把该设备上尚未归属的占卜挂到此用户。若该用户已有未结算占卜，会按共享优先级立刻扣一次。
+        选填 device_id（与 PUT /onboarding 同一设备标识，建议小写一致）：
+        （1）把该设备上尚未归属的占卜挂到此用户；（2）把设备引导草稿里仍为空的账号性别/生日/探索偏好补进档案（不覆盖已有值）；（3）记入 user_devices。
+        新人引导靠同一 device_id 绑定，不是单独注册接口。若该用户已有未结算占卜，会按共享优先级立刻扣一次。
         已有账号成功时 needs_confirm 恒为 false。若未在登录时扣掉未结算占卜，且本周期已用过免费次数，quota_prompt 为「今日免费体验额度已用完，本次记录已保存到历史记录」。
         不签发 refresh。
       requestBody:
@@ -4969,6 +4996,7 @@ paths:
                 value:
                   email: demo@tata.local
                   code: "123456"
+                  device_id: device-demo-001
       responses:
         "200":
           description: code=0 时 data 含 accessToken、id、login=email。首次创建账号时还有 registration_reward_expires_at、reward_note；已有账号还有 needs_confirm、quota_prompt。
@@ -4995,6 +5023,7 @@ paths:
         客户端可顺带 nickname / avatar_url / headimgurl；仅在微信接口没返回时作为补全，头像仍只接受微信 CDN 并转存。App 授权 scope 须为 snsapi_userinfo。
         wechat.enabled=false 或凭证空时返回「微信登录未配置」。code 无效返回「微信授权码无效」。
         已注销身份不能再次注册。不再发放注册奖励。成功后会尝试结算未扣费的占卜。
+        选填 device_id：挂未归属占卜、补空档案引导草稿（性别/生日/探索偏好）、记设备；与 PUT /onboarding 同一标识才能绑上新人引导。
       requestBody:
         required: true
         content:
@@ -5006,6 +5035,7 @@ paths:
                 summary: 微信登录
                 value:
                   code: 081abcWeChatCode
+                  device_id: device-demo-001
       responses:
         "200":
           description: code=0 时 data 含 accessToken、id、reward_consumed、reward_note。
@@ -5031,6 +5061,7 @@ paths:
         apple.enabled=false 或 clientId 空时返回「苹果登录未配置」。令牌无效返回「苹果身份令牌无效」。
         验过的 sub 用来查找或创建用户。已注销身份不能再次注册。不再发放注册奖励。
         与微信登录不同：成功响应不调用提问结算，data 只有 accessToken、id、login=apple。
+        选填 device_id：挂未归属占卜、补空档案引导草稿（性别/生日/探索偏好）、记设备；与 PUT /onboarding 同一标识才能绑上新人引导。
       requestBody:
         required: true
         content:
@@ -5042,6 +5073,7 @@ paths:
                 summary: 苹果登录
                 value:
                   identity_token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.demo
+                  device_id: device-demo-001
       responses:
         "200":
           description: code=0 时 data.login 为 apple。
