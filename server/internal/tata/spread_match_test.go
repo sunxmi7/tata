@@ -172,10 +172,10 @@ func TestExploreSpreadChoicesUsesThemeSpreads(t *testing.T) {
 		t.Fatalf("messages: %#v", choices)
 	}
 	choose := msgs[0].(map[string]any)
-	if choose["draw_modes"] != nil || choose["draw_mode_label"] != nil {
-		t.Fatalf("explore must not expose draw_modes: %#v", choose)
+	if choose["draw_modes"] == nil || choose["draw_mode_label"] == nil {
+		t.Fatalf("explore should expose draw_modes: %#v", choose)
 	}
-	if choose["title"] != "请选择牌阵。" {
+	if choose["title"] != "先确认牌阵和张数，再选择抽牌方式。" {
 		t.Fatalf("explore title: %#v", choose["title"])
 	}
 	spreads, _ := choose["spreads"].([]any)

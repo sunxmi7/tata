@@ -984,9 +984,9 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 		_ = a.applyLocalRecommendToSpreadChoices(r, id, question, spreads)
 	}
 	msg := spreadChoiceMessage(spreads)
-	if kind != "normal" {
-		// Explore/tarotist choices omit draw_modes to keep the sheet about
-		// spreads; explore may still POST draw_mode on /spread (see appSelectSpread).
+	// Ordinary + explore both offer normal/numerology. Tarotist/daily omit
+	// draw_modes (those kinds reject draw_mode on POST /spread).
+	if kind != "normal" && kind != "explore" {
 		delete(msg, "draw_mode_label")
 		delete(msg, "draw_modes")
 		msg["title"] = "请选择牌阵。"

@@ -275,7 +275,7 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 
 `theme_key` 仅 explore 可传。`yes_or_no` / `either_or` → `conversation_type=moment`（此刻抉择）；其余主题 → `theme`（主题占卜）。可空，选阵后回填。
 
-`draw_mode` 是抽牌方式：`normal` 常规抽牌，`numerology` 灵数抽牌。还没选可以不传，记录上先是空字符串。`type` 仍是占卜种类（探索是 `explore`；普通灵数仍是 `normal`）。普通与探索选阵时可带 `draw_mode`；今日运势不要带。探索的 spread-choices 可不展示抽牌方式列表，但客户端若提交灵数，服务端与普通同一套 `/numerology` → `/interpret` 接收路径。
+`draw_mode` 是抽牌方式：`normal` 常规抽牌，`numerology` 灵数抽牌。还没选可以不传，记录上先是空字符串。`type` 仍是占卜种类（探索是 `explore`；普通灵数仍是 `normal`）。普通与探索选阵时都应带 `draw_mode`（`normal` 或 `numerology`）；今日运势不要带。探索选灵数后与普通同一套 `/numerology` → `/interpret` 接收路径。
 
 自己输入的问题不要带 `source: "preset"`。返回的记录里有 `id`、`draw_mode`，以及 `conversation_type` / `stage`；后面的路径都用这个 ID。占卜详情和历史列表同样返回这些字段。
 
@@ -288,7 +288,7 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 返回一条类型十六。不再带 `more_spreads`。完整分组目录仍走 `GET /spreads`；探索主题牌阵也可先看 `GET /explore/topics?theme_key=`。登录用户 data 顶层可带 `deck` / `deck_back_url`。
 
 - 普通占卜：`theme_key=''` 的牌阵，带 `draw_modes`（常规/灵数）。
-- 探索：只返回该次 `theme_key` 的主题牌阵（创建未带则全部探索阵），**不**带 `draw_modes`；不要提交 `draw_mode`。
+- 探索：只返回该次 `theme_key` 的主题牌阵（创建未带则全部探索阵），同样带 `draw_modes`；选阵时提交 `draw_mode=normal|numerology`。
 - 塔罗师：普通牌阵列表，不带 `draw_modes`。
 
 ```json
@@ -326,7 +326,7 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 { "spread_id": 1, "draw_mode": "normal" }
 ```
 
-这里的 `draw_mode` 覆盖创建时记下的值，扣费按这一次算。普通占卜还是空字符串时不扣，返回「请先选择抽牌方式」。扣过之后不能再改。灵数用 `numerology`，并且走赠送和邀请的适用范围。
+这里的 `draw_mode` 覆盖创建时记下的值，扣费按这一次算。普通占卜还是空字符串时不扣，返回「请先选择抽牌方式」。扣过之后不能再改。普通与探索都可用 `normal` / `numerology`；灵数走赠送和邀请的适用范围。
 
 这一步返回的是占卜记录，不是 `messages`。记录里的 `draw_mode` 就是这次提交的值。
 
