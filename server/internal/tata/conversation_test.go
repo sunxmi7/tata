@@ -148,6 +148,9 @@ func TestHistoryConversationFields(t *testing.T) {
 	if daily["business_date"] != "2099-01-01" || daily["target_date"] != "2099-01-02" {
 		t.Fatalf("daily dates: %#v", daily)
 	}
+	if daily["draw_date"] != "2099-01-01" {
+		t.Fatalf("daily draw_date: %#v", daily["draw_date"])
+	}
 }
 
 func TestGetReadingIncludesMessages(t *testing.T) {

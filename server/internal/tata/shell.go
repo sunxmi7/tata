@@ -934,12 +934,23 @@ func attachDailyHome(item map[string]any, target, drawDate, targetDate string, y
 	if bd, _ := item["business_date"].(string); strings.TrimSpace(bd) == "" {
 		item["business_date"] = drawDate
 	}
-	if td, _ := item["target_date"].(string); strings.TrimSpace(td) == "" {
-		if strings.TrimSpace(targetDate) != "" {
-			item["target_date"] = targetDate
-		} else if strings.TrimSpace(drawDate) != "" {
-			item["target_date"] = drawDate
+	fortune := strings.TrimSpace(targetDate)
+	if fortune == "" {
+		if td, _ := item["target_date"].(string); strings.TrimSpace(td) != "" {
+			fortune = strings.TrimSpace(td)
+		} else {
+			fortune = drawDate
 		}
+	}
+	if fortune != "" {
+		item["target_date"] = fortune
+	}
+	bucket := drawDate
+	if bd, _ := item["business_date"].(string); strings.TrimSpace(bd) != "" {
+		bucket = strings.TrimSpace(bd)
+	}
+	if bucket != "" {
+		item["draw_date"] = bucket
 	}
 	name := firstCardName(item["cards"])
 	item["card_name"] = name

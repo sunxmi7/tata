@@ -1842,13 +1842,16 @@ paths:
         - $ref: '#/components/parameters/Authorization'
       description: |
         必须登录。同一用户、同一 `target_date`（运势目标日）已有牌面则 code=1，reused=true，charged=false，不重复扣费。
-        `business_date` 固定为抽牌日（日历/历史归天）；`target_date` 为运势日（今日=当天，明日=次日）。提前抽的明日运势在抽牌日可见，目标日再调 `/daily`（today）会复用同一条。
+        `business_date` / `draw_date` 固定为抽牌日（日历/历史归天）；`target_date` 为运势日（今日=当天，明日=次日）。
+        提前抽的明日运势在抽牌日可见，目标日再调 `/daily`（today）会复用同一条。
+        **App 校验：** 用 `target_date` 对齐 `GET /calendar` 的 `tomorrow_date`（或今日的 `cycle`）。
+        不要用 `business_date` 去比 `tomorrow_date`——明日一牌的 `business_date` 就是抽牌当天，会被误判成「业务日期已变化」。
         否则按共享优先级扣 play（不允许塔罗师试用）。单价未配置、额度不足或请开通会员为 QuotaBlockEnvelope。
         扣费成功后：请求带了 `cards`（1 张）则用 App 交上的牌；否则服务端抽一张，再生成解读。
         生成失败仍 code=0，返回已固定牌面、可能为 FAILED_RETRYABLE 的记录。
         JSON 等完整解读；打字机请用 `/daily/stream`，或本接口加 `Accept: text/event-stream` / `?stream=1`。
         解读走后台任务。App 退出后再进：GET /readings/{id} 或再调 `/daily`（已有牌面则 reused，COMPLETED 直接返回）。
-        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、target_date、has_result。不编造宜忌文案。
+        成功/复用记录带首页卡字段：card_name、short_text、yi（可空）、card_thumbnail（有牌则必有 URL，未配正式图时为内置默认牌背）、target、business_date、draw_date、target_date、has_result。不编造宜忌文案。
         明日运势在历史/日历展示名为普通占卜（conversation_label=普通占卜），conversation_type 仍为 daily 以便「运势解读」屏；仍保留 type=daily、target=tomorrow、target_date。
       requestBody:
         required: true
@@ -3243,12 +3246,17 @@ components:
         business_date:
           type: string
           description: |
-            业务日 YYYY-MM-DD。日历/历史按此字段归天打点。
+            日历/历史归天日 YYYY-MM-DD。
             daily：抽牌日（提前抽明日运势时为抽牌当天，不是运势日）。
+            **不要**拿本字段与 calendar.tomorrow_date 做业务日校验。
+        draw_date:
+          type: string
+          description: |
+            仅 daily。抽牌归天日，与 business_date 同值；显式别名，避免与运势日混淆。
         target_date:
           type: string
           description: |
-            仅 daily 有意义。运势目标日 YYYY-MM-DD；与 target 对应，用作复用唯一键。
+            仅 daily 有意义。运势目标日 YYYY-MM-DD；与 target / calendar.tomorrow_date|cycle 对应，用作复用唯一键与业务日校验。
             旧数据可能缺省，此时服务端用 business_date 兜底。
         has_result:
           type: boolean

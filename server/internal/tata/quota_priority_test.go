@@ -627,6 +627,20 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	if tomorrow["business_date"] != cycle || tomorrow["target_date"] != wantTarget {
 		t.Fatalf("tomorrow dates: business=%v target=%v cycle=%s tomorrow=%s", tomorrow["business_date"], tomorrow["target_date"], cycle, wantTarget)
 	}
+	if tomorrow["draw_date"] != cycle {
+		t.Fatalf("tomorrow draw_date: %#v", tomorrow["draw_date"])
+	}
+	// App must compare target_date to calendar.tomorrow_date — not business_date.
+	if tomorrow["target_date"] != wantTarget || wantTarget == cycle {
+		t.Fatalf("fortune day must differ from draw day: target=%v cycle=%s", tomorrow["target_date"], cycle)
+	}
+	detail := listOne(t, ts, other, fmt.Sprintf("/api/app/v1/readings/%d", asID(tomorrow["id"])))
+	if detail["business_date"] != cycle || detail["target_date"] != wantTarget || detail["draw_date"] != cycle {
+		t.Fatalf("GET detail dates: business=%v target=%v draw=%v", detail["business_date"], detail["target_date"], detail["draw_date"])
+	}
+	if detail["target"] != "tomorrow" {
+		t.Fatalf("GET detail target: %#v", detail["target"])
+	}
 	if tomorrow["conversation_type"] != "daily" || tomorrow["conversation_label"] != "普通占卜" || tomorrow["target"] != "tomorrow" {
 		t.Fatalf("tomorrow conversation: %#v", tomorrow)
 	}

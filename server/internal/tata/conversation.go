@@ -220,11 +220,21 @@ func attachConversationMeta(item map[string]any, todayCycle string) {
 		if business != "" {
 			item["business_date"] = business
 		}
-		if strings.TrimSpace(targetDate) == "" && business != "" {
+		fortune := strings.TrimSpace(targetDate)
+		if fortune == "" {
 			// Legacy rows: fortune day lived in business_date before target_date existed.
-			item["target_date"] = business
-		} else if strings.TrimSpace(targetDate) != "" {
-			item["target_date"] = targetDate
+			fortune = strings.TrimSpace(business)
+		}
+		if fortune != "" {
+			item["target_date"] = fortune
+		}
+		// draw_date = calendar/history bucket (same as persisted business_date for daily).
+		// App 业务日校验必须用 target_date（对齐 calendar.tomorrow_date / cycle），
+		// 不要拿 business_date 去比 tomorrow_date，否则明日一牌会误报「业务日期已变化」。
+		if business != "" {
+			item["draw_date"] = business
+		} else if fortune != "" {
+			item["draw_date"] = fortune
 		}
 	}
 }

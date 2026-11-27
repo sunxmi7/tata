@@ -44,7 +44,9 @@
 | `theme` | 主题占卜 | explore 且其余主题键 |
 | `""` | 空 | explore 尚未有 `theme_key`（创建未传、也未选阵） |
 
-明日运势：`business_date` = 抽牌日（进日历/历史那天），`target_date` = 运势日；目标日再请求今日一牌会按 `target_date` 复用，不重抽。`conversation_type` 仍为 `daily`（避免「运势解读」空内容）；列表名用 `conversation_label=普通占卜`。识别明日请看 `target` / `target_date`。
+明日运势：`business_date` / `draw_date` = 抽牌日（进日历/历史那天），`target_date` = 运势日；目标日再请求今日一牌会按 `target_date` 复用，不重抽。`conversation_type` 仍为 `daily`（避免「运势解读」空内容）；列表名用 `conversation_label=普通占卜`。识别明日请看 `target` / `target_date`。
+
+**业务日校验（必读）：** 日历 `tomorrow_date` / `cycle` 是运势目标日。提交后请用记录的 **`target_date`** 与之比对。`business_date` 是抽牌归天日，提前抽明日时会等于「今天」而不是 `tomorrow_date`——用 `business_date` 比对会误报「提交时业务日期已变化」。
 
 ### App 怎么区分「此刻抉择」和「主题占卜」（必读）
 
