@@ -1485,7 +1485,7 @@ paths:
       summary: 选择牌阵
       description: |
         仅 QUESTION_CREATED 可进入 SPREAD_SELECTED。牌阵必须启用。
-        draw_mode 为 normal 或 numerology，覆盖创建时记下的值。普通占卜与探索均可提交；普通占卜仍是空字符串时返回「请先选择抽牌方式」。今日运势等其它类型带 draw_mode 返回「抽牌方式不正确」。扣过之后不能再改。
+        draw_mode 为 normal 或 numerology，覆盖创建时记下的值。普通占卜与探索均可提交；空字符串 / 仅空白视为未传。普通占卜仍未选方式时返回「请先选择抽牌方式」。非法枚举或今日运势等类型带非空 draw_mode 返回「抽牌方式不正确」。扣过之后不能再改。
         成功 data 为占卜记录，不是 messages。记录里的 draw_mode 就是这次提交的值。探索选 numerology 后与普通相同：POST /numerology 落牌再 interpret。
         未登录不带令牌，query 带 device_id。不要把 device_id 放进请求体。
       parameters:
@@ -4813,7 +4813,7 @@ components:
           enum: [normal, numerology]
           description: |
             normal=常规抽牌，numerology=灵数抽牌。覆盖创建时记下的值。
-            普通占卜仍是空字符串时不扣费，返回「请先选择抽牌方式」。扣过之后不能再改。
+            空字符串视为未传。普通占卜仍未选方式时不扣费，返回「请先选择抽牌方式」。扣过之后不能再改。
     DrawBody:
       type: object
       additionalProperties: false
