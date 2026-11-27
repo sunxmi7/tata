@@ -985,7 +985,8 @@ func (a *App) appSpreadChoices(w http.ResponseWriter, r *http.Request) error {
 	}
 	msg := spreadChoiceMessage(spreads)
 	if kind != "normal" {
-		// draw_mode 仅普通占卜可提交；探索/塔罗师展示抽牌方式会误导客户端。
+		// Explore/tarotist choices omit draw_modes to keep the sheet about
+		// spreads; explore may still POST draw_mode on /spread (see appSelectSpread).
 		delete(msg, "draw_mode_label")
 		delete(msg, "draw_modes")
 		msg["title"] = "请选择牌阵。"

@@ -275,7 +275,7 @@ if type == "explore" && conversation_type == "theme":   # 或 conversation_label
 
 `theme_key` 仅 explore 可传。`yes_or_no` / `either_or` → `conversation_type=moment`（此刻抉择）；其余主题 → `theme`（主题占卜）。可空，选阵后回填。
 
-`draw_mode` 是抽牌方式：`normal` 常规抽牌，`numerology` 灵数抽牌。还没选可以不传，记录上先是空字符串。`type` 仍是占卜种类，灵数也是 `normal`。探索、塔罗师、今日运势不要带这个字段。
+`draw_mode` 是抽牌方式：`normal` 常规抽牌，`numerology` 灵数抽牌。还没选可以不传，记录上先是空字符串。`type` 仍是占卜种类（探索是 `explore`；普通灵数仍是 `normal`）。普通与探索选阵时可带 `draw_mode`；今日运势不要带。探索的 spread-choices 可不展示抽牌方式列表，但客户端若提交灵数，服务端与普通同一套 `/numerology` → `/interpret` 接收路径。
 
 自己输入的问题不要带 `source: "preset"`。返回的记录里有 `id`、`draw_mode`，以及 `conversation_type` / `stage`；后面的路径都用这个 ID。占卜详情和历史列表同样返回这些字段。
 
