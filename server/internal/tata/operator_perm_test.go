@@ -36,6 +36,7 @@ func TestAdminModuleOf(t *testing.T) {
 		"/api/admin/v1/account-merges":        adminModuleAccounts,
 		"/api/admin/v1/iap/skus":              adminModulePay,
 		"/api/admin/v1/grants":                adminModulePay,
+		"/api/admin/v1/memberships":           adminModulePay,
 		"/api/admin/v1/redeem-codes":          adminModulePay,
 		"/api/admin/v1/redeem-codes/1":        adminModulePay,
 		"/api/admin/v1/invites":               adminModulePay,

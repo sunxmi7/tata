@@ -2,6 +2,7 @@
 import type {
   AppUser,
   InviteRelation,
+  Membership,
   QuotaLot,
   RegistrationGift,
   YearlyQualification,
@@ -15,6 +16,7 @@ import { Button, Drawer, Image, Table, Tag } from 'ant-design-vue';
 
 import {
   listInvites,
+  listMemberships,
   listQuotaLots,
   listRegistrationGifts,
   listUsers,
@@ -25,6 +27,7 @@ const rows = ref<AppUser[]>([]);
 const open = ref(false);
 const loading = ref(false);
 const current = ref<AppUser | null>(null);
+const memberships = ref<Membership[]>([]);
 const gifts = ref<RegistrationGift[]>([]);
 const invites = ref<InviteRelation[]>([]);
 const lots = ref<QuotaLot[]>([]);
@@ -39,6 +42,18 @@ function lotSource(source: string) {
   if (source === 'pack') return '补充包';
   if (source === 'admin') return '人工补发';
   return source;
+}
+
+function skuKind(kind: string) {
+  if (kind === 'year') return '年卡';
+  if (kind === 'month') return '月卡';
+  return kind || '—';
+}
+
+function membershipSource(platform: string) {
+  if (platform === 'admin') return '后台开通';
+  if (!platform) return '—';
+  return platform;
 }
 
 function yearSource(source: string) {
@@ -56,17 +71,20 @@ async function showEntitlements(row: AppUser) {
   current.value = row;
   open.value = true;
   loading.value = true;
+  memberships.value = [];
   gifts.value = [];
   invites.value = [];
   lots.value = [];
   years.value = [];
   try {
-    const [gift, invite, lot, year] = await Promise.all([
+    const [member, gift, invite, lot, year] = await Promise.all([
+      listMemberships(row.id),
       listRegistrationGifts(row.id),
       listInvites(row.id),
       listQuotaLots(row.id),
       listYearlyQualifications(row.id),
     ]);
+    memberships.value = member.items || [];
     gifts.value = gift.items || [];
     invites.value = invite.items || [];
     lots.value = lot.items || [];
@@ -81,7 +99,7 @@ load();
 
 <template>
   <Page
-    description="头像、昵称、性别、探索偏好与注销状态。点「权益」查看这个账号的注册赠送、邀请、额度批次和年运资格。注册奖励不在这里扣。"
+    description="头像、昵称、性别、探索偏好与注销状态。点「权益」查看这个账号的会员、注册赠送、邀请、额度批次和年运资格。注册奖励不在这里扣。"
     title="用户账号"
   >
     <Table
@@ -134,7 +152,36 @@ load();
       </template>
     </Table>
     <Drawer v-model:open="open" :title="`账号 ${current?.id ?? ''} 的权益`" width="760">
-      <h3 class="mb-2 font-medium">注册赠送</h3>
+      <h3 class="mb-2 font-medium">会员</h3>
+      <Table
+        :columns="[
+          { title: '档位', dataIndex: 'sku_kind', width: 90 },
+          { title: '状态', dataIndex: 'status', width: 90 },
+          { title: '来源', dataIndex: 'platform', width: 110 },
+          { title: '开始', dataIndex: 'starts_at' },
+          { title: '到期', dataIndex: 'expires_at' },
+          { title: '有效', dataIndex: 'active', width: 70 },
+        ]"
+        :data-source="memberships"
+        :loading="loading"
+        :locale="{ emptyText: '没有会员记录' }"
+        :pagination="false"
+        row-key="id"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'sku_kind'">
+            {{ skuKind(record.sku_kind) }}
+          </template>
+          <template v-else-if="column.dataIndex === 'platform'">
+            {{ membershipSource(record.platform) }}
+          </template>
+          <template v-else-if="column.dataIndex === 'active'">
+            {{ record.active ? '是' : '否' }}
+          </template>
+        </template>
+      </Table>
+      <h3 class="mb-2 mt-4 font-medium">注册赠送</h3>
       <Table
         :columns="[
           { title: '发放', dataIndex: 'granted_at' },

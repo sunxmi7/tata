@@ -363,6 +363,39 @@ export function listOnboarding() {
   return requestClient.get<{ items: DeviceGuide[] }>('/onboarding');
 }
 
+export interface Membership {
+  id: number;
+  user_id: number;
+  sku_kind: string;
+  status: string;
+  platform: string;
+  starts_at: string;
+  expires_at: string;
+  active: boolean;
+}
+
+export interface MembershipList {
+  items: Membership[];
+  can_write?: boolean;
+  writes_iap_orders?: boolean;
+  sku_kind_default?: string;
+  month_days?: number;
+  year_days?: number;
+  permission_note?: string;
+  user_id?: number;
+  extended?: boolean;
+  duration_days?: number;
+  membership?: Membership;
+}
+
+export function listMemberships(userId?: number) {
+  return requestClient.get<MembershipList>(`/memberships${userQuery(userId)}`);
+}
+
+export function grantMembership(data: { user_id: number; sku_kind?: string; note: string }) {
+  return requestClient.post<MembershipList>('/memberships', data);
+}
+
 export function listYearlyQualifications(userId?: number) {
   return requestClient.get<{ items: YearlyQualification[] }>(
     `/yearly-qualifications${userQuery(userId)}`,
