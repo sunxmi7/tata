@@ -192,6 +192,12 @@ const routes: RouteRecordRaw[] = [
             meta: { icon: 'lucide:badge-plus', title: '人工补发', authority: can('pay') },
           },
           {
+            name: 'TataMembership',
+            path: '/tata/membership',
+            component: () => import('#/views/tata/membership/index.vue'),
+            meta: { icon: 'lucide:badge-check', title: '会员', authority: can('pay') },
+          },
+          {
             name: 'TataRedeemCodes',
             path: '/tata/redeem-codes',
             component: () => import('#/views/tata/redeem/index.vue'),

@@ -172,6 +172,7 @@ func (a *App) adminMenu(w http.ResponseWriter, r *http.Request) error {
 		{item{"IAPOrders", "/iap-orders", map[string]any{"title": "IAP 订单", "order": 16}}, adminModulePay, false},
 		{item{"IAPSkus", "/iap-skus", map[string]any{"title": "价位", "order": 17}}, adminModulePay, false},
 		{item{"Grant", "/grant", map[string]any{"title": "人工补发", "order": 18}}, adminModulePay, false},
+		{item{"Membership", "/membership", map[string]any{"title": "会员", "order": 18}}, adminModulePay, false},
 		{item{"RedeemCodes", "/redeem-codes", map[string]any{"title": "兑换码", "order": 19}}, adminModulePay, false},
 		{item{"Invites", "/invites", map[string]any{"title": "邀请关系", "order": 20}}, adminModulePay, false},
 		{item{"RegistrationGifts", "/registration-gifts", map[string]any{"title": "注册赠送", "order": 21}}, adminModulePay, false},

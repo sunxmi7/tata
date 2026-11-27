@@ -50,7 +50,7 @@ func adminModuleOf(path string) string {
 		return adminModuleRecords
 	case "users", "operators", "audit", "account-merges", "onboarding":
 		return adminModuleAccounts
-	case "iap", "grants", "redeem-codes", "invites", "registration-gifts", "quota-lots", "yearly-qualifications":
+	case "iap", "grants", "memberships", "redeem-codes", "invites", "registration-gifts", "quota-lots", "yearly-qualifications":
 		return adminModulePay
 	default:
 		return ""
