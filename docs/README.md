@@ -43,8 +43,8 @@ App 路由现为 **76** 条（含公开 `GET /uploads/{name}`）、完整契约 
 - **今日一牌文案 / 牌面缩略图**：正位寄语和今日宜、逆位寄语和今日宜在 `cards`。`yi` 是正位今日宜的覆盖，空则用 `upright_yi`。逆位用 `reversed_yi`。响应里 `card_message` 是对应正逆位的寄语。`card_thumbnail` 优先单牌 URL，否则模板，否则 `card.thumbnail_default`，再否则内置默认牌背 `/uploads/card-default.png`。管理端「牌面」维护这些字段。
 - **运营文案**：价位文案在 `iap_skus.copy`（年卡→`campaign_perk`）；年运等无独立表的文案在 `app_config`。管理端 `GET/PUT /copy/{kind}`（yearly/cards/help/campaigns/decks）。单牌目录以 `/api/admin/v1/cards` 为准。
 - **管理端上传**：`POST /api/admin/v1/uploads?folder=`。后台图片字段走 Vben Form 的 Upload。`folder` 分子目录：牌阵 `spreads`、风格 `decks`、单牌/默认图 `cards`，缺省 `misc`。存哪由 `upload.driver` 决定：`local` 或阿里云 OSS。
-- **邮箱验证码登录**：`POST /api/app/v1/auth/email/code` scene=`login` 或 `bind`，再 `POST /auth/login` `{email, code}`。没有单独注册接口；未注册邮箱首次验证码登录即创建账号。绑邮箱同样只验码、不设密码。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
-- **微信 / 苹果登录**：`POST /auth/wechat`、`/auth/apple` 以及对应 bind。微信填 `wechat.appId/appSecret`（iOS/Android 共用），客户端传 SDK `code`。换票后拉 `sns/userinfo`：档案名为空则写入微信昵称，头像为空则下载转存到 `uploads/misc`；已有资料不覆盖，userinfo 失败不挡登录。苹果登录仅 iOS，填 `apple.clientId`（Bundle ID），传 `identity_token`。凭证空、`enabled=false` 即可先上代码；填上并把 `enabled` 设为 true 后直接可用。未配置分别返回「微信登录未配置」「苹果登录未配置」。
+- **邮箱验证码登录**：`POST /api/app/v1/auth/email/code` scene=`login` 或 `bind`，再 `POST /auth/login` `{email, code, device_id?}`。没有单独注册接口；未注册邮箱首次验证码登录即创建账号。绑邮箱同样只验码、不设密码。选填 `device_id`（与 `PUT /onboarding` 同设备）用于挂未归属占卜，并把引导草稿性别/生日/探索偏好补进空档案。SMTP 在 `config.yaml` 的 `mail`（163 邮箱填 smtp.163.com:465，密码用客户端授权码）。未配置返回「邮件服务未配置」。
+- **微信 / 苹果登录**：`POST /auth/wechat`、`/auth/apple` 以及对应 bind。同样可选 `device_id` 绑新人引导与挂占卜。微信填 `wechat.appId/appSecret`（iOS/Android 共用），客户端传 SDK `code`。换票后拉 `sns/userinfo`：档案名为空则写入微信昵称，头像为空则下载转存到 `uploads/misc`；已有资料不覆盖，userinfo 失败不挡登录。苹果登录仅 iOS，填 `apple.clientId`（Bundle ID），传 `identity_token`。凭证空、`enabled=false` 即可先上代码；填上并把 `enabled` 设为 true 后直接可用。未配置分别返回「微信登录未配置」「苹果登录未配置」。
 
 内容 backlog #1–#10 的 **App HTTP 层已确认**。还剩运营填文案/图、以及上架前替换 Connect 商品号。见 [design/ui-content-backlog-2026-11-06.md](./design/ui-content-backlog-2026-11-06.md)。
 

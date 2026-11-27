@@ -83,6 +83,7 @@
 - [ ] `code=0`，有 accessToken、id、login=email
 - [ ] 记 USER = accessToken，UID = id
 - [ ] 带了 device_id 时，该设备上尚未归属的占卜会出现在登录后的历史里
+- [ ] 带了与 PUT /onboarding 相同的 device_id 时，引导草稿里的性别/生日/探索偏好会补进仍为空的 GET /profile（不覆盖已有）
 - [ ] 多传 anonymous_id，应「请求字段不正确」
 - [ ] 验证码填错，应「验证码不正确或已过期」
 - [ ] 漏填验证码，应「邮箱和验证码必填」
@@ -105,7 +106,7 @@
 
 ### 1.4 微信 / 苹果（可选）
 
-客户端把微信 SDK 的 `code`、苹果 `identity_token` 交给服务端校验。微信 iOS/Android 共用一套 AppID；苹果登录仅 iOS，安卓没有。`config.yaml` 的 `wechat` / `apple` 未配时接口返回「微信登录未配置」或「苹果登录未配置」，不必等凭证也能测这条错误。凭证到了把 `enabled` 设为 true 再测真登录。请求体可带 `device_id`，用来挂设备上的占卜。
+客户端把微信 SDK 的 `code`、苹果 `identity_token` 交给服务端校验。微信 iOS/Android 共用一套 AppID；苹果登录仅 iOS，安卓没有。`config.yaml` 的 `wechat` / `apple` 未配时接口返回「微信登录未配置」或「苹果登录未配置」，不必等凭证也能测这条错误。凭证到了把 `enabled` 设为 true 再测真登录。请求体可带 `device_id`：挂设备上的占卜，并把与 PUT /onboarding 同一设备的引导草稿（性别/生日/探索偏好）补进空档案。
 
 `POST /api/app/v1/auth/wechat`
 
