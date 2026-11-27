@@ -1141,7 +1141,7 @@ paths:
       summary: 创建占卜
       description: |
         状态从 QUESTION_CREATED 开始。问题最长 200 个码点。返回占卜记录，含 id 和 draw_mode。
-        draw_mode 为 normal 或 numerology。还没选可以不传，记录上先是空字符串。探索、塔罗师、今日运势不要带。第一次写成 numerology 时生成这一问的 78 张映射，映射不返回给 App。
+        draw_mode 为 normal 或 numerology。还没选可以不传，记录上先是空字符串。今日运势不要带；探索也可在选阵时再提交。第一次写成 numerology 时生成这一问的 78 张映射，映射不返回给 App。
         登录用户的 normal / tarotist 在此按共享优先级扣 play；塔罗师首次可走 ai_trial。
         未登录不带令牌，请求体必须有 device_id，不预扣，quota_outcome=anonymous。塔罗师必须登录。
         explore 不在此扣费（quota_outcome=deferred）。
@@ -1455,8 +1455,8 @@ paths:
       description: |
         返回这一次占卜的牌阵选项，包在 messages 里，一条类型十六（kind=cards，style=choose）。
         普通占卜：theme_key 为空的牌阵 + 常规/灵数抽牌方式；recommended 按该次问题的本地匹配（与 POST /recommend 同源 §6.4）覆盖。
-        探索：只返回对应 theme_key 的主题牌阵（创建未带 theme_key 时返回全部探索阵）；不带 draw_modes（探索不能提交 draw_mode）。
-        塔罗师：普通牌阵列表，不带 draw_modes。
+        探索：只返回对应 theme_key 的主题牌阵（创建未带 theme_key 时返回全部探索阵）；与普通一样带 draw_modes，POST /spread 提交 draw_mode=normal|numerology。
+        塔罗师：普通牌阵列表，不带 draw_modes；提交 draw_mode 会「抽牌方式不正确」。
         spreads[] 含 positions（阵位）。登录用户另在 data 顶层带 deck / deck_back_url（当前牌组卡背，供布局）。
         不再返回 more_spreads。完整分组目录走 GET /spreads；探索主题目录也可走 GET /explore/topics。
         未登录不带令牌，query 带 device_id。
@@ -1485,8 +1485,8 @@ paths:
       summary: 选择牌阵
       description: |
         仅 QUESTION_CREATED 可进入 SPREAD_SELECTED。牌阵必须启用。
-        draw_mode 为 normal 或 numerology，覆盖创建时记下的值。普通占卜仍是空字符串时返回「请先选择抽牌方式」。扣过之后不能再改。
-        成功 data 为占卜记录，不是 messages。记录里的 draw_mode 就是这次提交的值。
+        draw_mode 为 normal 或 numerology，覆盖创建时记下的值。普通占卜与探索均可提交；普通占卜仍是空字符串时返回「请先选择抽牌方式」。今日运势等其它类型带 draw_mode 返回「抽牌方式不正确」。扣过之后不能再改。
+        成功 data 为占卜记录，不是 messages。记录里的 draw_mode 就是这次提交的值。探索选 numerology 后与普通相同：POST /numerology 落牌再 interpret。
         未登录不带令牌，query 带 device_id。不要把 device_id 放进请求体。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
@@ -3150,7 +3150,7 @@ components:
           type: string
           description: |
             抽牌方式。normal=常规，numerology=灵数；未选时为空字符串。
-            探索 / 塔罗师 / 今日一牌一般为空。
+            普通与探索选阵后应为 normal 或 numerology；塔罗师 / 今日一牌一般为空。
         cards:
           type: array
           nullable: true
@@ -4788,7 +4788,7 @@ components:
         draw_mode:
           type: string
           enum: ['', normal, numerology]
-          description: 普通占卜的抽牌方式。不传记为空字符串。探索、塔罗师、今日运势不要带。
+          description: 抽牌方式。不传记为空字符串。普通与探索选阵时可带 normal/numerology；今日运势不要带。
         device_id:
           type: string
           description: 未登录必填。已登录选填，用来记下这台设备。缺了返回「缺少设备标识」。

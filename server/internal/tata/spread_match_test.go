@@ -172,10 +172,10 @@ func TestExploreSpreadChoicesUsesThemeSpreads(t *testing.T) {
 		t.Fatalf("messages: %#v", choices)
 	}
 	choose := msgs[0].(map[string]any)
-	if choose["draw_modes"] != nil || choose["draw_mode_label"] != nil {
-		t.Fatalf("explore must not expose draw_modes: %#v", choose)
+	if choose["draw_modes"] == nil || choose["draw_mode_label"] == nil {
+		t.Fatalf("explore should expose draw_modes: %#v", choose)
 	}
-	if choose["title"] != "请选择牌阵。" {
+	if choose["title"] != "先确认牌阵和张数，再选择抽牌方式。" {
 		t.Fatalf("explore title: %#v", choose["title"])
 	}
 	spreads, _ := choose["spreads"].([]any)
@@ -199,6 +199,34 @@ func TestExploreSpreadChoicesUsesThemeSpreads(t *testing.T) {
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{
 		"spread_id": themeSpreadID,
 	})
+}
+
+func TestExploreSelectSpreadAllowsNumerology(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "explorenumerology")
+	var themeSpreadID int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE theme_key='yes_or_no' AND enabled=true ORDER BY id LIMIT 1`).Scan(&themeSpreadID); err != nil {
+		t.Fatal(err)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{
+		"type": "explore", "source": "explore", "theme_key": "yes_or_no",
+	})
+	rid := asID(reading["id"])
+	got := create(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{
+		"spread_id": themeSpreadID, "draw_mode": "numerology",
+	})
+	if got["draw_mode"] != "numerology" {
+		t.Fatalf("draw_mode: %#v", got["draw_mode"])
+	}
+	if got["status"] != "SPREAD_SELECTED" {
+		t.Fatalf("status: %#v", got["status"])
+	}
+	if got["continue"] != "numerology" {
+		t.Fatalf("continue: %#v want numerology", got["continue"])
+	}
+	if got["stage"] != "pending_numerology" {
+		t.Fatalf("stage: %#v", got["stage"])
+	}
 }
 
 func TestSpreadChoicesOverlaysLocalRecommend(t *testing.T) {

@@ -1005,10 +1005,16 @@ func (a *App) appSelectSpread(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		if kind != "normal" {
+		// Ordinary and explore may lock normal/numerology. Daily (and other
+		// kinds) still reject an explicit draw_mode. Explore spread-choices
+		// may omit draw_modes UI, but clients that send numerology must work
+		// the same receive path as ordinary (POST /numerology → interpret).
+		switch kind {
+		case "normal", "explore":
+			resolved = mode
+		default:
 			return biz("抽牌方式不正确")
 		}
-		resolved = mode
 	}
 	if resolved != storedMode {
 		already, _, err := playAlready(r.Context(), a.Store, id)
