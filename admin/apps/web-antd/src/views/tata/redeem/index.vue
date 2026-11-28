@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { RedeemCode } from '#/api/tata';
+import type { IAPSku, RedeemCode } from '#/api/tata';
 
 import { computed, onMounted, ref } from 'vue';
 
@@ -11,6 +11,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Radio,
   Select,
   Switch,
   Table,
@@ -19,21 +20,93 @@ import {
 
 import {
   createRedeemCodes,
+  getCopy,
+  listIAPSkus,
   listRedeemCodes,
   updateRedeemCode,
 } from '#/api/tata';
 
 import { hasTataWrite } from '../access';
 
+const redeemSkuKinds = new Set([
+  'month_subscription',
+  'year_subscription',
+  'quota_pack',
+  'yearly_unlock',
+  'deck_year',
+  'deck_bundle',
+  'deck_single',
+  'deck_addon',
+]);
+
+const kindLabel: Record<string, string> = {
+  quota: '裸额度',
+  free_count: '历史权益',
+  month_subscription: '会员 · 月卡',
+  year_subscription: '会员 · 年卡',
+  quota_pack: '额度补充包',
+  yearly_unlock: '年运解锁',
+  deck_year: '牌组 · 年度畅享',
+  deck_bundle: '牌组 · 打包',
+  deck_single: '牌组 · 单套',
+  deck_addon: '牌组 · 后续加购',
+};
+
 const rows = ref<RedeemCode[]>([]);
+const skus = ref<IAPSku[]>([]);
+const deckOptions = ref<{ label: string; value: string }[]>([]);
 const note = ref('');
 const open = ref(false);
 const editing = ref<RedeemCode | null>(null);
 const form = ref(emptyForm());
 const canWrite = computed(() => hasTataWrite('pay'));
 
+const groupLabel: Record<string, string> = {
+  month_subscription: '会员',
+  year_subscription: '会员',
+  quota_pack: '额度包',
+  yearly_unlock: '年运',
+  deck_year: '牌组',
+  deck_bundle: '牌组',
+  deck_single: '牌组',
+  deck_addon: '牌组',
+};
+
+const skuOptions = computed(() => {
+  const buckets = new Map<string, { label: string; value: string }[]>();
+  const groupOrder = ['会员', '额度包', '年运', '牌组'];
+  for (const sku of skus.value) {
+    if (!sku.enabled || !redeemSkuKinds.has(sku.kind)) continue;
+    const group = groupLabel[sku.kind] || sku.kind;
+    const grant =
+      sku.kind === 'quota_pack' && sku.quota_grant != null
+        ? ` · ${sku.quota_grant} 额度`
+        : '';
+    const list = buckets.get(group) || [];
+    list.push({
+      label: `${sku.display_name || sku.code}（${sku.code}${grant}）`,
+      value: sku.code,
+    });
+    buckets.set(group, list);
+  }
+  return groupOrder
+    .filter((label) => (buckets.get(label) || []).length > 0)
+    .map((label) => ({ label, options: buckets.get(label)! }));
+});
+
+const selectedSku = computed(() =>
+  skus.value.find((s) => s.code === form.value.sku_code),
+);
+
+const needAddonDeck = computed(
+  () => !editing.value && form.value.mode === 'sku' && selectedSku.value?.kind === 'deck_addon',
+);
+
 function emptyForm() {
   return {
+    mode: 'sku' as 'sku' | 'quota',
+    sku_code: undefined as string | undefined,
+    addon_deck_code: undefined as string | undefined,
     kind: 'quota',
     amount: null as number | null,
     benefit_name: '',
@@ -45,10 +118,28 @@ function emptyForm() {
   };
 }
 
+function kindText(kind: string) {
+  return kindLabel[kind] || kind || '—';
+}
+
 async function load() {
   const data = await listRedeemCodes();
   rows.value = data.items || [];
   note.value = data.permission_note || '';
+}
+
+async function loadCatalog() {
+  const [skuList, decks] = await Promise.all([
+    listIAPSkus(),
+    getCopy('decks').catch(() => ({ items: [] as unknown[] })),
+  ]);
+  skus.value = skuList || [];
+  deckOptions.value = ((decks.items as { code?: string; name?: string }[]) || [])
+    .filter((d) => d.code)
+    .map((d) => ({
+      label: `${d.name || d.code}（${d.code}）`,
+      value: String(d.code),
+    }));
 }
 
 function showCreate() {
@@ -60,6 +151,9 @@ function showCreate() {
 function showEdit(row: RedeemCode) {
   editing.value = row;
   form.value = {
+    mode: row.sku_code ? 'sku' : 'quota',
+    sku_code: row.sku_code || undefined,
+    addon_deck_code: row.addon_deck_code || undefined,
     kind: String(row.kind || 'quota'),
     amount: row.amount,
     benefit_name: String(row.benefit_name || ''),
@@ -87,13 +181,41 @@ async function save() {
     });
     message.success('已保存');
   } else {
-    const body: Record<string, unknown> = {
-      kind: form.value.kind,
-      amount: form.value.amount,
-      benefit_name: form.value.benefit_name,
+    const body: Parameters<typeof createRedeemCodes>[0] = {
       count: form.value.count || 1,
       enabled: form.value.enabled,
     };
+    if (form.value.mode === 'sku') {
+      if (!form.value.sku_code) {
+        message.error('请选择商品');
+        return;
+      }
+      body.sku_code = form.value.sku_code;
+      if (needAddonDeck.value) {
+        const addon = form.value.addon_deck_code?.trim();
+        if (!addon) {
+          message.error('牌组加点请填写 addon_deck_code');
+          return;
+        }
+        body.addon_deck_code = addon;
+      }
+      const benefit = form.value.benefit_name.trim();
+      if (benefit) {
+        body.benefit_name = benefit;
+      }
+    } else {
+      if (!form.value.amount || form.value.amount <= 0) {
+        message.error('请填写额度数量');
+        return;
+      }
+      if (!form.value.benefit_name.trim()) {
+        message.error('请填写权益名称');
+        return;
+      }
+      body.kind = 'quota';
+      body.amount = form.value.amount;
+      body.benefit_name = form.value.benefit_name.trim();
+    }
     const custom = form.value.code.trim();
     if (custom) {
       body.code = custom;
@@ -105,7 +227,7 @@ async function save() {
     if (expires) {
       body.expires_at = expires;
     }
-    const created = await createRedeemCodes(body as Parameters<typeof createRedeemCodes>[0]);
+    const created = await createRedeemCodes(body);
     const codes = (created.items || []).map((item) => item.code).join('、');
     message.success(codes ? `已生成：${codes}` : '已生成');
   }
@@ -113,12 +235,14 @@ async function save() {
   await load();
 }
 
-onMounted(load);
+onMounted(async () => {
+  await Promise.all([load(), loadCatalog()]);
+});
 </script>
 
 <template>
   <Page
-    description="生成后用户可在 App 兑换码页核销。空码则自动生成 XXXX-XXXX。不填核销上限表示不限人数。付费模块可写才能生成或停用。"
+    description="优先选 IAP 商品（月/年卡、额度包、年运、牌组）生成兑换码，核销履约与付费一致；亦可发运营裸额度。空码则自动生成 XXXX-XXXX。不填核销上限表示不限人数。付费模块可写才能生成或停用。"
     title="兑换码"
   >
     <template #extra>
@@ -128,7 +252,8 @@ onMounted(load);
     <Table
       :columns="[
         { title: '兑换码', dataIndex: 'code' },
-        { title: '类型', dataIndex: 'kind', width: 120 },
+        { title: '类型', dataIndex: 'kind', width: 140 },
+        { title: 'SKU', dataIndex: 'sku_code', width: 140 },
         { title: '数量', dataIndex: 'amount', width: 80 },
         { title: '权益名', dataIndex: 'benefit_name' },
         { title: '已核销 / 上限', dataIndex: 'usage', width: 140 },
@@ -144,7 +269,16 @@ onMounted(load);
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'kind'">
-          {{ record.kind === 'free_count' ? '历史权益' : '额度' }}
+          {{ kindText(String(record.kind || '')) }}
+        </template>
+        <template v-else-if="column.dataIndex === 'sku_code'">
+          <span v-if="record.sku_code">
+            {{ record.sku_code }}
+            <template v-if="record.addon_deck_code">
+              · {{ record.addon_deck_code }}
+            </template>
+          </span>
+          <span v-else>—</span>
         </template>
         <template v-else-if="column.dataIndex === 'usage'">
           {{ record.redeemed_count }}
@@ -169,22 +303,71 @@ onMounted(load);
       @ok="save"
     >
       <Form layout="vertical">
-        <Form.Item label="类型">
-          <Select
-            v-model:value="form.kind"
-            :disabled="!!editing"
-            :options="[{ label: '额度', value: 'quota' }]"
-          />
-        </Form.Item>
-        <Form.Item label="数量">
-          <InputNumber
-            v-model:value="form.amount"
-            :disabled="!!editing"
-            :min="1"
-            style="width: 100%"
-          />
-        </Form.Item>
-        <Form.Item label="权益名称">
+        <template v-if="!editing">
+          <Form.Item label="发放方式">
+            <Radio.Group v-model:value="form.mode">
+              <Radio.Button value="sku">IAP 商品</Radio.Button>
+              <Radio.Button value="quota">裸额度</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item v-if="form.mode === 'sku'" label="商品（sku_code）" required>
+            <Select
+              v-model:value="form.sku_code"
+              allow-clear
+              show-search
+              option-filter-prop="label"
+              placeholder="月/年卡、额度包、年运、牌组"
+              :options="skuOptions"
+              style="width: 100%"
+            />
+          </Form.Item>
+          <Form.Item
+            v-if="needAddonDeck"
+            label="加点牌组（addon_deck_code）"
+            required
+          >
+            <Select
+              v-if="deckOptions.length"
+              v-model:value="form.addon_deck_code"
+              allow-clear
+              show-search
+              option-filter-prop="label"
+              placeholder="选择要解锁的牌组 code"
+              :options="deckOptions"
+              style="width: 100%"
+            />
+            <Input
+              v-else
+              v-model:value="form.addon_deck_code"
+              placeholder="例如 star-realm"
+            />
+          </Form.Item>
+          <Form.Item v-if="form.mode === 'quota'" label="额度数量" required>
+            <InputNumber
+              v-model:value="form.amount"
+              :min="1"
+              style="width: 100%"
+            />
+          </Form.Item>
+        </template>
+        <template v-else>
+          <Form.Item label="类型">
+            <Input :value="kindText(form.kind)" disabled />
+          </Form.Item>
+          <Form.Item v-if="form.sku_code" label="SKU">
+            <Input :value="form.sku_code" disabled />
+          </Form.Item>
+          <Form.Item v-if="form.addon_deck_code" label="加点牌组">
+            <Input :value="form.addon_deck_code" disabled />
+          </Form.Item>
+          <Form.Item v-if="!form.sku_code" label="数量">
+            <InputNumber v-model:value="form.amount" disabled style="width: 100%" />
+          </Form.Item>
+        </template>
+        <Form.Item
+          :label="form.mode === 'quota' && !editing ? '权益名称（必填）' : '权益名称（可空，SKU 默认用商品名）'"
+          :required="form.mode === 'quota' && !editing"
+        >
           <Input v-model:value="form.benefit_name" placeholder="例如 新春礼" />
         </Form.Item>
         <Form.Item v-if="!editing" label="自定义码（可空，空则自动生成）">
