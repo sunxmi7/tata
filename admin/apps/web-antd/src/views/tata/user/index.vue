@@ -198,6 +198,7 @@ load();
         { title: '性别', dataIndex: 'gender', width: 96 },
         { title: '地区', dataIndex: 'region_province', width: 120 },
         { title: '邮箱', dataIndex: 'email' },
+        { title: '是否会员', dataIndex: 'is_member', width: 96 },
         { title: '注册时间', dataIndex: 'created_at', width: 180 },
         { title: '状态', dataIndex: 'cancelled_at', width: 160 },
         { title: '详情', dataIndex: 'action', width: 80, fixed: 'right' },
@@ -215,7 +216,7 @@ load();
           load();
         },
       }"
-      :scroll="{ x: 1280 }"
+      :scroll="{ x: 1360 }"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'avatar_url'">
@@ -234,6 +235,10 @@ load();
               ? `${record.region_province}${record.region_city ? ` · ${record.region_city}` : ''}`
               : '未知'
           }}
+        </template>
+        <template v-else-if="column.dataIndex === 'is_member'">
+          <Tag v-if="record.is_member" color="blue">是</Tag>
+          <Tag v-else>否</Tag>
         </template>
         <template v-else-if="column.dataIndex === 'cancelled_at'">
           <Tag v-if="record.merged_into" color="orange">已合并 → {{ record.merged_into }}</Tag>
