@@ -1993,7 +1993,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Authorization'
       description: |
-        必须登录。成功时写入统一额度（kind=quota）。free_count 已下线。
+        必须登录。SKU 兑换码按 iap_skus 履约（会员/额度包/年运/牌组）；裸额度码写入统一额度。
         无效码 message=兑换码无效；已核销=兑换码已使用；过期=兑换码已过期。到账数量以账本为准。
       requestBody:
         required: true
@@ -5754,15 +5754,16 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [quota]
-          description: 仅 quota，写入统一额度。
+          description: 裸额度为 quota；SKU 码为对应 iap_skus.kind。
+        sku_code:
+          type: string
+          description: 绑定的 iap_skus.code；裸额度码可空。
         amount:
           type: integer
-          description: 到账额度数量。
+          description: 额度类到账数量。
         unit:
           type: string
-          enum: [quota]
-          description: 固定为 quota。
+          description: 额度类为 quota。
         display_label:
           type: string
           example: 额度
@@ -5967,18 +5968,20 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [quota]
-          description: 到账类型，仅 quota。
+          description: 到账类型（quota 或 iap_skus.kind）。
+        sku_code:
+          type: string
+          description: 绑定的 SKU；裸额度码可空。
         amount:
           type: integer
-          description: 到账额度数量。
+          description: 额度类数量；其它权益可为 0。
         unit:
           type: string
-          enum: [quota]
-          description: 固定为 quota。
+          description: 额度类为 quota。
         display_label:
           type: string
-          description: UI 展示名「额度」。
+          nullable: true
+          description: 额度类为「额度」。
     CampaignList:
       type: object
       properties:

@@ -29,14 +29,14 @@ func TestAdminRedeemCodes(t *testing.T) {
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/redeem-codes", map[string]any{
 		"kind": "other", "amount": 10, "benefit_name": "错",
 	})
-	if msg != "兑换码只允许 quota" {
+	if !strings.Contains(msg, "sku_code") {
 		t.Fatalf("kind: %s", msg)
 	}
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/redeem-codes", map[string]any{
-		"kind": "free_count", "amount": 1, "benefit_name": "旧免费",
+		"sku_code": "no-such-sku",
 	})
-	if msg != "兑换码只允许 quota" {
-		t.Fatalf("free_count: %s", msg)
+	if msg != "商品不存在" {
+		t.Fatalf("missing sku: %s", msg)
 	}
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/redeem-codes", map[string]any{
 		"kind": "quota", "amount": 10, "benefit_name": "礼", "count": 2, "code": "CUSTOM1",

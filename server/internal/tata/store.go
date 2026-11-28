@@ -537,14 +537,23 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   id BIGSERIAL PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   kind TEXT NOT NULL,
-  amount INT NOT NULL,
+  amount INT NOT NULL DEFAULT 0,
   benefit_name TEXT NOT NULL,
+  sku_code TEXT NOT NULL DEFAULT '',
+  addon_deck_code TEXT NOT NULL DEFAULT '',
   max_redemptions INT,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT redeem_codes_kind_chk CHECK (kind = 'quota'),
-  CONSTRAINT redeem_codes_amount_chk CHECK (amount > 0)
+  CONSTRAINT redeem_codes_kind_chk CHECK (kind IN (
+    'quota','month_subscription','year_subscription','quota_pack','yearly_unlock',
+    'deck_year','deck_bundle','deck_single','deck_addon'
+  )),
+  CONSTRAINT redeem_codes_amount_chk CHECK (amount >= 0),
+  CONSTRAINT redeem_codes_bare_or_sku_chk CHECK (
+    (sku_code = '' AND kind = 'quota' AND amount > 0)
+    OR (sku_code <> '' AND kind <> 'quota')
+  )
 );
 CREATE TABLE IF NOT EXISTS redeem_redemptions (
   id BIGSERIAL PRIMARY KEY,
@@ -1043,15 +1052,32 @@ END $$;
 		return err
 	}
 	if _, err := s.Exec(ctx, `
-DELETE FROM redeem_redemptions WHERE code_id IN (SELECT id FROM redeem_codes WHERE kind <> 'quota');
-DELETE FROM redeem_codes WHERE kind <> 'quota';
+ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS sku_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS addon_deck_code TEXT NOT NULL DEFAULT '';
+DELETE FROM redeem_redemptions WHERE code_id IN (SELECT id FROM redeem_codes WHERE kind = 'free_count');
+DELETE FROM redeem_codes WHERE kind = 'free_count';
 DO $$
 DECLARE def text;
 BEGIN
   SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'redeem_codes_kind_chk';
-  IF def IS NULL OR position('free_count' in def) > 0 THEN
+  IF def IS NULL OR position('month_subscription' in def) = 0 OR position('free_count' in def) > 0 THEN
     ALTER TABLE redeem_codes DROP CONSTRAINT IF EXISTS redeem_codes_kind_chk;
-    ALTER TABLE redeem_codes ADD CONSTRAINT redeem_codes_kind_chk CHECK (kind = 'quota');
+    ALTER TABLE redeem_codes ADD CONSTRAINT redeem_codes_kind_chk CHECK (kind IN (
+      'quota','month_subscription','year_subscription','quota_pack','yearly_unlock',
+      'deck_year','deck_bundle','deck_single','deck_addon'
+    ));
+  END IF;
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'redeem_codes_amount_chk';
+  IF def IS NULL OR position('>=' in def) = 0 THEN
+    ALTER TABLE redeem_codes DROP CONSTRAINT IF EXISTS redeem_codes_amount_chk;
+    ALTER TABLE redeem_codes ADD CONSTRAINT redeem_codes_amount_chk CHECK (amount >= 0);
+  END IF;
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'redeem_codes_bare_or_sku_chk';
+  IF def IS NULL THEN
+    ALTER TABLE redeem_codes ADD CONSTRAINT redeem_codes_bare_or_sku_chk CHECK (
+      (sku_code = '' AND kind = 'quota' AND amount > 0)
+      OR (sku_code <> '' AND kind <> 'quota')
+    );
   END IF;
 END $$;
 `); err != nil {
@@ -1229,7 +1255,9 @@ COMMENT ON TABLE daily_free_uses IS '并账后每日免费消耗明细。';
 COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 额度记在 quota_ledger。';
 
 COMMENT ON TABLE admin_grants IS '管理端人工补发。新记录只写 kind=quota，bucket 为 subscription 或 pack。历史 free_count 只保留查询。';
-COMMENT ON TABLE redeem_codes IS '兑换码。仅 kind=quota 入统一额度。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
+COMMENT ON TABLE redeem_codes IS '兑换码。sku_code 绑 iap_skus 时按 SKU 履约（会员/额度包/年运/牌组）；空 sku_code 且 kind=quota 为运营裸额度。管理端 POST /redeem-codes，App POST /redeem。';
+COMMENT ON COLUMN redeem_codes.sku_code IS '对应 iap_skus.code。空表示裸额度码。';
+COMMENT ON COLUMN redeem_codes.addon_deck_code IS '仅 deck_addon 使用，指定解锁的牌组 code。';
 COMMENT ON TABLE redeem_redemptions IS '兑换码核销记录。对应 GET /redeem/records。';
 
 COMMENT ON TABLE notification_preferences IS '通知三开关。今日/明日抽牌走本地通知；messages_enabled 控制优惠/活动推送。对应 /notification-preferences。';
