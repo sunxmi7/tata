@@ -29,11 +29,14 @@ export function useTataLookups() {
   async function loadLookups() {
     const codes = new Set(useAccessStore().accessCodes);
     const can = (module: string) => codes.has('write') || codes.has(module);
-    const [users, operators, readings] = await Promise.all([
-      can('accounts') ? listUsers() : Promise.resolve([] as AppUser[]),
+    const [usersPage, operators, readings] = await Promise.all([
+      can('accounts')
+        ? listUsers({ limit: 200, offset: 0 })
+        : Promise.resolve({ items: [] as AppUser[] }),
       can('accounts') ? listOperators() : Promise.resolve([] as Operator[]),
       can('records') ? listReadings() : Promise.resolve([] as ReadingRow[]),
     ]);
+    const users = usersPage.items || [];
     userLabels.value = new Map(users.map((user) => [user.id, formatUserRecord(user)]));
     operatorLabels.value = new Map(
       operators.map((op: Operator) => [op.id, `${op.username} (#${op.id})`]),

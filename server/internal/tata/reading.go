@@ -305,6 +305,7 @@ func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
+	a.captureRegisterIP(r, id, created)
 	a.ensureProfileDefaults(r.Context(), id)
 	a.consumeEmailCode(r.Context(), "login", email)
 	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
@@ -526,12 +527,13 @@ func (a *App) appSpreads(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) appBanners(w http.ResponseWriter, r *http.Request) error {
 	now := time.Now()
-	rows, err := a.Store.Query(r.Context(), `SELECT id, copy, start_at, end_at, priority, target FROM banners WHERE start_at<=$1 AND end_at>$1 ORDER BY priority DESC, id DESC`, now)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, copy, start_at, end_at, priority, target, enabled, COALESCE(image_url,''), COALESCE(frequency,'every_enter')
+		FROM banners WHERE enabled=true AND start_at<=$1 AND end_at>$1 ORDER BY priority DESC, id DESC`, now)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	writeOK(w, scanBanners(rows))
+	writeOK(w, scanBanners(r, rows))
 	return nil
 }
 

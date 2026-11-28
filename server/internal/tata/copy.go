@@ -210,7 +210,8 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 		writeOK(w, map[string]any{"kind": kind, "categories": categories})
 		return nil
 	case "campaigns":
-		rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, detail_title, detail_body, detail_status, status, enabled, sort_order
+		rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, detail_title, detail_body, detail_status, status, enabled, sort_order,
+			start_at, end_at, COALESCE(image_url,'')
 			FROM campaigns ORDER BY sort_order, campaign_id`)
 		if err != nil {
 			return err
@@ -218,16 +219,19 @@ func (a *App) adminGetCopy(w http.ResponseWriter, r *http.Request) error {
 		defer rows.Close()
 		list := []map[string]any{}
 		for rows.Next() {
-			var id, title, subtitle, badge, detailTitle, detailBody, detailStatus, status string
+			var id, title, subtitle, badge, detailTitle, detailBody, detailStatus, status, imageURL string
 			var enabled bool
 			var order int
-			if err := rows.Scan(&id, &title, &subtitle, &badge, &detailTitle, &detailBody, &detailStatus, &status, &enabled, &order); err != nil {
+			var startAt, endAt sql.NullTime
+			if err := rows.Scan(&id, &title, &subtitle, &badge, &detailTitle, &detailBody, &detailStatus, &status, &enabled, &order, &startAt, &endAt, &imageURL); err != nil {
 				return err
 			}
 			list = append(list, map[string]any{
 				"campaign_id": id, "title": title, "subtitle": subtitle, "badge": badge,
 				"detail_title": detailTitle, "detail_body": detailBody, "detail_status": detailStatus,
 				"status": status, "enabled": enabled, "sort_order": order,
+				"start_at": nullTime(startAt), "end_at": nullTime(endAt),
+				"image_url": emptyAsNil(absoluteAssetURL(r, imageURL)),
 			})
 		}
 		if err := rows.Err(); err != nil {
@@ -340,14 +344,17 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		}
 	case "campaigns":
 		var req struct {
-			CampaignID  string `json:"campaign_id"`
-			Title       string `json:"title"`
-			Subtitle    string `json:"subtitle"`
-			Badge       string `json:"badge"`
-			DetailTitle string `json:"detail_title"`
-			DetailBody  string `json:"detail_body"`
-			Status      string `json:"status"`
-			Enabled     *bool  `json:"enabled"`
+			CampaignID  string  `json:"campaign_id"`
+			Title       string  `json:"title"`
+			Subtitle    string  `json:"subtitle"`
+			Badge       string  `json:"badge"`
+			DetailTitle string  `json:"detail_title"`
+			DetailBody  string  `json:"detail_body"`
+			Status      string  `json:"status"`
+			Enabled     *bool   `json:"enabled"`
+			StartAt     *string `json:"start_at"`
+			EndAt       *string `json:"end_at"`
+			ImageURL    *string `json:"image_url"`
 		}
 		if err := decode(r, &req); err != nil {
 			return err
@@ -355,10 +362,11 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		if !validContentID(req.CampaignID) {
 			return biz("活动不存在")
 		}
-		var curTitle, curSub, curBadge, curDetailTitle, curDetailBody, curStatus string
+		var curTitle, curSub, curBadge, curDetailTitle, curDetailBody, curStatus, curImage string
 		var curEnabled bool
-		err := a.Store.QueryRow(r.Context(), `SELECT title, subtitle, badge, detail_title, detail_body, status, enabled
-			FROM campaigns WHERE campaign_id=$1`, req.CampaignID).Scan(&curTitle, &curSub, &curBadge, &curDetailTitle, &curDetailBody, &curStatus, &curEnabled)
+		var curStart, curEnd sql.NullTime
+		err := a.Store.QueryRow(r.Context(), `SELECT title, subtitle, badge, detail_title, detail_body, status, enabled, start_at, end_at, COALESCE(image_url,'')
+			FROM campaigns WHERE campaign_id=$1`, req.CampaignID).Scan(&curTitle, &curSub, &curBadge, &curDetailTitle, &curDetailBody, &curStatus, &curEnabled, &curStart, &curEnd, &curImage)
 		if errors.Is(err, sql.ErrNoRows) {
 			return biz("活动不存在")
 		}
@@ -396,10 +404,34 @@ func (a *App) adminPutCopy(w http.ResponseWriter, r *http.Request) error {
 		if req.Enabled != nil {
 			enabled = *req.Enabled
 		}
+		startAt := nullTime(curStart)
+		endAt := nullTime(curEnd)
+		if req.StartAt != nil {
+			t, perr := parseCampaignTimePtr(req.StartAt)
+			if perr != nil {
+				return perr
+			}
+			startAt = t
+		}
+		if req.EndAt != nil {
+			t, perr := parseCampaignTimePtr(req.EndAt)
+			if perr != nil {
+				return perr
+			}
+			endAt = t
+		}
+		imageURL := curImage
+		if req.ImageURL != nil {
+			imageURL = strings.TrimSpace(*req.ImageURL)
+			if err := optionalAssetURL(imageURL); err != nil {
+				return err
+			}
+		}
 		detailStatus := copyStatus(detailBody)
-		if _, err := a.Store.Exec(r.Context(), `UPDATE campaigns SET title=$1, subtitle=$2, badge=$3, detail_title=$4, detail_body=$5, detail_status=$6, status=$7, enabled=$8
-			WHERE campaign_id=$9`,
-			title, subtitle, badge, detailTitle, detailBody, detailStatus, status, enabled, req.CampaignID); err != nil {
+		if _, err := a.Store.Exec(r.Context(), `UPDATE campaigns SET title=$1, subtitle=$2, badge=$3, detail_title=$4, detail_body=$5, detail_status=$6, status=$7, enabled=$8,
+			start_at=$9, end_at=$10, image_url=$11
+			WHERE campaign_id=$12`,
+			title, subtitle, badge, detailTitle, detailBody, detailStatus, status, enabled, startAt, endAt, imageURL, req.CampaignID); err != nil {
 			return err
 		}
 		a.Store.audit(r.Context(), act.id, "update", "copy", kind, req.CampaignID)
@@ -647,12 +679,106 @@ func (a *App) putCopyHelp(r *http.Request, operatorID int64) error {
 	return nil
 }
 
+func parseCampaignTimePtr(raw *string) (any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	s := strings.TrimSpace(*raw)
+	if s == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, biz("活动时间不正确")
+	}
+	return t, nil
+}
+
 func (a *App) adminPostCopy(w http.ResponseWriter, r *http.Request) error {
 	act, err := a.adminActor(r, true)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(r.PathValue("kind")) != "help" {
+	kind := strings.TrimSpace(r.PathValue("kind"))
+	if kind == "campaigns" {
+		var req struct {
+			CampaignID  string  `json:"campaign_id"`
+			Title       string  `json:"title"`
+			Subtitle    string  `json:"subtitle"`
+			Badge       string  `json:"badge"`
+			DetailTitle string  `json:"detail_title"`
+			DetailBody  string  `json:"detail_body"`
+			Status      string  `json:"status"`
+			Enabled     *bool   `json:"enabled"`
+			SortOrder   *int    `json:"sort_order"`
+			StartAt     *string `json:"start_at"`
+			EndAt       *string `json:"end_at"`
+			ImageURL    string  `json:"image_url"`
+		}
+		if err := decode(r, &req); err != nil {
+			return err
+		}
+		id := strings.TrimSpace(req.CampaignID)
+		if !validContentID(id) {
+			return biz("活动编码不正确")
+		}
+		title := strings.TrimSpace(req.Title)
+		if title == "" {
+			return biz("请填写活动名称")
+		}
+		detailTitle := strings.TrimSpace(req.DetailTitle)
+		if detailTitle == "" {
+			detailTitle = title
+		}
+		detailBody := strings.TrimSpace(req.DetailBody)
+		status := strings.TrimSpace(req.Status)
+		if status == "" {
+			status = "ongoing"
+		}
+		if status != "ongoing" && status != "ended" {
+			return biz("活动状态不正确")
+		}
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		sortOrder := 100
+		if req.SortOrder != nil {
+			sortOrder = *req.SortOrder
+		}
+		startAt, err := parseCampaignTimePtr(req.StartAt)
+		if err != nil {
+			return err
+		}
+		endAt, err := parseCampaignTimePtr(req.EndAt)
+		if err != nil {
+			return err
+		}
+		imageURL := strings.TrimSpace(req.ImageURL)
+		if err := optionalAssetURL(imageURL); err != nil {
+			return err
+		}
+		detailStatus := copyStatus(detailBody)
+		if detailStatus != "ready" {
+			if detailBody == "" {
+				detailBody = "详情页不在本次交付范围。"
+			}
+			detailStatus = "pending"
+		}
+		tag, err := a.Store.Exec(r.Context(), `INSERT INTO campaigns(campaign_id, title, subtitle, badge, detail_title, detail_body, detail_status, status, sort_order, enabled, start_at, end_at, image_url)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			ON CONFLICT (campaign_id) DO NOTHING`,
+			id, title, req.Subtitle, req.Badge, detailTitle, detailBody, detailStatus, status, sortOrder, enabled, startAt, endAt, imageURL)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return biz("活动已存在")
+		}
+		a.Store.audit(r.Context(), act.id, "create", "copy", kind, id)
+		return a.adminGetCopy(w, r)
+	}
+	if kind != "help" {
 		return biz("文案类型不正确")
 	}
 	var req struct {

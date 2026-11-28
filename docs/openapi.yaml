@@ -1190,6 +1190,17 @@ components:
         target:
           type: string
           description: 点击跳转目标，可空。
+        enabled:
+          type: boolean
+          description: 启停。App 仅返回 enabled=true。
+        image_url:
+          type: string
+          nullable: true
+          description: 素材图 URL，可空。
+        frequency:
+          type: string
+          enum: [every_enter, daily_once]
+          description: 展示频率。每次进入 / 每天一次。
     BannerBody:
       type: object
       additionalProperties: false
@@ -1208,12 +1219,34 @@ components:
           type: integer
         target:
           type: string
+        enabled:
+          type: boolean
+          description: 默认 true。
+        image_url:
+          type: string
+          description: 可选素材地址。
+        frequency:
+          type: string
+          enum: [every_enter, daily_once]
+          description: 默认 every_enter。
         push:
           type: boolean
           description: 仅新建时生效。true 时额外落一条广播站内信并按配置下发个推。
         push_title:
           type: string
           description: push=true 时的推送标题，省略用「新活动上线」。
+    AdminPageMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        items:
+          type: array
+          items: {}
     TarotistAdmin:
       type: object
       properties:
@@ -8463,10 +8496,31 @@ paths:
       summary: App 用户
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 最多 200 条，按 id 降序。不含密码。含昵称、头像、性别、生日、探索偏好。已注销用户仍出现，cancelled_at 非空。
+        - name: q
+          in: query
+          schema: { type: string }
+          description: 模糊搜昵称/邮箱/手机；纯数字也可精确匹配 id。
+        - name: id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: cancelled
+          in: query
+          schema: { type: boolean }
+        - name: merged
+          in: query
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      description: |
+        分页列表，按 created_at 降序。data 为 {items,total,limit,offset}。
+        另提供 GET /users/export（CSV）与 GET /users/{id}（详情聚合）。
       responses:
         "200":
-          description: data 为用户数组。
+          description: data 含 items 与分页字段。
           content:
             application/json:
               schema:
@@ -8475,9 +8529,14 @@ paths:
                   - type: object
                     properties:
                       data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/AppUserAdmin"
+                        allOf:
+                          - $ref: "#/components/schemas/AdminPageMeta"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/AppUserAdmin"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/users/stats:
@@ -8487,14 +8546,17 @@ paths:
       summary: 用户画像占比
       parameters:
         - $ref: "#/components/parameters/Authorization"
+        - name: days
+          in: query
+          schema: { type: integer, default: 30, maximum: 90 }
+          description: 日新增序列天数。
       description: |
-        统计未注销的 App 用户，历史上已合并的账号也计入。三张圆形图用同一批人。
-        性别与年龄按人数互斥分桶，未填为「未填写」。年龄按生日相对 Asia/Shanghai 当天计算。
-        探索偏好为多选：每选一项计 1，未选任何项计「未选择」1。
-        年龄区间：15以下、15-18、19-22、23-24、25-30、31-35、36-40、41-50、51以上。
+        统计未注销的 App 用户，历史上已合并的账号也计入。画像圆形图用同一批人。
+        另含 daily_new（未合并账号按 Asia/Shanghai 日新增）与 region（注册 IP 省份，空为「未知」）。
+        日活/留存/渠道不在此接口，见友盟。
       responses:
         "200":
-          description: data 含 total_users 与 gender/age/explore（各有 total 与 items[{label,count,percent}]）。
+          description: data 含 total_users、gender/age/explore/region、daily_new、notes。
           content:
             application/json:
               schema:
@@ -8513,10 +8575,31 @@ paths:
       summary: 审计日志
       parameters:
         - $ref: "#/components/parameters/Authorization"
-      description: 最多 200 条，按 id 降序。detail 是文本，可能是 JSON 字符串。
+        - name: operator_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: object_type
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string }
+        - name: to
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      description: 分页列表。另提供 GET /audit/export CSV。
       responses:
         "200":
-          description: data 为审计数组。
+          description: data 为 {items,total,limit,offset}。
           content:
             application/json:
               schema:
@@ -8525,9 +8608,14 @@ paths:
                   - type: object
                     properties:
                       data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/AuditRow"
+                        allOf:
+                          - $ref: "#/components/schemas/AdminPageMeta"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/AuditRow"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/admin/v1/account-merges:
@@ -8560,8 +8648,9 @@ paths:
       operationId: adminListIAPOrders
       summary: IAP 订单
       description: |
-        只读，最多 200 条。verify_status 只允许空、pending、verified、failed。
-        credited_quota 在发放量未配置时为 null。
+        分页列表。verify_status 只允许空、pending、verified、failed。
+        金额优先订单快照，否则按当前 SKU 价并标 price_estimated。
+        另提供 GET /iap/orders/export 与 GET /iap/revenue。
       parameters:
         - $ref: "#/components/parameters/Authorization"
         - name: user_id
@@ -8574,9 +8663,27 @@ paths:
           schema:
             type: string
             enum: ["", pending, verified, failed]
+        - name: platform
+          in: query
+          schema: { type: string, enum: [app_store, play] }
+        - name: sku_code
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string }
+        - name: to
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
       responses:
         "200":
-          description: data 为订单数组。
+          description: data 为 {items,total,limit,offset}。
           content:
             application/json:
               schema:

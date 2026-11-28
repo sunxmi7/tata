@@ -17,6 +17,27 @@ export interface AppUser {
   tease_off: boolean;
   cancelled_at: string | null;
   created_at: string;
+  merged_into?: number | null;
+  register_ip?: string;
+  region_province?: string;
+  region_city?: string;
+  region_status?: string;
+}
+
+export interface AdminPage<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface UserListQuery {
+  q?: string;
+  id?: number | string;
+  cancelled?: boolean | string;
+  merged?: boolean | string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface UserStatItem {
@@ -30,11 +51,19 @@ export interface UserStatGroup {
   items: UserStatItem[];
 }
 
+export interface UserDailyNew {
+  date: string;
+  count: number;
+}
+
 export interface UserStats {
   total_users: number;
   gender: UserStatGroup;
   age: UserStatGroup;
   explore: UserStatGroup;
+  region?: UserStatGroup;
+  daily_new?: UserDailyNew[];
+  notes?: string[];
 }
 
 export interface OperatorModule {
@@ -226,14 +255,41 @@ export function updateOperator(
 ) {
   return requestClient.put(`/operators/${id}`, data);
 }
-export function listUsers() {
-  return requestClient.get<AppUser[]>('/users');
+function toQuery(params?: Record<string, unknown>) {
+  if (!params) return '';
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    sp.set(key, String(value));
+  });
+  const q = sp.toString();
+  return q ? `?${q}` : '';
 }
-export function getUserStats() {
-  return requestClient.get<UserStats>('/users/stats');
+
+export function listUsers(params?: UserListQuery) {
+  return requestClient.get<AdminPage<AppUser>>(`/users${toQuery(params)}`);
 }
-export function listAudit() {
-  return requestClient.get<AuditRow[]>('/audit');
+export function getUser(id: number) {
+  return requestClient.get<{
+    user: AppUser;
+    recent_readings: Array<Record<string, unknown>>;
+    recent_orders: Array<Record<string, unknown>>;
+    notes?: string[];
+  }>(`/users/${id}`);
+}
+export function getUserStats(days?: number) {
+  return requestClient.get<UserStats>(`/users/stats${toQuery({ days })}`);
+}
+export function listAudit(params?: {
+  operator_id?: number | string;
+  action?: string;
+  object_type?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  return requestClient.get<AdminPage<AuditRow>>(`/audit${toQuery(params)}`);
 }
 export function listMessages() {
   return requestClient.get<MessageRow[]>('/messages');

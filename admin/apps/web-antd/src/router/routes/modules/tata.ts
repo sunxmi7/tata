@@ -139,7 +139,7 @@ const routes: RouteRecordRaw[] = [
             name: 'TataUsers',
             path: '/tata/users',
             component: () => import('#/views/tata/user/index.vue'),
-            meta: { icon: 'lucide:users', title: '用户账号', authority: can('accounts') },
+            meta: { icon: 'lucide:users', title: '全部用户', authority: can('accounts') },
           },
           {
             name: 'TataOnboarding',
@@ -151,7 +151,7 @@ const routes: RouteRecordRaw[] = [
             name: 'TataUserStats',
             path: '/tata/user-stats',
             component: () => import('#/views/tata/user-stats/index.vue'),
-            meta: { icon: 'lucide:pie-chart', title: '用户统计', authority: can('accounts') },
+            meta: { icon: 'lucide:pie-chart', title: '用户概览', authority: can('accounts') },
           },
           {
             name: 'TataOperator',
@@ -171,8 +171,14 @@ const routes: RouteRecordRaw[] = [
         meta: { icon: 'lucide:wallet', title: '付费', authority: can('pay') },
         name: 'TataPay',
         path: '/tata/pay',
-        redirect: '/tata/iap-skus',
+        redirect: '/tata/pay-overview',
         children: [
+          {
+            name: 'TataPayOverview',
+            path: '/tata/pay-overview',
+            component: () => import('#/views/tata/pay-overview/index.vue'),
+            meta: { icon: 'lucide:chart-column', title: '付费概览', authority: can('pay') },
+          },
           {
             name: 'TataIAPSkus',
             path: '/tata/iap-skus',

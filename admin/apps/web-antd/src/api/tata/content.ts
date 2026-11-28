@@ -56,6 +56,9 @@ export interface Banner {
   end_at: string;
   priority: number;
   target?: string;
+  enabled?: boolean;
+  image_url?: string | null;
+  frequency?: 'every_enter' | 'daily_once' | string;
 }
 
 export interface TataCard {
@@ -121,8 +124,14 @@ export function updateTarotist(id: number, data: Partial<Tarotist>) {
 export function listBanners() {
   return requestClient.get<Banner[]>('/banners');
 }
-export function createBanner(data: Partial<Banner>) {
+export function createBanner(data: Partial<Banner> & { push?: boolean; push_title?: string }) {
   return requestClient.post('/banners', data);
+}
+export function updateBanner(
+  id: number,
+  data: Partial<Banner> & { push?: boolean; push_title?: string },
+) {
+  return requestClient.put(`/banners/${id}`, data);
 }
 
 export function listCards() {

@@ -111,8 +111,25 @@ async function saveCampaign(row: Record<string, unknown>) {
     detail_body: row.detail_body,
     status: row.status,
     enabled: row.enabled,
+    start_at: row.start_at || '',
+    end_at: row.end_at || '',
+    image_url: row.image_url || '',
   });
   message.success('已保存');
+}
+
+async function addCampaign() {
+  const id = `campaign_${Date.now().toString(36)}`;
+  const data = await createCopy('campaigns', {
+    campaign_id: id,
+    title: '新活动',
+    detail_title: '新活动',
+    detail_body: '',
+    status: 'ongoing',
+    enabled: true,
+  });
+  campaigns.value = (data.items as Record<string, unknown>[]) || [];
+  message.success('已新建');
 }
 
 onMounted(async () => {
@@ -190,20 +207,37 @@ onMounted(async () => {
         </div>
       </Tabs.TabPane>
       <Tabs.TabPane key="campaigns" tab="活动">
+        <div class="mb-3">
+          <Button v-if="canWrite" type="primary" @click="addCampaign">新建活动</Button>
+          <span class="ml-3 text-sm text-gray-500">入口曝光点击见友盟；本页只做配置。</span>
+        </div>
         <Table
           :columns="[
-            { title: '编码', dataIndex: 'campaign_id', width: 160 },
-            { title: '标题', dataIndex: 'title' },
+            { title: '编码', dataIndex: 'campaign_id', width: 150 },
+            { title: '标题', dataIndex: 'title', width: 160 },
+            { title: '开始', dataIndex: 'start_at', width: 200 },
+            { title: '结束', dataIndex: 'end_at', width: 200 },
+            { title: '素材', dataIndex: 'image_url', width: 180 },
             { title: '详情', dataIndex: 'detail_body' },
             { title: '操作', dataIndex: 'action', width: 80 },
           ]"
           :data-source="campaigns"
           row-key="campaign_id"
           :pagination="false"
+          :scroll="{ x: 1200 }"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.dataIndex === 'title'">
               <Input v-model:value="record.title" />
+            </template>
+            <template v-else-if="column.dataIndex === 'start_at'">
+              <Input v-model:value="record.start_at" placeholder="RFC3339，可空" />
+            </template>
+            <template v-else-if="column.dataIndex === 'end_at'">
+              <Input v-model:value="record.end_at" placeholder="RFC3339，可空" />
+            </template>
+            <template v-else-if="column.dataIndex === 'image_url'">
+              <Input v-model:value="record.image_url" placeholder="/uploads/..." />
             </template>
             <template v-else-if="column.dataIndex === 'detail_body'">
               <Input.TextArea v-model:value="record.detail_body" :rows="2" />

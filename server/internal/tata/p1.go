@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -83,19 +84,25 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appCampaigns(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, status
-		FROM campaigns WHERE enabled=true ORDER BY sort_order, campaign_id`)
+	now := time.Now()
+	rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, status, COALESCE(image_url,'')
+		FROM campaigns WHERE enabled=true
+		AND (start_at IS NULL OR start_at<=$1)
+		AND (end_at IS NULL OR end_at>$1)
+		ORDER BY sort_order, campaign_id`, now)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var id, title, subtitle, badge, status string
-		if err := rows.Scan(&id, &title, &subtitle, &badge, &status); err != nil {
+		var id, title, subtitle, badge, status, imageURL string
+		if err := rows.Scan(&id, &title, &subtitle, &badge, &status, &imageURL); err != nil {
 			return err
 		}
-		items = append(items, campaignCard(r, id, title, subtitle, badge, status))
+		card := campaignCard(r, id, title, subtitle, badge, status)
+		card["image_url"] = emptyAsNil(absoluteAssetURL(r, imageURL))
+		items = append(items, card)
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -127,20 +134,31 @@ func (a *App) appCampaign(w http.ResponseWriter, r *http.Request) error {
 	if !validContentID(id) {
 		return biz("活动不存在")
 	}
-	var title, subtitle, detailTitle, detailBody, detailStatus, status string
+	var title, subtitle, detailTitle, detailBody, detailStatus, status, imageURL string
 	var enabled bool
-	err := a.Store.QueryRow(r.Context(), `SELECT title, subtitle, detail_title, detail_body, detail_status, status, enabled
-		FROM campaigns WHERE campaign_id=$1`, id).Scan(&title, &subtitle, &detailTitle, &detailBody, &detailStatus, &status, &enabled)
+	var startAt, endAt sql.NullTime
+	err := a.Store.QueryRow(r.Context(), `SELECT title, subtitle, detail_title, detail_body, detail_status, status, enabled, start_at, end_at, COALESCE(image_url,'')
+		FROM campaigns WHERE campaign_id=$1`, id).Scan(&title, &subtitle, &detailTitle, &detailBody, &detailStatus, &status, &enabled, &startAt, &endAt, &imageURL)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !enabled) {
 		return biz("活动不存在")
 	}
 	if err != nil {
 		return err
 	}
+	now := time.Now()
+	if startAt.Valid && now.Before(startAt.Time) {
+		return biz("活动不存在")
+	}
+	if endAt.Valid && !now.Before(endAt.Time) {
+		return biz("活动不存在")
+	}
 	writeOK(w, map[string]any{
 		"id": id, "title": detailTitle, "list_title": title, "subtitle": subtitle,
 		"status": status, "body": detailBody, "body_status": detailStatus,
 		"detail_delivered": detailStatus == "ready",
+		"image_url":        emptyAsNil(absoluteAssetURL(r, imageURL)),
+		"start_at":         nullTime(startAt),
+		"end_at":           nullTime(endAt),
 	})
 	return nil
 }

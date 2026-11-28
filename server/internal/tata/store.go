@@ -1048,6 +1048,28 @@ END $$;
 	if _, err := s.Exec(ctx, `DROP TABLE IF EXISTS explore_topics`); err != nil {
 		return err
 	}
+	if _, err := s.Exec(ctx, `
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS register_ip TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS region_province TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS region_city TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS region_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE banners ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE banners ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE banners ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'every_enter';
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS end_at TIMESTAMPTZ;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE iap_orders ADD COLUMN IF NOT EXISTS price_amount_minor BIGINT;
+ALTER TABLE iap_orders ADD COLUMN IF NOT EXISTS price_currency TEXT NOT NULL DEFAULT '';
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'banners_frequency_chk') THEN
+    ALTER TABLE banners ADD CONSTRAINT banners_frequency_chk CHECK (frequency IN ('every_enter','daily_once'));
+  END IF;
+END $$;
+`); err != nil {
+		return err
+	}
 	return s.commentSchema(ctx)
 }
 
@@ -1066,6 +1088,10 @@ COMMENT ON COLUMN app_users.gender IS '档案性别。入库值：女性 / 男�
 COMMENT ON COLUMN app_users.explore_preferences IS '探索偏好 JSON 字符串数组。对应个人档案多选项，PUT /profile。';
 COMMENT ON COLUMN app_users.custom_deck_id IS '当前使用的自定义牌组。空则用 deck_code 官方风格。';
 COMMENT ON COLUMN app_users.merged_into IS '历史并账标记。新请求不再合并；非空的旧账号仍不能登录。';
+COMMENT ON COLUMN app_users.register_ip IS '注册时客户端 IP，用于异步解析地区。';
+COMMENT ON COLUMN app_users.region_province IS '注册 IP 回填省份；空为未知。';
+COMMENT ON COLUMN app_users.region_city IS '注册 IP 回填城市；空为未知。';
+COMMENT ON COLUMN app_users.region_status IS 'pending/resolved/unknown。';
 
 COMMENT ON TABLE refresh_tokens IS '刷新令牌。App 登录不签发；管理端会话用。';
 COMMENT ON TABLE identity_claims IS '已占用的登录身份（email/phone/wechat/apple），删号后仍占坑防抢注。';
@@ -1091,7 +1117,13 @@ COMMENT ON TABLE vendors IS '大模型供应商。api_key_enc 用 KEK 加密。'
 COMMENT ON TABLE bindings IS '任务到供应商+模型的绑定。task=detect/rewrite/recommend/interpret/tarotist。';
 
 COMMENT ON TABLE banners IS '运营 Banner。对应 GET /banners 与管理端 /admin/v1/banners。可触发个推。';
+COMMENT ON COLUMN banners.enabled IS 'false 时 App 不展示。';
+COMMENT ON COLUMN banners.image_url IS '可选素材图 /uploads/... 或 CDN。';
+COMMENT ON COLUMN banners.frequency IS 'every_enter 每次进入；daily_once 每天一次。';
 COMMENT ON TABLE campaigns IS '探索「参与活动」。对应 GET /campaigns；detail_status=pending 时正文未定稿。';
+COMMENT ON COLUMN campaigns.start_at IS '投放开始，空表示不限制。';
+COMMENT ON COLUMN campaigns.end_at IS '投放结束，空表示不限制。';
+COMMENT ON COLUMN campaigns.image_url IS '列表/详情素材图。';
 COMMENT ON TABLE readings IS '一次解读。对应 /readings*。type=normal/tarotist/explore/daily。';
 COMMENT ON COLUMN readings.type IS 'normal 普通、tarotist 占卜师、explore 探索、daily 今日一牌。';
 COMMENT ON COLUMN readings.theme_key IS '探索主题键。创建时可写；选阵后若为空则从 spreads.theme_key 回填。yes_or_no/either_or 为此刻抉择，其余为主题占卜。';
@@ -1143,6 +1175,8 @@ COMMENT ON TABLE iap_orders IS '本地验单订单。不请求苹果/谷歌，�
 COMMENT ON COLUMN iap_orders.sku_kind IS '下单时拷贝的 iap_skus.kind。';
 COMMENT ON COLUMN iap_orders.credited_quota IS '本次入账额度。年运、牌组、未配置额度为 null。';
 COMMENT ON COLUMN iap_orders.credit_status IS 'none/credited/amount_unconfigured/skipped_expired/deferred。deferred 表示下一期尚未开始。';
+COMMENT ON COLUMN iap_orders.price_amount_minor IS '验单成功时快照 SKU 价，单位分。';
+COMMENT ON COLUMN iap_orders.price_currency IS '金额币种，默认 CNY。';
 
 COMMENT ON TABLE subscriptions IS '商店订阅有效期。sku_kind 这里是 month/year（与 iap_skus.kind 不同）。年卡有效则年运免费解锁。';
 COMMENT ON COLUMN subscriptions.sku_kind IS 'month 或 year，由 month_subscription/year_subscription 推导。';

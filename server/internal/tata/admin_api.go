@@ -761,12 +761,13 @@ func (a *App) adminListBanners(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, copy, start_at, end_at, priority, target FROM banners ORDER BY priority DESC, id DESC`)
+	rows, err := a.Store.Query(r.Context(), `SELECT id, copy, start_at, end_at, priority, target, enabled, COALESCE(image_url,''), COALESCE(frequency,'every_enter')
+		FROM banners ORDER BY priority DESC, id DESC`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	writeOK(w, scanBanners(rows))
+	writeOK(w, scanBanners(r, rows))
 	return nil
 }
 
@@ -780,8 +781,9 @@ func (a *App) adminCreateBanner(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var id int64
-	err = a.Store.QueryRow(r.Context(), `INSERT INTO banners(copy, start_at, end_at, priority, target) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-		b.copy, b.start, b.end, b.priority, b.target).Scan(&id)
+	err = a.Store.QueryRow(r.Context(), `INSERT INTO banners(copy, start_at, end_at, priority, target, enabled, image_url, frequency)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		b.copy, b.start, b.end, b.priority, b.target, b.enabled, b.imageURL, b.frequency).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -817,8 +819,9 @@ func (a *App) adminUpdateBanner(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	tag, err := a.Store.Exec(r.Context(), `UPDATE banners SET copy=$1, start_at=$2, end_at=$3, priority=$4, target=$5 WHERE id=$6`,
-		b.copy, b.start, b.end, b.priority, b.target, id)
+	tag, err := a.Store.Exec(r.Context(), `UPDATE banners SET copy=$1, start_at=$2, end_at=$3, priority=$4, target=$5,
+		enabled=$6, image_url=$7, frequency=$8 WHERE id=$9`,
+		b.copy, b.start, b.end, b.priority, b.target, b.enabled, b.imageURL, b.frequency, id)
 	if err != nil {
 		return err
 	}
@@ -836,6 +839,9 @@ type bannerIn struct {
 	end       time.Time
 	priority  int
 	target    string
+	enabled   bool
+	imageURL  string
+	frequency string
 	push      bool
 	pushTitle string
 }
@@ -847,6 +853,9 @@ func readBanner(r *http.Request) (bannerIn, error) {
 		EndAt     string `json:"end_at"`
 		Priority  int    `json:"priority"`
 		Target    string `json:"target"`
+		Enabled   *bool  `json:"enabled"`
+		ImageURL  string `json:"image_url"`
+		Frequency string `json:"frequency"`
 		Push      bool   `json:"push"`
 		PushTitle string `json:"push_title"`
 	}
@@ -861,27 +870,48 @@ func readBanner(r *http.Request) (bannerIn, error) {
 	if err1 != nil || err2 != nil || !end.After(start) {
 		return bannerIn{}, biz("展示时间不正确")
 	}
+	imageURL := strings.TrimSpace(req.ImageURL)
+	if err := optionalAssetURL(imageURL); err != nil {
+		return bannerIn{}, err
+	}
+	freq := strings.TrimSpace(req.Frequency)
+	if freq == "" {
+		freq = "every_enter"
+	}
+	if freq != "every_enter" && freq != "daily_once" {
+		return bannerIn{}, biz("展示频率不正确")
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
 	return bannerIn{
 		copy: req.Copy, start: start, end: end, priority: req.Priority, target: req.Target,
+		enabled: enabled, imageURL: imageURL, frequency: freq,
 		push: req.Push, pushTitle: strings.TrimSpace(req.PushTitle),
 	}, nil
 }
 
-func scanBanners(rows interface {
+func scanBanners(r *http.Request, rows interface {
 	Next() bool
 	Scan(...any) error
 }) []map[string]any {
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var copy, target string
+		var copy, target, imageURL, frequency string
 		var start, end time.Time
 		var priority int
-		if err := rows.Scan(&id, &copy, &start, &end, &priority, &target); err != nil {
+		var enabled bool
+		if err := rows.Scan(&id, &copy, &start, &end, &priority, &target, &enabled, &imageURL, &frequency); err != nil {
 			return list
+		}
+		if frequency == "" {
+			frequency = "every_enter"
 		}
 		list = append(list, map[string]any{
 			"id": id, "copy": copy, "start_at": start, "end_at": end, "priority": priority, "target": target,
+			"enabled": enabled, "image_url": emptyAsNil(absoluteAssetURL(r, imageURL)), "frequency": frequency,
 		})
 	}
 	return list

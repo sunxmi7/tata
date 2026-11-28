@@ -154,6 +154,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
+	a.captureRegisterIP(r, id, created)
 	a.applyWeChatProfile(r, id, prof)
 	a.ensureProfileDefaults(r.Context(), id)
 	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
@@ -214,6 +215,7 @@ func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusOK, "注册赠送记录失败")
 		return
 	}
+	a.captureRegisterIP(r, id, created)
 	a.ensureProfileDefaults(r.Context(), id)
 	a.attachDeviceReadings(r.Context(), id, req.DeviceID)
 	a.attachDeviceProfileDraft(r.Context(), id, req.DeviceID)
@@ -2055,64 +2057,6 @@ func (a *App) appUseReward(w http.ResponseWriter, r *http.Request) error {
 		"quota_outcome":   decision.Status,
 		"note":            quotaClosedNote,
 	})
-	return nil
-}
-
-func (a *App) adminListUsers(w http.ResponseWriter, r *http.Request) error {
-	if _, err := a.adminActor(r, false); err != nil {
-		return err
-	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, email, wechat_openid, apple_sub, phone,
-		COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), tarotist_trial_used, tease_off, cancelled_at, created_at,
-		COALESCE(name,''), COALESCE(avatar_url,''), gender, birth_date, COALESCE(explore_preferences,'[]')
-		FROM app_users ORDER BY id DESC LIMIT 200`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	list := []map[string]any{}
-	for rows.Next() {
-		var id int64
-		var email, openid, apple, phone, gender, birth *string
-		var tz, name, avatar, prefs string
-		var trial, tease bool
-		var cancelled *time.Time
-		var created time.Time
-		if err := rows.Scan(&id, &email, &openid, &apple, &phone, &tz, &trial, &tease, &cancelled, &created, &name, &avatar, &gender, &birth, &prefs); err != nil {
-			return err
-		}
-		list = append(list, map[string]any{
-			"id": id, "email": email, "wechat_openid": openid, "apple_sub": apple, "phone": phone,
-			"timezone": tz, "tarotist_trial_used": trial, "tease_off": tease,
-			"cancelled_at": cancelled, "created_at": created,
-			"name": name, "nickname": name, "avatar_url": profileAvatarURL(r, avatar),
-			"gender": gender, "birth_date": birth, "explore_preferences": parseExplorePreferences(prefs),
-		})
-	}
-	writeOK(w, list)
-	return nil
-}
-
-func (a *App) adminListAudit(w http.ResponseWriter, r *http.Request) error {
-	if _, err := a.adminActor(r, false); err != nil {
-		return err
-	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, operator_id, action, object_type, object_id, detail, created_at, actor_kind FROM audit_log ORDER BY id DESC LIMIT 200`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	list := []map[string]any{}
-	for rows.Next() {
-		var id, op int64
-		var action, objectType, objectID, detail, actorKind string
-		var created time.Time
-		if err := rows.Scan(&id, &op, &action, &objectType, &objectID, &detail, &created, &actorKind); err != nil {
-			return err
-		}
-		list = append(list, map[string]any{"id": id, "operator_id": op, "action": action, "object_type": objectType, "object_id": objectID, "detail": detail, "actor_kind": actorKind, "created_at": created})
-	}
-	writeOK(w, list)
 	return nil
 }
 

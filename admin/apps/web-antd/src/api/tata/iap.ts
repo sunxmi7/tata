@@ -32,6 +32,53 @@ export interface IAPOrder {
   verify_message?: string;
   subscription_status?: string | null;
   subscription_expires_at?: string | null;
+  price_amount_minor?: number | null;
+  price_currency?: string | null;
+  price_estimated?: boolean;
+}
+
+export interface IAPOrderQuery {
+  user_id?: number | string;
+  verify_status?: string;
+  platform?: string;
+  sku_code?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminPage<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface IAPRevenue {
+  from: string;
+  to: string;
+  grain: string;
+  revenue_minor: number;
+  paying_users: number;
+  new_users: number;
+  pay_rate: number;
+  by_sku: Array<{
+    sku_code: string;
+    sku_kind: string;
+    orders: number;
+    paying_users: number;
+    revenue_minor: number;
+  }>;
+  series: Array<{
+    bucket: string;
+    orders: number;
+    paying_users: number;
+    revenue_minor: number;
+  }>;
+  amount_basis?: string;
+  currency?: string;
+  notes?: string[];
 }
 
 export interface IAPQuota {
@@ -42,9 +89,32 @@ export interface IAPQuota {
   ledger?: Array<Record<string, unknown>>;
 }
 
-export function listIAPOrders(userId?: string) {
-  const query = userId?.trim() ? `?user_id=${encodeURIComponent(userId.trim())}` : '';
-  return requestClient.get<IAPOrder[]>(`/iap/orders${query}`);
+function toQuery(params?: Record<string, unknown>) {
+  if (!params) return '';
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    sp.set(key, String(value));
+  });
+  const q = sp.toString();
+  return q ? `?${q}` : '';
+}
+
+export function listIAPOrders(params?: IAPOrderQuery | string) {
+  if (typeof params === 'string') {
+    return requestClient.get<AdminPage<IAPOrder>>(
+      `/iap/orders${toQuery({ user_id: params.trim() || undefined })}`,
+    );
+  }
+  return requestClient.get<AdminPage<IAPOrder>>(`/iap/orders${toQuery(params)}`);
+}
+
+export function getIAPRevenue(params?: {
+  from?: string;
+  to?: string;
+  grain?: 'day' | 'week' | 'month';
+}) {
+  return requestClient.get<IAPRevenue>(`/iap/revenue${toQuery(params)}`);
 }
 export function listIAPSkus(kind?: string) {
   const query = kind?.trim() ? `?kind=${encodeURIComponent(kind.trim())}` : '';

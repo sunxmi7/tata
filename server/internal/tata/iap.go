@@ -256,51 +256,98 @@ func (a *App) adminListIAPOrders(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	userID, verify, err := iapOrderFilter(r)
+	filter, err := buildIAPOrderFilter(r)
 	if err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT o.id, o.user_id, o.sku_code, o.sku_kind,
+	page, err := parseAdminPage(r)
+	if err != nil {
+		return err
+	}
+	var total int
+	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM iap_orders o`+filter.where, filter.args...).Scan(&total); err != nil {
+		return err
+	}
+	args := append(append([]any{}, filter.args...), page.Limit, page.Offset)
+	q := `SELECT o.id, o.user_id, o.sku_code, o.sku_kind,
 		o.platform, o.product_id, o.store_transaction_id, o.original_transaction_id,
 		o.verify_status, o.credit_status, o.credited_quota,
 		o.period_start, o.period_end, o.source, o.verify_message, o.created_at, o.verified_at,
-		s.status, s.expires_at, s.sku_kind
+		s.status, s.expires_at, s.sku_kind,
+		o.price_amount_minor, o.price_currency, sk.price_amount_minor, sk.price_currency
 		FROM iap_orders o
 		LEFT JOIN subscriptions s ON s.id = o.subscription_id
-		WHERE ($1 = 0 OR o.user_id = $1) AND ($2 = '' OR o.verify_status = $2)
-		ORDER BY o.id DESC LIMIT 200`, userID, verify)
+		LEFT JOIN iap_skus sk ON sk.id = o.sku_id` + filter.where +
+		fmt.Sprintf(" ORDER BY o.id DESC LIMIT $%d OFFSET $%d", len(filter.args)+1, len(filter.args)+2)
+	rows, err := a.Store.Query(r.Context(), q, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	list := []map[string]any{}
 	for rows.Next() {
-		var id, uid int64
-		var skuCode, skuKind, platform, productID, txn, original string
-		var verifyStatus, creditStatus, source, message string
-		var credited sql.NullInt64
-		var periodStart, periodEnd, verifiedAt sql.NullTime
-		var created time.Time
-		var subStatus, subKind sql.NullString
-		var subExpires sql.NullTime
-		if err := rows.Scan(&id, &uid, &skuCode, &skuKind, &platform, &productID, &txn, &original,
-			&verifyStatus, &creditStatus, &credited, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
-			&subStatus, &subExpires, &subKind); err != nil {
+		item, err := scanAdminIAPOrderRow(rows)
+		if err != nil {
 			return err
 		}
-		list = append(list, map[string]any{
-			"id": id, "user_id": uid, "sku_code": skuCode, "sku_kind": skuKind,
-			"platform": platform, "product_id": productID, "store_transaction_id": txn, "original_transaction_id": original,
-			"verify_status": verifyStatus, "credit_status": creditStatus, "credited_quota": nullInt(credited),
-			"period_start": nullTime(periodStart), "period_end": nullTime(periodEnd),
-			"source": source, "verify_message": message, "created_at": created, "verified_at": nullTime(verifiedAt),
-			"subscription_status": nullString(subStatus), "subscription_expires_at": nullTime(subExpires),
-			"subscription_sku_kind": nullString(subKind),
-			"unit":                  "quota",
+		list = append(list, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeAdminPage(w, list, total, page.Limit, page.Offset)
+	return nil
+}
+
+func (a *App) adminExportIAPOrders(w http.ResponseWriter, r *http.Request) error {
+	act, err := a.adminActor(r, false)
+	if err != nil {
+		return err
+	}
+	filter, err := buildIAPOrderFilter(r)
+	if err != nil {
+		return err
+	}
+	args := append(append([]any{}, filter.args...), 10000)
+	q := `SELECT o.id, o.user_id, o.sku_code, o.sku_kind, o.platform, o.verify_status, o.credit_status,
+		o.created_at, o.verified_at, o.price_amount_minor, o.price_currency, sk.price_amount_minor, sk.price_currency
+		FROM iap_orders o
+		LEFT JOIN iap_skus sk ON sk.id = o.sku_id` + filter.where +
+		fmt.Sprintf(" ORDER BY o.id DESC LIMIT $%d", len(filter.args)+1)
+	rows, err := a.Store.Query(r.Context(), q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	csvRows := [][]string{}
+	for rows.Next() {
+		var id, uid int64
+		var skuCode, skuKind, platform, verifyStatus, creditStatus string
+		var created time.Time
+		var verified sql.NullTime
+		var orderPrice, skuPrice sql.NullInt64
+		var orderCur, skuCur sql.NullString
+		if err := rows.Scan(&id, &uid, &skuCode, &skuKind, &platform, &verifyStatus, &creditStatus,
+			&created, &verified, &orderPrice, &orderCur, &skuPrice, &skuCur); err != nil {
+			return err
+		}
+		item := map[string]any{}
+		attachIAPOrderPrice(item, orderPrice, orderCur, skuPrice, skuCur)
+		csvRows = append(csvRows, []string{
+			strconv.FormatInt(id, 10), strconv.FormatInt(uid, 10), skuCode, skuKind, platform,
+			verifyStatus, creditStatus, created.Format(time.RFC3339), nullCSV(nullTime(verified)),
+			nullCSV(item["price_amount_minor"]), nullCSV(item["price_currency"]),
+			fmt.Sprint(item["price_estimated"]),
 		})
 	}
-	writeOK(w, list)
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	a.Store.audit(r.Context(), act.id, "export", "iap_order", "", fmt.Sprintf("rows=%d", len(csvRows)))
+	return writeCSV(w, "iap_orders.csv", []string{
+		"id", "user_id", "sku_code", "sku_kind", "platform", "verify_status", "credit_status",
+		"created_at", "verified_at", "price_amount_minor", "price_currency", "price_estimated",
+	}, csvRows)
 }
 
 func (a *App) adminListIAPSKUs(w http.ResponseWriter, r *http.Request) error {
@@ -878,9 +925,21 @@ type iapOrderWrite struct {
 func finishIAPOrder(ctx context.Context, tx Tx, orderID int64, w iapOrderWrite) error {
 	var skuID any
 	code, kind := "", ""
+	var price any
+	currency := ""
 	if w.SKU != nil {
 		skuID = w.SKU.ID
 		code, kind = w.SKU.Code, w.SKU.Kind
+		var amount sql.NullInt64
+		var cur sql.NullString
+		_ = tx.QueryRow(ctx, `SELECT price_amount_minor, price_currency FROM iap_skus WHERE id=$1`, w.SKU.ID).Scan(&amount, &cur)
+		if amount.Valid {
+			price = amount.Int64
+			currency = strings.TrimSpace(cur.String)
+			if currency == "" {
+				currency = "CNY"
+			}
+		}
 	}
 	var credited any
 	if w.Credited != nil {
@@ -898,10 +957,13 @@ func finishIAPOrder(ctx context.Context, tx Tx, orderID int64, w iapOrderWrite) 
 		sku_id=$1, sku_code=$2, sku_kind=$3,
 		verify_status=$4, credit_status=$5, credited_quota=$6,
 		period_start=$7, period_end=$8, subscription_id=$9,
-		verify_message=$10, verified_at=$11, updated_at=now()
-		WHERE id=$12`,
+		verify_message=$10, verified_at=$11,
+		price_amount_minor=COALESCE($12, price_amount_minor),
+		price_currency=CASE WHEN $12 IS NULL THEN price_currency ELSE $13 END,
+		updated_at=now()
+		WHERE id=$14`,
 		skuID, code, kind, w.VerifyStatus, w.CreditStatus, credited,
-		w.PeriodStart, w.PeriodEnd, subID, w.Message, verifiedAt, orderID)
+		w.PeriodStart, w.PeriodEnd, subID, w.Message, verifiedAt, price, currency, orderID)
 	return err
 }
 
@@ -1186,6 +1248,122 @@ func loadIAPSettings(ctx context.Context, q rowQuery) (bool, bool, error) {
 		return true, false, nil
 	}
 	return hook, required, err
+}
+
+type iapOrderListFilter struct {
+	where string
+	args  []any
+}
+
+func buildIAPOrderFilter(r *http.Request) (iapOrderListFilter, error) {
+	f := iapOrderListFilter{where: " WHERE 1=1", args: []any{}}
+	add := func(cond string, v any) {
+		f.args = append(f.args, v)
+		f.where += fmt.Sprintf(" AND %s $%d", cond, len(f.args))
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("user_id")); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			return iapOrderListFilter{}, biz("用户 id 不正确")
+		}
+		add("o.user_id =", id)
+	}
+	verify := strings.TrimSpace(r.URL.Query().Get("verify_status"))
+	switch verify {
+	case "", "pending", iapVerifyVerified, iapVerifyFailed:
+		if verify != "" {
+			add("o.verify_status =", verify)
+		}
+	default:
+		return iapOrderListFilter{}, biz("验单状态不正确")
+	}
+	if platform := strings.TrimSpace(r.URL.Query().Get("platform")); platform != "" {
+		if platform != iapPlatformAppStore && platform != iapPlatformPlay {
+			return iapOrderListFilter{}, biz("平台不正确")
+		}
+		add("o.platform =", platform)
+	}
+	if sku := strings.TrimSpace(r.URL.Query().Get("sku_code")); sku != "" {
+		add("o.sku_code =", sku)
+	}
+	from, to, err := parseTimeRange(r, "from", "to")
+	if err != nil {
+		return iapOrderListFilter{}, err
+	}
+	if from != nil {
+		add("o.created_at >=", *from)
+	}
+	if to != nil {
+		add("o.created_at <=", *to)
+	}
+	return f, nil
+}
+
+func scanAdminIAPOrderRow(rows *sql.Rows) (map[string]any, error) {
+	var id, uid int64
+	var skuCode, skuKind, platform, productID, txn, original string
+	var verifyStatus, creditStatus, source, message string
+	var credited sql.NullInt64
+	var periodStart, periodEnd, verifiedAt sql.NullTime
+	var created time.Time
+	var subStatus, subKind sql.NullString
+	var subExpires sql.NullTime
+	var orderPrice, skuPrice sql.NullInt64
+	var orderCur, skuCur sql.NullString
+	if err := rows.Scan(&id, &uid, &skuCode, &skuKind, &platform, &productID, &txn, &original,
+		&verifyStatus, &creditStatus, &credited, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
+		&subStatus, &subExpires, &subKind,
+		&orderPrice, &orderCur, &skuPrice, &skuCur); err != nil {
+		return nil, err
+	}
+	item := map[string]any{
+		"id": id, "user_id": uid, "sku_code": skuCode, "sku_kind": skuKind,
+		"platform": platform, "product_id": productID, "store_transaction_id": txn, "original_transaction_id": original,
+		"verify_status": verifyStatus, "credit_status": creditStatus, "credited_quota": nullInt(credited),
+		"period_start": nullTime(periodStart), "period_end": nullTime(periodEnd),
+		"source": source, "verify_message": message, "created_at": created, "verified_at": nullTime(verifiedAt),
+		"subscription_status": nullString(subStatus), "subscription_expires_at": nullTime(subExpires),
+		"subscription_sku_kind": nullString(subKind),
+		"unit":                  "quota",
+	}
+	attachIAPOrderPrice(item, orderPrice, orderCur, skuPrice, skuCur)
+	return item, nil
+}
+
+func scanIAPOrderPriceRow(rows *sql.Rows) (map[string]any, error) {
+	var id int64
+	var skuCode, verifyStatus, creditStatus, platform string
+	var created time.Time
+	var orderPrice, skuPrice sql.NullInt64
+	var orderCur, skuCur sql.NullString
+	if err := rows.Scan(&id, &skuCode, &verifyStatus, &creditStatus, &platform, &created,
+		&orderPrice, &orderCur, &skuPrice, &skuCur); err != nil {
+		return nil, err
+	}
+	item := map[string]any{
+		"id": id, "sku_code": skuCode, "verify_status": verifyStatus, "credit_status": creditStatus,
+		"platform": platform, "created_at": created,
+	}
+	attachIAPOrderPrice(item, orderPrice, orderCur, skuPrice, skuCur)
+	return item, nil
+}
+
+func attachIAPOrderPrice(item map[string]any, orderPrice sql.NullInt64, orderCur sql.NullString, skuPrice sql.NullInt64, skuCur sql.NullString) {
+	if orderPrice.Valid {
+		item["price_amount_minor"] = orderPrice.Int64
+		item["price_currency"] = nullString(orderCur)
+		item["price_estimated"] = false
+		return
+	}
+	if skuPrice.Valid {
+		item["price_amount_minor"] = skuPrice.Int64
+		item["price_currency"] = nullString(skuCur)
+		item["price_estimated"] = true
+		return
+	}
+	item["price_amount_minor"] = nil
+	item["price_currency"] = nil
+	item["price_estimated"] = false
 }
 
 func iapOrderFilter(r *http.Request) (int64, string, error) {

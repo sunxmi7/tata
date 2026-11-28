@@ -292,12 +292,23 @@ func list(t *testing.T, ts *httptest.Server, token, path string) []map[string]an
 	t.Helper()
 	raw := get(t, ts, token, path)
 	var env struct {
-		Data []map[string]any `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatal(err, string(raw))
 	}
-	return env.Data
+	var arr []map[string]any
+	if err := json.Unmarshal(env.Data, &arr); err == nil {
+		return arr
+	}
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(env.Data, &page); err == nil {
+		return page.Items
+	}
+	t.Fatalf("list data: %s", env.Data)
+	return nil
 }
 
 func listOne(t *testing.T, ts *httptest.Server, token, path string) map[string]any {
