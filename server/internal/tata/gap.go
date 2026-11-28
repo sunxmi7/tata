@@ -163,9 +163,7 @@ func (a *App) appWechat(w http.ResponseWriter, r *http.Request) {
 	a.bindInvite(r.Context(), id, req.DeviceID, req.InviteCode, req.InviteSource)
 	access, _ := a.signAccess("app", id, "")
 	settled := a.settleQuestionStart(r, id)
-	// login=wechat mirrors email/apple so clients that branch on data.login do not treat
-	// a successful wechat session as a decode miss (accessToken/id unchanged).
-	writeOK(w, map[string]any{"accessToken": access, "id": id, "login": "wechat", "reward_consumed": settled, "reward_note": T(r.Context(), wechatQuotaNote)})
+	writeOK(w, map[string]any{"accessToken": access, "id": id, "reward_consumed": settled, "reward_note": T(r.Context(), wechatQuotaNote)})
 }
 
 func (a *App) appApple(w http.ResponseWriter, r *http.Request) {
