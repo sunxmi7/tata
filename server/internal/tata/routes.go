@@ -179,6 +179,12 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/deck-shop", a.h(a.appDeckShop))
 	mux.HandleFunc("GET /api/app/v1/deck-preference", a.h(a.appGetDeckPreference))
 	mux.HandleFunc("PUT /api/app/v1/deck-preference", a.h(a.appPutDeckPreference))
+	// App IAP：权益/商品/验单（eefe8bd 去匿名时误下线路由；处理函数一直在）
+	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
+	mux.HandleFunc("POST /api/app/v1/iap/restore", a.h(a.appIAPRestore))
+	mux.HandleFunc("GET /api/app/v1/iap/entitlements", a.h(a.appIAPEntitlements))
+	mux.HandleFunc("GET /api/app/v1/iap/skus", a.h(a.appIAPSKUs))
+	mux.HandleFunc("GET /api/app/v1/iap/config", a.h(a.appIAPConfig))
 	mux.HandleFunc("POST /api/app/v1/redeem", a.h(a.appRedeem))
 	mux.HandleFunc("POST /api/app/v1/uploads", a.h(a.appUploads))
 	mux.HandleFunc("GET /uploads/{name...}", a.serveUpload)

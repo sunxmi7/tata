@@ -81,7 +81,9 @@ tags:
   - name: 塔塔币购买
     description: 这期没有购买和额度流水接口。塔塔币包已下线。剩余额度看 GET /quota。
   - name: 会员中心
-    description: 这期没有验单、商品列表和付费墙。会员身份和剩余额度看 GET /quota。
+    description: |
+      会员身份与到期：GET /iap/entitlements（与 GET /quota 的 is_member / membership 一致）。
+      额度余额仍看 GET /quota。验单/商品列表/恢复购买路由已恢复挂载，供商店购买链路使用。
   - name: 兑换码
     description: 兑换码核销与兑换记录。邀请码也在这个页面提交。记录行字段 fields_confirmed=false，不编造记录。
   - name: 参与活动
@@ -962,6 +964,69 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/QuotaView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/app/v1/iap/entitlements:
+    get:
+      tags: [我的中心, 会员中心]
+      operationId: appIAPEntitlements
+      summary: 当前会员权益
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+      description: |
+        必须登录。返回当前有效会员权益摘要，与 GET /quota 的 is_member / membership 同源（loadActiveMembership）。
+        兑换月卡/年卡或商店入账后，「我的」页应以此接口取 sku_kind、type_label、expires_at；勿在 404/失败时强制当非会员。
+        非会员：is_member=false，membership / subscription 为 null，不返回额度余额。
+        会员：membership 与 subscription 为同一对象；含 sku_kind（month|year）、status=active、expires_at、type_label、auto_renew。
+      responses:
+        '200':
+          description: data 为 IAPEntitlementsView。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessMeta'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IAPEntitlementsView'
+              examples:
+                月卡会员:
+                  summary: 兑换月卡后
+                  value:
+                    code: 0
+                    message: ''
+                    data:
+                      is_member: true
+                      can_buy_pack: true
+                      unit: quota
+                      display_label: 额度
+                      quota_remaining: 0
+                      balance: 0
+                      membership:
+                        sku_kind: month
+                        status: active
+                        expires_at: '2026-12-28T12:52:00Z'
+                        auto_renew: null
+                        type_label: 月度会员
+                      subscription:
+                        sku_kind: month
+                        status: active
+                        expires_at: '2026-12-28T12:52:00Z'
+                        auto_renew: null
+                        type_label: 月度会员
+                非会员:
+                  summary: 无有效订阅
+                  value:
+                    code: 0
+                    message: ''
+                    data:
+                      is_member: false
+                      can_buy_pack: false
+                      unit: quota
+                      display_label: 额度
+                      membership: null
+                      subscription: null
         '401':
           $ref: '#/components/responses/Unauthorized'
   /api/app/v1/readings:
@@ -3880,7 +3945,8 @@ components:
           type: integer
           description: 会员统一额度。免费用户不返回。
         membership:
-          type: object
+          allOf:
+            - $ref: '#/components/schemas/MembershipSummary'
           description: 当前会员摘要。非会员为 null 或不出现。
         admin_grant_free_remaining:
           type: integer
@@ -5226,6 +5292,62 @@ components:
           maxItems: 20
           items:
             $ref: '#/components/schemas/IAPVerifyBody'
+    MembershipSummary:
+      type: object
+      nullable: true
+      description: |
+        当前有效会员摘要。来自 subscriptions 表 active 且未过期记录。
+        sku_kind 为 month / year（不是 month_subscription / year_subscription）。
+      properties:
+        sku_kind:
+          type: string
+          enum: [month, year]
+          description: 会员档位。month=月卡，year=年卡。
+        status:
+          type: string
+          example: active
+          description: 有效时为 active。
+        expires_at:
+          type: string
+          format: date-time
+          description: 到期时间（RFC3339）。
+        auto_renew:
+          type: boolean
+          nullable: true
+          description: 是否自动续订。兑换码开通时多为 null。
+        type_label:
+          type: string
+          example: 月度会员
+          description: UI 展示名。month→月度会员，year→年度会员。
+    IAPEntitlementsView:
+      type: object
+      description: |
+        GET /iap/entitlements 响应 data。与 GET /quota 的会员字段同源。
+        非会员不返回 quota_remaining / balance。
+      properties:
+        is_member:
+          type: boolean
+          description: 当前是否有效会员。
+        can_buy_pack:
+          type: boolean
+          description: 是否可买额度补充包。仅会员为 true。
+        unit:
+          type: string
+          example: quota
+        display_label:
+          type: string
+          example: 额度
+        quota_remaining:
+          type: integer
+          description: 会员统一额度。非会员不返回。
+        balance:
+          type: integer
+          description: 同 quota_remaining。非会员不返回。
+        membership:
+          $ref: '#/components/schemas/MembershipSummary'
+        subscription:
+          $ref: '#/components/schemas/MembershipSummary'
+          description: 与 membership 同一对象，兼容旧字段名。
     IAPSubscription:
       type: object
       nullable: true
@@ -5236,7 +5358,7 @@ components:
         sku_kind:
           type: string
           nullable: true
-          description: 当前订阅 SKU 种类，如 year_subscription。
+          description: 当前订阅档位 month / year（验单快照里也可能是商品 kind）。
         expires_at:
           type: string
           format: date-time

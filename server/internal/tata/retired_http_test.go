@@ -11,7 +11,9 @@ import (
 	"testing"
 )
 
-// 这些路径已从服务端拿掉。测试仍直接调用原来的处理函数，避免把额度和验单的既有校验一起拆掉。
+// 这些路径已从服务端拿掉（自定义牌组、旧 reading 扣费步等）。
+// 测试仍直接调用原来的处理函数，避免把既有校验一起拆掉。
+// App IAP（entitlements/skus/verify/restore/config）已重新挂回 mux，不再走这里。
 var liveTestApps sync.Map
 
 func rememberTestApp(url string, app *App, t *testing.T) {
@@ -35,16 +37,6 @@ func dispatchRetired(app *App, method, rawPath string, body []byte, token string
 	switch {
 	case method == http.MethodGet && path == "/api/app/v1/wallet/ledger":
 		fn = app.appWalletLedger
-	case method == http.MethodPost && path == "/api/app/v1/iap/verify":
-		fn = app.appIAPVerify
-	case method == http.MethodPost && path == "/api/app/v1/iap/restore":
-		fn = app.appIAPRestore
-	case method == http.MethodGet && path == "/api/app/v1/iap/entitlements":
-		fn = app.appIAPEntitlements
-	case method == http.MethodGet && path == "/api/app/v1/iap/skus":
-		fn = app.appIAPSKUs
-	case method == http.MethodGet && path == "/api/app/v1/iap/config":
-		fn = app.appIAPConfig
 	case method == http.MethodGet && path == "/api/app/v1/custom-decks":
 		fn = app.appListCustomDecks
 	case method == http.MethodPost && path == "/api/app/v1/custom-decks":

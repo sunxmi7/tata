@@ -108,6 +108,42 @@ func TestIAPVerifyCreditsDiamondsAndIgnoresFreeQuota(t *testing.T) {
 	}
 }
 
+func TestIAPEntitlementsMatchesQuotaForMember(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	token, uid := registerUser(t, ts, store, "iap-ent")
+	month := create(t, ts, admin.access, "/api/admin/v1/redeem-codes", map[string]any{
+		"sku_code": "sub_month", "count": 1, "max_redemptions": 1,
+	})
+	code := month["items"].([]any)[0].(map[string]any)["code"].(string)
+	redeemed := create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": code})
+	if redeemed["kind"] != "month_subscription" {
+		t.Fatalf("redeem: %#v", redeemed)
+	}
+	quota := listOne(t, ts, token, "/api/app/v1/quota")
+	ent := listOne(t, ts, token, "/api/app/v1/iap/entitlements")
+	if quota["is_member"] != true || ent["is_member"] != true {
+		t.Fatalf("member flags quota=%#v ent=%#v uid=%d", quota, ent, uid)
+	}
+	qm, _ := quota["membership"].(map[string]any)
+	em, _ := ent["membership"].(map[string]any)
+	es, _ := ent["subscription"].(map[string]any)
+	if qm == nil || em == nil || es == nil {
+		t.Fatalf("membership missing quota=%#v ent=%#v", quota, ent)
+	}
+	for _, key := range []string{"sku_kind", "status", "expires_at", "type_label"} {
+		if qm[key] != em[key] || em[key] != es[key] {
+			t.Fatalf("%s mismatch quota=%#v ent.membership=%#v ent.subscription=%#v", key, qm, em, es)
+		}
+	}
+	if em["sku_kind"] != "month" || em["status"] != "active" || em["type_label"] != "月度会员" {
+		t.Fatalf("month membership: %#v", em)
+	}
+	if quota["quota_remaining"] != ent["quota_remaining"] || quota["balance"] != ent["balance"] {
+		t.Fatalf("balance mismatch quota=%#v ent=%#v", quota, ent)
+	}
+}
+
 func TestIAPDuplicateTransactionDoesNotDoubleCredit(t *testing.T) {
 	store, ts := newMergeServer(t)
 	email := fmt.Sprintf("iap-idem-%d@tata.local", time.Now().UnixNano())
