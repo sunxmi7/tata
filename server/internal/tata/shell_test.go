@@ -19,9 +19,11 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	profile := listOne(t, ts, token, "/api/app/v1/profile")
 	name, _ := profile["name"].(string)
 	email, _ := profile["email"].(string)
-	wantNick := nicknameFromEmailLocal(email)
-	if name == "" || name != wantNick || profile["nickname"] != name {
-		t.Fatalf("email prefix nickname: %#v want %q", profile, wantNick)
+	if name == "" || !validGeneratedNickname(name) || profile["nickname"] != name {
+		t.Fatalf("random chinese nickname: %#v", profile)
+	}
+	if strings.HasPrefix(name, "Tarot") {
+		t.Fatalf("must not use Tarot+email prefix: %q", name)
 	}
 	avatar, _ := profile["avatar_url"].(string)
 	if !strings.Contains(avatar, defaultAvatarName) || profile["bio"] != "" {

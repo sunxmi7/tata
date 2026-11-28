@@ -23,26 +23,6 @@ func TestRandomNicknameRules(t *testing.T) {
 	}
 }
 
-func TestNicknameFromEmailLocal(t *testing.T) {
-	if got := nicknameFromEmailLocal("Demo.User+tag@tata.local"); got != "Tarotdemousertag" {
-		t.Fatalf("sanitize: %q", got)
-	}
-	if got := nicknameFromEmailLocal("alice_bob-1@tata.local"); got != "Tarotalice_bob-1" {
-		t.Fatalf("keep _-: %q", got)
-	}
-	if got := nicknameFromEmailLocal("!!!@tata.local"); got != "" {
-		t.Fatalf("empty local: %q", got)
-	}
-	if got := nicknameFromEmailLocal("@tata.local"); got != "" {
-		t.Fatalf("missing local: %q", got)
-	}
-	long := strings.Repeat("a", 40) + "@tata.local"
-	got := nicknameFromEmailLocal(long)
-	if !strings.HasPrefix(got, "Tarot") || utf8.RuneCountInString(got) != 32 {
-		t.Fatalf("truncate: %q len=%d", got, utf8.RuneCountInString(got))
-	}
-}
-
 func TestEmailProfileDefaults(t *testing.T) {
 	store, ts := newMergeServer(t)
 	email := fmt.Sprintf("nick.user+%d@tata.local", time.Now().UnixNano())
@@ -51,9 +31,11 @@ func TestEmailProfileDefaults(t *testing.T) {
 	token := session["accessToken"].(string)
 	profile := listOne(t, ts, token, "/api/app/v1/profile")
 	name, _ := profile["name"].(string)
-	want := nicknameFromEmailLocal(email)
-	if name != want || profile["nickname"] != name {
-		t.Fatalf("email prefix nickname: got %#v want %q", profile, want)
+	if name == "" || !validGeneratedNickname(name) || profile["nickname"] != name {
+		t.Fatalf("email random nickname: %#v", profile)
+	}
+	if strings.HasPrefix(name, "Tarot") {
+		t.Fatalf("must not use Tarot+email prefix: %q", name)
 	}
 	avatar, _ := profile["avatar_url"].(string)
 	if !strings.Contains(avatar, defaultAvatarName) {
@@ -86,5 +68,37 @@ func TestEmailProfileDefaults(t *testing.T) {
 	kept := listOne(t, ts, token, "/api/app/v1/profile")
 	if kept["name"] != "自己取名" {
 		t.Fatalf("defaults overwrote nickname: %#v", kept)
+	}
+}
+
+func TestEmailNicknamesVaryAcrossAccounts(t *testing.T) {
+	store, ts := newMergeServer(t)
+	seen := map[string]bool{}
+	for i := 0; i < 8; i++ {
+		email := fmt.Sprintf("vary%d+%d@tata.local", i, time.Now().UnixNano())
+		otp := sendEmailCode(t, ts, "", email, "login")
+		session := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{"email": email, "code": otp})
+		profile := listOne(t, ts, session["accessToken"].(string), "/api/app/v1/profile")
+		name, _ := profile["name"].(string)
+		if !validGeneratedNickname(name) {
+			t.Fatalf("invalid: %#v", profile)
+		}
+		seen[name] = true
+		_ = store
+	}
+	if len(seen) < 3 {
+		t.Fatalf("expected variety across accounts, got %d unique: %#v", len(seen), seen)
+	}
+}
+
+func TestValidGeneratedNicknameRejectsBad(t *testing.T) {
+	if validGeneratedNickname("塔") || validGeneratedNickname("这是七个汉字名") {
+		t.Fatal("length")
+	}
+	if validGeneratedNickname("Tarot星") {
+		t.Fatal("latin")
+	}
+	if utf8.RuneCountInString("星河旅人") != 4 {
+		t.Fatal("fixture")
 	}
 }

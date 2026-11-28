@@ -15,19 +15,28 @@ var nickHeads = []string{
 	"星轨", "夜雾", "好运", "星河", "命运", "未知", "塔罗", "宇宙",
 	"月光", "银星", "雾海", "灵光", "晚风", "静夜", "微光", "远星",
 	"暗涌", "轻尘", "牌缘", "探路", "拾光", "星尘", "夜航", "流星",
-	"潮汐", "星湾", "晴夜", "牌阵", "夜色", "星途",
+	"潮汐", "星湾", "晴夜", "牌阵", "夜色", "星途", "奇遇", "迷途",
+	"寻迹", "星澜", "雾灯", "牌影", "探星", "夜湾", "轻航", "星屿",
+	"月湾", "远航", "灵迹", "牌途", "晴湾", "夜灯",
 }
 
 var nickTails2 = []string{
 	"旅人", "探客", "牌客", "行者", "漫游", "拾光", "星客", "旅伴", "过客", "寻光",
+	"行客", "游人", "牌友", "星伴", "探友", "夜客",
 }
 
 var nickTails3 = []string{
 	"探索家", "占卜人", "探路人", "星旅人", "漫游者", "拾光者", "寻路人",
+	"观星人", "抽牌人", "探星客", "夜行人",
 }
 
 var nickTails4 = []string{
-	"星空旅人", "命运行者", "探牌旅人", "宇宙旅人",
+	"星空旅人", "命运行者", "探牌旅人", "宇宙旅人", "好运旅人", "未知行者",
+}
+
+// 生成结果若含这些子串则丢弃（词库本身已规避；作防线）。
+var nickBanned = []string{
+	"傻逼", "去死", "操你", "贱", "色情", "约炮", "鸡巴", "乳头",
 }
 
 func randomNickname() string {
@@ -62,6 +71,11 @@ func validGeneratedNickname(nick string) bool {
 			return false
 		}
 	}
+	for _, bad := range nickBanned {
+		if strings.Contains(nick, bad) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -76,56 +90,18 @@ func randN(n int) int {
 	return int(binary.BigEndian.Uint64(buf[:]) % uint64(n))
 }
 
-// nicknameFromEmailLocal builds a display name from the email local-part (before @).
-// Keeps letters, digits, underscore and hyphen; trims to 32 runes. Empty if unusable.
-func nicknameFromEmailLocal(email string) string {
-	email = strings.TrimSpace(strings.ToLower(email))
-	at := strings.Index(email, "@")
-	if at <= 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range email[:at] {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(r)
-		}
-	}
-	local := strings.Trim(b.String(), "-_")
-	if local == "" {
-		return ""
-	}
-	// "Tarot" + local-part; keep total within profile nickname limit (32 runes).
-	const prefix = "Tarot"
-	maxLocal := 32 - len([]rune(prefix))
-	runes := []rune(local)
-	if maxLocal < 1 {
-		return prefix
-	}
-	if len(runes) > maxLocal {
-		local = string(runes[:maxLocal])
-	}
-	return prefix + local
-}
-
 func (a *App) ensureProfileDefaults(ctx context.Context, uid int64) {
 	if a == nil || a.Store == nil || uid <= 0 {
 		return
 	}
-	var name, email string
-	if err := a.Store.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(email,'') FROM app_users WHERE id=$1`, uid).Scan(&name, &email); err != nil {
+	var name string
+	if err := a.Store.QueryRow(ctx, `SELECT COALESCE(name,'') FROM app_users WHERE id=$1`, uid).Scan(&name); err != nil {
 		return
 	}
 	if strings.TrimSpace(name) != "" {
 		return
 	}
-	// Email accounts: prefer sanitized local-part; never overwrite an existing nickname.
-	if nick := nicknameFromEmailLocal(email); nick != "" {
-		_, _ = a.Store.Exec(ctx, `UPDATE app_users SET name=$1 WHERE id=$2 AND name=''`, nick, uid)
-		return
-	}
+	// 非微信空昵称：词库随机 4–6 汉字；微信登录/绑定会先写入微信昵称，不会走到这里覆盖。
 	_ = a.assignRandomNickname(ctx, uid)
 }
 

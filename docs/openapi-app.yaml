@@ -4029,7 +4029,7 @@ components:
           description: IANA 时区，默认 Asia/Shanghai。影响业务日与今日免费重置。
         name:
           type: string
-          description: 昵称。微信登录优先微信昵称；邮箱登录默认为 `Tarot`+邮箱 @ 前本地部分（清洗非法字符，总长≤32）；苹果等无邮箱时生成 4–6 个汉字随机昵称。已有昵称不覆盖，可自行修改。
+          description: 昵称。微信登录优先微信昵称；非微信（邮箱/苹果等）默认 4–6 个汉字随机昵称（塔罗/命运/宇宙/好运/探索/未知主题，常用字）。已有昵称不覆盖，可自行修改。
         nickname:
           type: string
           description: 与 name 相同。账号页展示昵称。
