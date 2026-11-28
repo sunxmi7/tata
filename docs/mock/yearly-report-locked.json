@@ -1,0 +1,68 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "year": 2026,
+    "unlocked": false,
+    "unlock_source": "",
+    "year_member_unlocks": true,
+    "unlock_price_minor": 2880,
+    "unlock_price_currency": "CNY",
+    "standalone_purchase": true,
+    "content_status": "ready",
+    "theme": "这一年的主题，是把「想清楚」慢慢落到「做得到」。你会更频繁地面对选择：留下什么、放下什么、把精力投向哪里。",
+    "domain": "感情、事业与自我成长会轮流成为主线。关系里更需要说清楚期待；工作上适合做可验证的小推进，而不是一次押上全部。",
+    "rhythm": "上半年偏探索与铺垫，下半年更考验耐心与节奏。春夏适合试错，秋冬适合复盘与收束。",
+    "action": "每月留一次认真提问的时间；把模糊不安写成具体问题；用小行动验证判断，而不是反复空转。",
+    "sections": [
+      {
+        "key": "theme",
+        "title": "主题",
+        "body": "这一年的主题，是把「想清楚」慢慢落到「做得到」。你会更频繁地面对选择：留下什么、放下什么、把精力投向哪里。",
+        "content_status": "ready"
+      },
+      {
+        "key": "domain",
+        "title": "领域",
+        "body": "感情、事业与自我成长会轮流成为主线。关系里更需要说清楚期待；工作上适合做可验证的小推进，而不是一次押上全部。",
+        "content_status": "ready"
+      },
+      {
+        "key": "rhythm",
+        "title": "节奏",
+        "body": "上半年偏探索与铺垫，下半年更考验耐心与节奏。春夏适合试错，秋冬适合复盘与收束。",
+        "content_status": "ready"
+      },
+      {
+        "key": "action",
+        "title": "行动",
+        "body": "每月留一次认真提问的时间；把模糊不安写成具体问题；用小行动验证判断，而不是反复空转。",
+        "content_status": "ready"
+      }
+    ],
+    "fields_confirmed": true,
+    "content_invented": false,
+    "step": "locked",
+    "profile": {
+      "birth_date": null,
+      "birth_time": null,
+      "birth_place": null,
+      "gender": null,
+      "completed": false
+    },
+    "rhythm_cards": [],
+    "house_cards": [],
+    "domain_cards": [],
+    "season_cards": [],
+    "report": null,
+    "report_status": "pending",
+    "fail_reason": null,
+    "generated_at": null,
+    "steps": [
+      { "key": "profile", "title": "填写基本信息", "done": false, "required": 0, "drawn": 0 },
+      { "key": "rhythm", "title": "抽取十二宫牌阵", "done": false, "required": 12, "drawn": 0 },
+      { "key": "domains", "title": "抽取四季牌阵", "done": false, "required": 4, "drawn": 0 },
+      { "key": "generate", "title": "生成年度报告", "done": false, "required": 0, "drawn": 0 }
+    ]
+  }
+}

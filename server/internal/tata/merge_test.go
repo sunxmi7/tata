@@ -40,7 +40,7 @@ func TestDecideSubscriptions(t *testing.T) {
 	}
 }
 
-func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
+func TestAccountsStayIndependent(t *testing.T) {
 	store, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	stamp := time.Now().UnixNano()
@@ -51,207 +51,49 @@ func TestMergeConfirmAddsBalancesAndKeepsHistory(t *testing.T) {
 	idA := userIDByEmail(t, store, emailA)
 	idB := userIDByEmail(t, store, emailB)
 	openID := fmt.Sprintf("wx-merge-%d", stamp)
-	phone := fmt.Sprintf("13%09d", stamp%1_000_000_000)
-	apple := fmt.Sprintf("apple-merge-%d", stamp)
-	if _, err := store.Exec(t.Context(), `UPDATE app_users SET wechat_openid=$1, phone=$2, apple_sub=$3 WHERE id=$4`, openID, phone, apple, idB); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET wechat_openid=$1 WHERE id=$2`, openID, idB); err != nil {
 		t.Fatal(err)
 	}
-	later := time.Now().Add(30 * 24 * time.Hour).UTC()
-	sooner := time.Now().Add(10 * 24 * time.Hour).UTC()
-	var subA, subB int64
-	if err := store.QueryRow(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at) VALUES ($1,'year','active',now(),$2) RETURNING id`, idA, later).Scan(&subA); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.QueryRow(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at) VALUES ($1,'month','active',now(),$2) RETURNING id`, idB, sooner).Scan(&subB); err != nil {
-		t.Fatal(err)
-	}
-	readingA := insertReadingWithMessage(t, store, idA, "问题甲", "消息甲")
 	readingB := insertReadingWithMessage(t, store, idB, "问题乙", "消息乙")
-	if _, err := store.Exec(t.Context(), `INSERT INTO ledger(user_id, reading_id, entitlement, amount, reason, result) VALUES ($1,$2,'registration_reward',1,'甲侧流水','consumed'),($3,$4,'daily_free',1,'乙侧流水','consumed')`, idA, readingA, idB, readingB); err != nil {
+	setQuota(t, store, idA, 7)
+	setQuota(t, store, idB, 4)
+
+	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
+	if !strings.Contains(msg, "已绑定其他账号") {
+		t.Fatalf("bind occupied: %s %s", msg, raw)
+	}
+	var requests int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM account_merge_requests WHERE primary_user_id=$1 OR secondary_user_id=$2`, idA, idB).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
-
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]any{"code": openID, "confirm": true})
-	if !strings.Contains(msg, "请求字段不正确") {
-		t.Fatalf("confirm flag on bind must not be accepted: %s %s", msg, raw)
+	if requests != 0 {
+		t.Fatalf("merge request created: %d", requests)
 	}
 	assertNotMerged(t, store, idA, idB, readingB)
-
-	msg, raw = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
-	conflict := decodeConflict(t, msg, raw)
-	if conflict.MergeRequestID == 0 || conflict.PrimaryUserID != float64(idA) || conflict.SecondaryUserID != float64(idB) || conflict.Merged || !conflict.ConfirmRequired {
-		t.Fatalf("conflict payload: %+v", conflict)
+	if quotaOf(t, store, idA) != 7 || quotaOf(t, store, idB) != 4 {
+		t.Fatalf("balances moved: %d %d", quotaOf(t, store, idA), quotaOf(t, store, idB))
 	}
-	msg, raw = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
-	again := decodeConflict(t, msg, raw)
-	if again.MergeRequestID != conflict.MergeRequestID {
-		t.Fatalf("second conflict created another request: %v vs %v", again.MergeRequestID, conflict.MergeRequestID)
+	msg, _ = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": 1, "confirm": true})
+	if !strings.Contains(msg, "不提供账号合并") {
+		t.Fatalf("confirm: %s", msg)
 	}
-	var pending int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM account_merge_requests WHERE id=$1 AND status='pending_confirm'`, int64(conflict.MergeRequestID)).Scan(&pending); err != nil || pending != 1 {
-		t.Fatalf("pending request: %d %v", pending, err)
+	msg, _ = call(t, ts, admin.access, http.MethodGet, "/api/admin/v1/account-merges", nil)
+	if !strings.Contains(msg, "不提供账号合并") {
+		t.Fatalf("admin list: %s", msg)
 	}
-	assertNotMerged(t, store, idA, idB, readingB)
-	var mergeAudits int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM audit_log WHERE action='account_merge' AND detail LIKE $1`, fmt.Sprintf("%%\"secondary_user_id\":%d%%", idB)).Scan(&mergeAudits); err != nil {
+	if msg, _ = call(t, ts, tokenB, http.MethodGet, "/api/app/v1/profile", nil); msg != "" {
+		t.Fatalf("other account locked: %s", msg)
+	}
+	var still *string
+	if err := store.QueryRow(t.Context(), `SELECT wechat_openid FROM app_users WHERE id=$1`, idB).Scan(&still); err != nil {
 		t.Fatal(err)
 	}
-	if mergeAudits != 0 {
-		t.Fatal("conflict wrote a merge audit")
-	}
-
-	msg, _ = call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": false})
-	if !strings.Contains(msg, "未确认") {
-		t.Fatalf("false confirm: %s", msg)
-	}
-	assertNotMerged(t, store, idA, idB, readingB)
-
-	msg, _ = call(t, ts, tokenB, http.MethodPost, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	if !strings.Contains(msg, "只能确认自己发起的合并") {
-		t.Fatalf("secondary confirm: %s", msg)
-	}
-	assertNotMerged(t, store, idA, idB, readingB)
-
-	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	assertMergeOutcome(t, merged, idA, idB, 2, 2, 0, false)
-	if merged["identity_prompt_required"] != true {
-		t.Fatalf("both emails should be retained for a client prompt: %#v", merged["retained_identities"])
-	}
-	againMerged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	if againMerged["reward_remaining"].(float64) != 2 {
-		t.Fatalf("second confirm changed balances: %#v", againMerged)
-	}
-	must(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
-	var rewardLeft int
-	if err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, idA).Scan(&rewardLeft); err != nil {
-		t.Fatal(err)
-	}
-	if rewardLeft != 2 {
-		t.Fatalf("rebind/repeat bind changed reward remaining: %d", rewardLeft)
-	}
-
-	var ownerA, ownerB int64
-	if err := store.QueryRow(t.Context(), `SELECT user_id FROM readings WHERE id=$1`, readingA).Scan(&ownerA); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.QueryRow(t.Context(), `SELECT user_id FROM readings WHERE id=$1`, readingB).Scan(&ownerB); err != nil {
-		t.Fatal(err)
-	}
-	if ownerA != idA || ownerB != idA {
-		t.Fatalf("readings owners %d %d, want primary %d", ownerA, ownerB, idA)
-	}
-	var secondaryReadings int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM readings WHERE user_id=$1`, idB).Scan(&secondaryReadings); err != nil {
-		t.Fatal(err)
-	}
-	if secondaryReadings != 0 {
-		t.Fatalf("secondary still owns readings: %d", secondaryReadings)
-	}
-	messages := list(t, ts, tokenA, fmt.Sprintf("/api/app/v1/readings/%d/messages", readingB))
-	if len(messages) != 1 || messages[0]["content"] != "消息乙" {
-		t.Fatalf("secondary messages not readable by primary: %#v", messages)
-	}
-	var messageCount int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM reading_messages WHERE reading_id IN ($1,$2)`, readingA, readingB).Scan(&messageCount); err != nil {
-		t.Fatal(err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messages dropped: %d", messageCount)
-	}
-	var ledgerOnPrimary int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ledger WHERE user_id=$1 AND reading_id IN ($2,$3)`, idA, readingA, readingB).Scan(&ledgerOnPrimary); err != nil {
-		t.Fatal(err)
-	}
-	if ledgerOnPrimary != 2 {
-		t.Fatalf("ledger rows not both on primary: %d", ledgerOnPrimary)
-	}
-
-	var emailANow, emailBNow, wechatA, phoneA, appleA *string
-	if err := store.QueryRow(t.Context(), `SELECT email, wechat_openid, phone, apple_sub FROM app_users WHERE id=$1`, idA).Scan(&emailANow, &wechatA, &phoneA, &appleA); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.QueryRow(t.Context(), `SELECT email FROM app_users WHERE id=$1`, idB).Scan(&emailBNow); err != nil {
-		t.Fatal(err)
-	}
-	if emailANow == nil || *emailANow != emailA || emailBNow != nil {
-		t.Fatalf("emails after merge primary=%v secondary=%v", emailANow, emailBNow)
-	}
-	if wechatA == nil || *wechatA != openID || phoneA == nil || *phoneA != phone || appleA == nil || *appleA != apple {
-		t.Fatalf("non-conflicting identities not moved: wechat=%v phone=%v apple=%v", wechatA, phoneA, appleA)
-	}
-	var retained string
-	if err := store.QueryRow(t.Context(), `SELECT value FROM retained_identities WHERE merge_request_id=$1 AND kind='email'`, int64(conflict.MergeRequestID)).Scan(&retained); err != nil {
-		t.Fatal(err)
-	}
-	if retained != emailB {
-		t.Fatalf("retained email %s", retained)
-	}
-
-	var stateA, stateB string
-	var subUsers int
-	if err := store.QueryRow(t.Context(), `SELECT merge_state FROM subscriptions WHERE id=$1`, subA).Scan(&stateA); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.QueryRow(t.Context(), `SELECT merge_state FROM subscriptions WHERE id=$1`, subB).Scan(&stateB); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM subscriptions WHERE id IN ($1,$2) AND user_id=$3`, subA, subB, idA).Scan(&subUsers); err != nil {
-		t.Fatal(err)
-	}
-	if stateA != "selected" || stateB != "superseded" || subUsers != 2 {
-		t.Fatalf("subscription states %s %s owned %d", stateA, stateB, subUsers)
-	}
-
-	quota := listOne(t, ts, tokenA, "/api/app/v1/quota")
-	if quota["reward_remaining"].(float64) != 2 || quota["daily_free_remaining"].(float64) != 2 || quota["daily_used_flags"].(float64) != 0 {
-		t.Fatalf("quota after merge: %#v", quota)
-	}
-	if quota["subscription_prompt_required"] != false {
-		t.Fatalf("subscription quota: %#v", quota)
-	}
-	create(t, ts, tokenA, "/api/app/v1/readings", map[string]any{"question": "合并后再问", "type": "normal"})
-	quota = listOne(t, ts, tokenA, "/api/app/v1/quota")
-	if quota["reward_remaining"].(float64) != 1 {
-		t.Fatalf("summed reward was not spendable, remaining=%v", quota["reward_remaining"])
-	}
-
-	var action, detail, actorKind string
-	var operatorID int64
-	if err := store.QueryRow(t.Context(), `SELECT operator_id, action, detail, actor_kind FROM audit_log WHERE action='account_merge' AND detail LIKE $1 ORDER BY id DESC LIMIT 1`, fmt.Sprintf("%%\"secondary_user_id\":%d%%", idB)).Scan(&operatorID, &action, &detail, &actorKind); err != nil {
-		t.Fatal(err)
-	}
-	if operatorID != idA || actorKind != "app_user" || !strings.Contains(detail, `"confirm_at"`) || !strings.Contains(detail, fmt.Sprintf(`"primary_user_id":%d`, idA)) || !strings.Contains(detail, `"merge_result"`) {
-		t.Fatalf("audit operator=%d kind=%s detail=%s", operatorID, actorKind, detail)
-	}
-	audits := list(t, ts, admin.access, "/api/admin/v1/audit")
-	seenAudit := false
-	for _, row := range audits {
-		if row["action"] == "account_merge" && strings.Contains(fmt.Sprint(row["detail"]), fmt.Sprintf(`"secondary_user_id":%d`, idB)) {
-			seenAudit = true
-		}
-	}
-	if !seenAudit {
-		t.Fatal("admin audit list missing merge")
-	}
-	merges := list(t, ts, admin.access, "/api/admin/v1/account-merges")
-	seenMerge := false
-	for _, row := range merges {
-		if row["status"] == "merged" && row["primary_user_id"].(float64) == float64(idA) && row["secondary_user_id"].(float64) == float64(idB) {
-			if row["confirm_at"] == nil || !strings.Contains(fmt.Sprint(row["result"]), `"reward_remaining":2`) {
-				t.Fatalf("admin merge row missing confirm/result: %#v", row)
-			}
-			seenMerge = true
-		}
-	}
-	if !seenMerge {
-		t.Fatal("admin account-merges missing row")
-	}
-	if msg, _ := call(t, ts, tokenB, http.MethodGet, "/api/app/v1/profile", nil); msg != "401" {
-		t.Fatalf("merged-away token still works: %s", msg)
+	if still == nil || *still != openID {
+		t.Fatalf("identity moved: %v", still)
 	}
 }
 
-func TestMergeDailyFlagsSum(t *testing.T) {
+func TestOccupiedIdentityDoesNotMoveDailyOrSubscription(t *testing.T) {
 	store, ts := newMergeServer(t)
 	stamp := time.Now().UnixNano()
 	emailA := fmt.Sprintf("daily-a-%d@tata.local", stamp)
@@ -269,65 +111,30 @@ func TestMergeDailyFlagsSum(t *testing.T) {
 	if _, err := store.Exec(t.Context(), `INSERT INTO quota_use(user_id, cycle, reading_id) VALUES ($1,$2,$3)`, idB, cycle, readingB); err != nil {
 		t.Fatal(err)
 	}
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
-	conflict := decodeConflict(t, msg, raw)
-	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	if merged["daily_used_flags"].(float64) != 1 || merged["daily_free_remaining"].(float64) != 1 {
-		t.Fatalf("daily flags not summed: %#v", merged)
-	}
-	var uses int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM daily_free_uses WHERE source_user_id=$1 AND reading_id=$2 AND kind='quota_use' AND user_id=$3`, idB, readingB, idA).Scan(&uses); err != nil {
+	exp := time.Now().Add(20 * 24 * time.Hour).UTC()
+	if _, err := store.Exec(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at) VALUES ($1,'month','active',now(),$2),($3,'year','active',now(),$2)`, idA, exp, idB); err != nil {
 		t.Fatal(err)
 	}
-	if uses != 1 {
-		t.Fatalf("used daily flag reading dropped: %d", uses)
+	msg, _ := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
+	if !strings.Contains(msg, "已绑定其他账号") {
+		t.Fatalf("bind: %s", msg)
 	}
-	quota := listOne(t, ts, tokenA, "/api/app/v1/quota")
-	if quota["daily_free_used"] != false || quota["daily_free_remaining"].(float64) != 1 || quota["daily_used_flags"].(float64) != 1 {
-		t.Fatalf("quota hid the unused side: %#v", quota)
-	}
-}
-
-func TestMergeSubscriptionTiePrompts(t *testing.T) {
-	store, ts := newMergeServer(t)
-	stamp := time.Now().UnixNano()
-	emailA := fmt.Sprintf("sub-a-%d@tata.local", stamp)
-	emailB := fmt.Sprintf("sub-b-%d@tata.local", stamp)
-	tokenA := register(t, ts, emailA)
-	_ = register(t, ts, emailB)
-	idA := userIDByEmail(t, store, emailA)
-	idB := userIDByEmail(t, store, emailB)
-	openID := fmt.Sprintf("wx-sub-%d", stamp)
-	if _, err := store.Exec(t.Context(), `UPDATE app_users SET wechat_openid=$1 WHERE id=$2`, openID, idB); err != nil {
+	var owner int64
+	if err := store.QueryRow(t.Context(), `SELECT user_id FROM quota_use WHERE reading_id=$1`, readingB).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
-	exp := time.Now().Add(20 * 24 * time.Hour).UTC().Truncate(time.Microsecond)
-	var subA, subB int64
-	if err := store.QueryRow(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at) VALUES ($1,'month','active',now(),$2) RETURNING id`, idA, exp).Scan(&subA); err != nil {
+	if owner != idB {
+		t.Fatalf("daily use moved to %d", owner)
+	}
+	var subsA, subsB int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM subscriptions WHERE user_id=$1 AND status='active'`, idA).Scan(&subsA); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.QueryRow(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at) VALUES ($1,'year','active',now(),$2) RETURNING id`, idB, exp).Scan(&subB); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM subscriptions WHERE user_id=$1 AND status='active'`, idB).Scan(&subsB); err != nil {
 		t.Fatal(err)
 	}
-	msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": openID})
-	conflict := decodeConflict(t, msg, raw)
-	merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-	if merged["subscription_prompt_required"] != true || merged["subscription_resolution"] != "prompt_required" {
-		t.Fatalf("tie should prompt: %#v", merged)
-	}
-	var n int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM subscriptions WHERE id IN ($1,$2) AND user_id=$3 AND merge_state='prompt_required'`, subA, subB, idA).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 {
-		t.Fatalf("tied subscriptions not both kept for prompt: %d", n)
-	}
-	var flagged bool
-	if err := store.QueryRow(t.Context(), `SELECT subscription_prompt_required FROM app_users WHERE id=$1`, idA).Scan(&flagged); err != nil {
-		t.Fatal(err)
-	}
-	if !flagged {
-		t.Fatal("prompt flag not stored")
+	if subsA != 1 || subsB != 1 {
+		t.Fatalf("subscriptions moved: %d %d", subsA, subsB)
 	}
 }
 
@@ -357,9 +164,8 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 			}
 			readingB := insertReadingWithMessage(t, store, idB, tc.kind, tc.kind+"-msg")
 			msg, raw := call(t, ts, tokenA, http.MethodPost, tc.path, map[string]string{tc.field: tc.value})
-			conflict := decodeConflict(t, msg, raw)
-			if conflict.Merged || !conflict.ConfirmRequired || conflict.SecondaryUserID != float64(idB) {
-				t.Fatalf("%s conflict: %+v", tc.kind, conflict)
+			if !strings.Contains(msg, "已绑定其他账号") {
+				t.Fatalf("%s bind: %s %s", tc.kind, msg, raw)
 			}
 			assertNotMerged(t, store, idA, idB, readingB)
 		})
@@ -372,7 +178,7 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		if err := store.QueryRow(t.Context(), `INSERT INTO app_users(wechat_openid) VALUES ($1) RETURNING id`, wechatA).Scan(&idA); err != nil {
 			t.Fatal(err)
 		}
-		tokenA, err := (&App{Store: store, JWTSecret: []byte("test-secret")}).signAccess("app", idA, "", "")
+		tokenA, err := (&App{Store: store, JWTSecret: []byte("test-secret")}).signAccess("app", idA, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -380,26 +186,17 @@ func TestBindConflictDoesNotSilentlyMerge(t *testing.T) {
 		idB := userIDByEmail(t, store, emailB)
 		readingB := insertReadingWithMessage(t, store, idB, "邮箱冲突", "邮箱消息")
 		bindCode := sendEmailCode(t, ts, tokenA, emailB, "bind")
-		msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-email", map[string]string{"email": emailB, "password": "new-pass-123", "code": bindCode})
-		conflict := decodeConflict(t, msg, raw)
-		if conflict.Merged || conflict.SecondaryUserID != float64(idB) {
-			t.Fatalf("email conflict: %+v", conflict)
+		msg, raw := call(t, ts, tokenA, http.MethodPost, "/api/app/v1/auth/bind-email", map[string]string{"email": emailB, "code": bindCode})
+		if !strings.Contains(msg, "已绑定其他账号") {
+			t.Fatalf("email bind: %s %s", msg, raw)
 		}
 		assertNotMerged(t, store, idA, idB, readingB)
-		merged := create(t, ts, tokenA, "/api/app/v1/auth/merge-confirm", map[string]any{"merge_request_id": conflict.MergeRequestID, "confirm": true})
-		if merged["merged"] != true {
-			t.Fatalf("email merge: %#v", merged)
-		}
 		var got *string
 		if err := store.QueryRow(t.Context(), `SELECT email FROM app_users WHERE id=$1`, idA).Scan(&got); err != nil {
 			t.Fatal(err)
 		}
-		if got == nil || !strings.EqualFold(*got, emailB) {
-			t.Fatalf("email not moved: %v", got)
-		}
-		loginMsg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/login", map[string]string{"email": emailB, "password": "new-pass-123"})
-		if loginMsg != "" {
-			t.Fatalf("moved email login: %s", loginMsg)
+		if got != nil {
+			t.Fatalf("email moved: %v", got)
 		}
 	})
 }
@@ -436,7 +233,7 @@ func TestBindDoesNotRebind(t *testing.T) {
 	}
 }
 
-func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
+func newMergeApp(t *testing.T) (*Store, *App, *httptest.Server) {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -449,7 +246,13 @@ func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
 	protectLiveAIConfig(t, store)
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
+	rememberTestApp(ts.URL, app, t)
 	t.Cleanup(ts.Close)
+	return store, app, ts
+}
+
+func newMergeServer(t *testing.T) (*Store, *httptest.Server) {
+	store, _, ts := newMergeApp(t)
 	return store, ts
 }
 
@@ -522,11 +325,12 @@ func assertNotMerged(t *testing.T, store *Store, idA, idB, readingB int64) {
 		t.Fatal("secondary merged without confirm")
 	}
 	var rewardB int
-	if err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, idB).Scan(&rewardB); err != nil {
-		t.Fatal(err)
+	err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, idB).Scan(&rewardB)
+	if err != nil {
+		rewardB = 0
 	}
-	if rewardB != 1 {
-		t.Fatalf("secondary reward changed before confirm: %d", rewardB)
+	if rewardB != 0 {
+		t.Fatalf("secondary registration reward should stay unused: %d", rewardB)
 	}
 	var audits int
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM audit_log WHERE action='account_merge' AND operator_id=$1 AND detail LIKE $2`, idA, fmt.Sprintf("%%\"secondary_user_id\":%d%%", idB)).Scan(&audits); err != nil {
@@ -534,6 +338,13 @@ func assertNotMerged(t *testing.T, store *Store, idA, idB, readingB int64) {
 	}
 	if audits != 0 {
 		t.Fatal("merge audit exists before confirm")
+	}
+	var requests int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM account_merge_requests WHERE primary_user_id=$1 OR secondary_user_id=$1 OR primary_user_id=$2 OR secondary_user_id=$2`, idA, idB).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("bind created a merge request: %d", requests)
 	}
 }
 

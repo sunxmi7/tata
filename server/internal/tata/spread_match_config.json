@@ -1,0 +1,243 @@
+{
+  "version": "prd-6.4-draft-v1",
+  "mapping_status": "draft_v1",
+  "priority_status": "draft_accepted_by_product",
+  "priority_by_structure": {
+    "S01": ["01", "08", "04"],
+    "S02": ["02", "10", "09", "12", "15", "03", "18"],
+    "S03": ["11", "16", "12", "03"],
+    "S04": ["11", "08", "12", "16", "10", "14", "05"],
+    "S05": ["05", "17"],
+    "S06": ["13"],
+    "S07": ["16", "14", "18"]
+  },
+  "spreads": [
+    {
+      "code": "01",
+      "names": ["单张牌占卜"],
+      "recommendable": true,
+      "structures_match": ["S01"],
+      "intents": {
+        "I01": {"coverage": "D", "status": "supported"},
+        "I10A": {"coverage": "S", "status": "supported"}
+      }
+    },
+    {
+      "code": "02",
+      "names": ["过去·现在·未来", "时间流", "过去现在未来"],
+      "recommendable": true,
+      "structures_match": ["S02"],
+      "intents": {
+        "I02": {"coverage": "D", "status": "supported"},
+        "I03": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"},
+        "I04B": {"coverage": "S", "status": "supported"}
+      }
+    },
+    {
+      "code": "03",
+      "names": ["三角牌阵"],
+      "recommendable": true,
+      "structures_match": ["S02", "S03"],
+      "intents": {
+        "I05A": {"coverage": "D", "status": "supported"},
+        "I03": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "04",
+      "names": ["三张牌叙事牌阵", "三张牌叙事"],
+      "recommendable": true,
+      "structures_match": ["S01"],
+      "intents": {
+        "I03": {"coverage": "D", "status": "supported"},
+        "I01": {"coverage": "C", "status": "pending_runtime"}
+      }
+    },
+    {
+      "code": "05",
+      "names": ["选择A·选择B·综合建议", "选择A·选择B"],
+      "recommendable": true,
+      "structures_match": ["S04", "S05"],
+      "intents": {
+        "I10A": {"coverage": "D", "status": "supported"},
+        "I11": {"coverage": "C", "status": "pending_runtime"}
+      }
+    },
+    {
+      "code": "06",
+      "names": ["四阶段十字牌阵", "四阶段十字"],
+      "recommendable": false,
+      "structures_match": [],
+      "intents": {}
+    },
+    {
+      "code": "07",
+      "names": ["马赛十字牌阵", "马赛十字"],
+      "recommendable": true,
+      "structures_match": [],
+      "intents": {
+        "I07": {"coverage": "D", "status": "supported"},
+        "I06A": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "08",
+      "names": ["简单十字牌阵", "简单十字"],
+      "recommendable": true,
+      "structures_match": ["S01", "S04"],
+      "intents": {
+        "I01": {"coverage": "D", "status": "supported"},
+        "I06A": {"coverage": "D", "status": "supported"},
+        "I05C": {"coverage": "D", "status": "supported"},
+        "I10B": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "09",
+      "names": ["五张十字牌阵", "五张十字"],
+      "recommendable": true,
+      "structures_match": ["S02"],
+      "intents": {
+        "I03": {"coverage": "D", "status": "supported"},
+        "I02": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"},
+        "I14": {"coverage": "D", "status": "supported"},
+        "I05C": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "10",
+      "names": ["五张线性牌阵", "五张线性"],
+      "recommendable": true,
+      "structures_match": ["S02", "S04"],
+      "intents": {
+        "I02": {"coverage": "D", "status": "supported"},
+        "I03": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"},
+        "I10A": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "11",
+      "names": ["问题解决牌阵", "问题解决"],
+      "recommendable": true,
+      "structures_match": ["S03", "S04"],
+      "intents": {
+        "I05B": {"coverage": "D", "status": "supported"},
+        "I07": {"coverage": "D", "status": "supported"},
+        "I10A": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "12",
+      "names": ["六张十字牌阵", "六张十字"],
+      "recommendable": true,
+      "structures_match": ["S02", "S03", "S04"],
+      "intents": {
+        "I03": {"coverage": "D", "status": "supported"},
+        "I06A": {"coverage": "D", "status": "supported"},
+        "I05B": {"coverage": "D", "status": "supported"},
+        "I02": {"coverage": "D", "status": "supported"},
+        "I10B": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "13",
+      "names": ["六张关系牌阵", "六张关系"],
+      "recommendable": true,
+      "structures_match": ["S06"],
+      "intents": {
+        "I12A": {"coverage": "D", "status": "supported"},
+        "I12B": {"coverage": "D", "status": "supported"},
+        "I12C": {"coverage": "D", "status": "supported"},
+        "I12D": {"coverage": "D", "status": "supported"},
+        "I13A": {"coverage": "D", "status": "supported"},
+        "I13C": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "14",
+      "names": ["马蹄铁牌阵", "马蹄铁"],
+      "recommendable": true,
+      "structures_match": ["S04", "S07"],
+      "intents": {
+        "I02": {"coverage": "D", "status": "supported"},
+        "I03": {"coverage": "D", "status": "supported"},
+        "I05C": {"coverage": "D", "status": "supported"},
+        "I06A": {"coverage": "D", "status": "supported"},
+        "I08": {"coverage": "D", "status": "supported"},
+        "I10A": {"coverage": "D", "status": "supported"},
+        "I04B": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "15",
+      "names": ["魔法七张牌阵", "魔法七张"],
+      "recommendable": true,
+      "structures_match": ["S02"],
+      "intents": {
+        "I02": {"coverage": "D", "status": "supported"},
+        "I03": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"},
+        "I09": {"coverage": "D", "status": "supported"},
+        "I08": {"coverage": "D", "status": "supported"},
+        "I06B": {"coverage": "D", "status": "supported"},
+        "I04B": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "16",
+      "names": ["七张综合分析牌阵", "七张综合分析"],
+      "recommendable": true,
+      "structures_match": ["S03", "S04", "S07"],
+      "intents": {
+        "I03": {"coverage": "D", "status": "supported"},
+        "I05B": {"coverage": "D", "status": "supported"},
+        "I06A": {"coverage": "D", "status": "supported"},
+        "I08": {"coverage": "D", "status": "supported"},
+        "I10A": {"coverage": "D", "status": "supported"},
+        "I04B": {"coverage": "D", "status": "supported"}
+      }
+    },
+    {
+      "code": "17",
+      "names": ["七张双路径选择牌阵", "七张双路径"],
+      "recommendable": true,
+      "structures_match": ["S05"],
+      "intents": {
+        "I06C": {"coverage": "D", "status": "supported"},
+        "I04B": {"coverage": "D", "status": "supported"},
+        "I11": {"coverage": "C", "status": "pending_runtime"}
+      }
+    },
+    {
+      "code": "18",
+      "names": ["凯尔特十字牌阵", "凯尔特十字"],
+      "recommendable": true,
+      "structures_match": ["S02", "S07"],
+      "intents": {
+        "I03": {"coverage": "D", "status": "supported"},
+        "I02": {"coverage": "D", "status": "supported"},
+        "I04A": {"coverage": "D", "status": "supported"},
+        "I09": {"coverage": "D", "status": "supported"},
+        "I08": {"coverage": "D", "status": "supported"},
+        "I04B": {"coverage": "D", "status": "supported"},
+        "I06A": {"coverage": "D", "status": "pending_runtime"},
+        "I06B": {"coverage": "D", "status": "pending_runtime"},
+        "I05B": {"coverage": "D", "status": "pending_runtime"},
+        "I05C": {"coverage": "D", "status": "pending_runtime"},
+        "I14": {"coverage": "D", "status": "pending_runtime"}
+      }
+    },
+    {
+      "code": "19",
+      "names": ["生命之树牌阵", "生命之树"],
+      "recommendable": false,
+      "structures_match": [],
+      "intents": {}
+    }
+  ]
+}

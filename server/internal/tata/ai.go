@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // DemoHold delays the local demo model so tests can prove a single in-flight generation.
@@ -76,10 +77,13 @@ func (a *App) demoOpenAI(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	content := ""
-	if len(req.Messages) > 0 {
-		content = req.Messages[len(req.Messages)-1].Content
+	promptRunes := 0
+	for _, msg := range req.Messages {
+		promptRunes += utf8.RuneCountInString(msg.Content)
+		content = msg.Content
 	}
 	reply := "【演示解读】牌面由业务固定，这里只解读，不改牌。\n" + content
+	usage := demoUsage(promptRunes, utf8.RuneCountInString(reply))
 	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -96,6 +100,16 @@ func (a *App) demoOpenAI(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 		}
+		usageEvt := map[string]any{
+			"object":  "chat.completion.chunk",
+			"choices": []any{},
+			"usage":   usage,
+		}
+		b, _ := json.Marshal(usageEvt)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
 		fmt.Fprint(w, "data: [DONE]\n\n")
 		if flusher != nil {
 			flusher.Flush()
@@ -104,7 +118,26 @@ func (a *App) demoOpenAI(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": reply}}},
+		"usage":   usage,
 	})
+}
+
+// demoUsage 按字符数造一份供应商 usage，让演示供应商也能走出记 token 的路径。
+// cached 取输入的五分之一，对应缓存命中更便宜的那一部分。
+func demoUsage(promptRunes, completionRunes int) map[string]any {
+	if promptRunes < 1 {
+		promptRunes = 1
+	}
+	if completionRunes < 1 {
+		completionRunes = 1
+	}
+	return map[string]any{
+		"prompt_tokens":             promptRunes,
+		"completion_tokens":         completionRunes,
+		"total_tokens":              promptRunes + completionRunes,
+		"prompt_tokens_details":     map[string]any{"cached_tokens": promptRunes / 5},
+		"completion_tokens_details": map[string]any{"reasoning_tokens": 0},
+	}
 }
 
 // chunkRunes 把文本按 rune 切成每段至多 n 个字符，供演示流式分片下发。

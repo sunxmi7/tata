@@ -18,12 +18,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/campaigns", nil); msg != "" {
 		t.Fatalf("campaigns no token: %s", msg)
 	}
-	anon := create(t, ts, "", "/api/app/v1/auth/anonymous", map[string]any{})
-	anonToken, _ := anon["accessToken"].(string)
-	if anonToken == "" {
-		t.Fatal("anonymous token missing")
-	}
-	if msg, _ := call(t, ts, anonToken, http.MethodGet, "/api/app/v1/redeem/records", nil); msg != "登录后才能查看兑换记录" {
+	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/redeem/records", nil); msg != "401" {
 		t.Fatalf("anon redeem records: %s", msg)
 	}
 
@@ -38,40 +33,38 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 
 	code := fmt.Sprintf("P1%d", time.Now().UnixNano())
 	if _, err := store.Exec(t.Context(), `INSERT INTO redeem_codes(code, kind, amount, benefit_name, max_redemptions, enabled)
-		VALUES ($1,'diamonds',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
+		VALUES ($1,'quota',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
 		t.Fatal(err)
 	}
 	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": code})
-	freeCode := fmt.Sprintf("P1F%d", time.Now().UnixNano())
+	quotaCode2 := fmt.Sprintf("P1Q%d", time.Now().UnixNano())
 	if _, err := store.Exec(t.Context(), `INSERT INTO redeem_codes(code, kind, amount, benefit_name, enabled)
-		VALUES ($1,'free_count',1,'免费一次',true)`, strings.ToUpper(freeCode)); err != nil {
+		VALUES ($1,'quota',10,'二次额度礼',true)`, strings.ToUpper(quotaCode2)); err != nil {
 		t.Fatal(err)
 	}
-	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": freeCode})
+	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": quotaCode2})
 
 	got := listOne(t, ts, token, "/api/app/v1/redeem/records")
 	rows, _ := got["items"].([]any)
 	if len(rows) != 2 || got["fields_confirmed"] != false {
 		t.Fatalf("redeem records: %#v", got)
 	}
-	byKind := map[string]map[string]any{}
 	for _, raw := range rows {
 		row := raw.(map[string]any)
-		byKind[row["kind"].(string)] = row
 		if _, hasPrice := row["price"]; hasPrice {
 			t.Fatalf("invented price on redeem row: %#v", row)
 		}
+		if row["kind"] != "quota" || row["unit"] != "quota" || row["display_label"] != displayLabelQuota {
+			t.Fatalf("quota-only record: %#v", row)
+		}
 	}
-	diamonds := byKind["diamonds"]
-	if diamonds["benefit_name"] != "新春钻石礼" || diamonds["amount"].(float64) != 60 || diamonds["unit"] != "diamond" || diamonds["display_label"] != displayLabelTataCoin {
-		t.Fatalf("diamond record: %#v", diamonds)
+	newer := rows[0].(map[string]any) // ORDER BY id DESC
+	older := rows[1].(map[string]any)
+	if newer["benefit_name"] != "二次额度礼" || newer["amount"].(float64) != 10 || newer["code"] == "" || newer["created_at"] == "" {
+		t.Fatalf("newer record: %#v", newer)
 	}
-	if diamonds["created_at"] == "" || diamonds["code"] == "" {
-		t.Fatalf("diamond record identity: %#v", diamonds)
-	}
-	free := byKind["free_count"]
-	if free["unit"] != "count" || free["display_label"] != nil || free["amount"].(float64) != 1 {
-		t.Fatalf("free record: %#v", free)
+	if older["benefit_name"] != "新春钻石礼" || older["amount"].(float64) != 60 || older["code"] == "" {
+		t.Fatalf("older record: %#v", older)
 	}
 	otherEmpty := listOne(t, ts, other, "/api/app/v1/redeem/records")
 	if otherItems, _ := otherEmpty["items"].([]any); len(otherItems) != 0 {
@@ -82,7 +75,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		_, _ = store.Exec(context.Background(), `UPDATE campaigns SET status='ongoing', enabled=true WHERE campaign_id IN ('friend_invite','membership_benefit')`)
 	})
 
-	list := listOne(t, ts, anonToken, "/api/app/v1/campaigns")
+	list := listOne(t, ts, "", "/api/app/v1/campaigns")
 	cards, _ := list["items"].([]any)
 	if len(cards) < 2 || list["empty_title"] != "暂时没有可参与的活动" || list["footnote"] != "活动规则与奖励以活动详情页为准" {
 		t.Fatalf("campaign list: %#v", list)
@@ -113,7 +106,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("live card after one ended: %#v", second)
 	}
 
-	detail := listOne(t, ts, anonToken, "/api/app/v1/campaigns/friend_invite")
+	detail := listOne(t, ts, "", "/api/app/v1/campaigns/friend_invite")
 	if detail["title"] != "好友邀请" || detail["body_status"] != "pending" || detail["detail_delivered"] != false {
 		t.Fatalf("invite detail: %#v", detail)
 	}
@@ -144,7 +137,7 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("disabled campaign: %s", msg)
 	}
 
-	if msg, _ := call(t, ts, anonToken, http.MethodGet, "/api/app/v1/campaigns/participations", nil); msg != "登录后才能查看参与记录" {
+	if msg, _ := call(t, ts, "", http.MethodGet, "/api/app/v1/campaigns/participations", nil); msg != "401" {
 		t.Fatalf("anon participations: %s", msg)
 	}
 	part := listOne(t, ts, token, "/api/app/v1/campaigns/participations")
@@ -157,28 +150,24 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	}
 	rewards := listOne(t, ts, token, "/api/app/v1/campaigns/rewards")
 	rewardItems, _ := rewards["items"].([]any)
-	if len(rewardItems) != 0 || rewards["empty_title"] != "暂无奖励记录" || rewards["fields_confirmed"] != false {
+	if len(rewardItems) != 0 || rewards["empty_title"] != "暂无奖励记录" || rewards["fields_confirmed"] != true {
 		t.Fatalf("rewards: %#v", rewards)
 	}
 	if strings.Contains(fmt.Sprint(rewards["placeholder_note"]), "28.8") {
 		t.Fatalf("reward promise: %#v", rewards)
 	}
 
-	cats := listOne(t, ts, anonToken, "/api/app/v1/help/categories")
+	cats := listOne(t, ts, "", "/api/app/v1/help/categories")
 	categories, _ := cats["categories"].([]any)
-	if len(categories) != 3 {
+	if len(categories) != 2 {
 		t.Fatalf("categories: %#v", cats)
 	}
-	wantTitles := []string{"使用与占卜", "会员与支付", "账号与设置"}
+	wantTitles := []string{"使用与占卜", "账号与设置"}
 	for i, title := range wantTitles {
 		row := categories[i].(map[string]any)
-		if row["title"] != title {
+		if row["title"] != title || row["articles_status"] != "ready" {
 			t.Fatalf("category %d: %#v", i, row)
 		}
-	}
-	pay := categories[1].(map[string]any)
-	if pay["id"] != "membership_pay" || pay["articles_status"] != "pending" || pay["empty_note"] != "这一类的问题还在整理，条目待确认。" {
-		t.Fatalf("pay category: %#v", pay)
 	}
 
 	reading := listOne(t, ts, token, "/api/app/v1/help/articles?category=reading")
@@ -194,10 +183,8 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 	if len(accountItems) != 1 || accountItems[0].(map[string]any)["title"] != "如何切换语言和主题？" {
 		t.Fatalf("account articles: %#v", account)
 	}
-	pending := listOne(t, ts, token, "/api/app/v1/help/articles?category=membership_pay")
-	pendingItems, _ := pending["items"].([]any)
-	if len(pendingItems) != 0 || pending["category_note"] != "这一类的问题还在整理，条目待确认。" || pending["empty_title"] != "" {
-		t.Fatalf("pending category: %#v", pending)
+	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/help/articles?category=membership_pay", nil); msg != "问题分类不正确" {
+		t.Fatalf("removed category: %s", msg)
 	}
 
 	searchPath := "/api/app/v1/help/articles?" + url.Values{"q": {"占卜"}, "category": {"reading"}}.Encode()
@@ -225,15 +212,19 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatalf("bad category: %s", msg)
 	}
 
-	article := listOne(t, ts, anonToken, "/api/app/v1/help/articles/how_to_start")
-	if article["title"] != "如何开始一次塔罗占卜？" || article["body"] != "待确认" || article["body_status"] != "pending" {
+	article := listOne(t, ts, "", "/api/app/v1/help/articles/how_to_start")
+	if article["title"] != "如何开始一次塔罗占卜？" || article["body_status"] != "ready" {
 		t.Fatalf("article: %#v", article)
+	}
+	if !strings.Contains(fmt.Sprint(article["body"]), "开始抽牌") || !strings.Contains(fmt.Sprint(article["body"]), "探索") {
+		t.Fatalf("article body: %#v", article["body"])
 	}
 	if article["category_title"] != "使用与占卜" {
 		t.Fatalf("article category: %#v", article)
 	}
-	if strings.Contains(fmt.Sprint(article["body"]), "退款") || strings.Contains(fmt.Sprint(article["body"]), "额度") {
-		t.Fatalf("article invented rules: %#v", article)
+	lang := listOne(t, ts, "", "/api/app/v1/help/articles/language_theme")
+	if lang["body_status"] != "ready" || !strings.Contains(fmt.Sprint(lang["body"]), "浅色或深色") {
+		t.Fatalf("language article: %#v", lang)
 	}
 	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/help/articles/missing_article", nil); msg != "问题不存在" {
 		t.Fatalf("missing article: %s", msg)
@@ -245,16 +236,15 @@ func TestPublicCatalogNoToken(t *testing.T) {
 	for _, path := range []string{
 		"/api/app/v1/preset-questions",
 		"/api/app/v1/spreads",
+		"/api/app/v1/explore/topics",
+		"/api/app/v1/explore/topics?theme_key=yes_or_no",
 		"/api/app/v1/banners",
 		"/api/app/v1/tarotists",
-		"/api/app/v1/explore/topics",
 		"/api/app/v1/campaigns",
 		"/api/app/v1/campaigns/friend_invite",
 		"/api/app/v1/help/categories",
 		"/api/app/v1/help/articles",
 		"/api/app/v1/help/articles/how_to_start",
-		"/api/app/v1/iap/skus",
-		"/api/app/v1/iap/config",
 	} {
 		if msg, raw := call(t, ts, "", http.MethodGet, path, nil); msg != "" {
 			t.Fatalf("%s still gated: %s %s", path, msg, raw)

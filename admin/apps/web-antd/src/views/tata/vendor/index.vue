@@ -4,11 +4,21 @@ import type { Binding, Vendor } from '#/api/tata';
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useAccessStore } from '@vben/stores';
 
-import { Button, Card, Form, Input, Modal, Select, Switch, Table, Tag, message } from 'ant-design-vue';
+import { Button, Card, Form, Input, InputNumber, Modal, Select, Switch, Table, Tag, message } from 'ant-design-vue';
 
-import { createVendor, listBindings, listVendors, probeVendor, putBinding, updateVendor } from '#/api/tata';
+import {
+  createVendor,
+  getVendorPrices,
+  listBindings,
+  listVendors,
+  probeVendor,
+  putBinding,
+  putVendorPrices,
+  updateVendor,
+} from '#/api/tata';
+
+import { hasTataWrite } from '../access';
 
 import {
   modelSelectOptions,
@@ -27,12 +37,19 @@ const tasks = [
 ];
 const taskLabelByValue = Object.fromEntries(tasks.map((item) => [item.value, item.label]));
 
-const access = useAccessStore();
 const vendors = ref<Vendor[]>([]);
 const bindings = ref<Binding[]>([]);
 const open = ref(false);
 const editingId = ref<number | null>(null);
 const form = ref(emptyVendorForm());
+const priceRows = ref<
+  Array<{
+    model_name: string;
+    input_yuan: number | null;
+    cache_yuan: number | null;
+    output_yuan: number | null;
+  }>
+>([]);
 
 function emptyVendorForm() {
   return {
@@ -45,13 +62,39 @@ function emptyVendorForm() {
   };
 }
 
+function modelNamesFromForm() {
+  return form.value.models
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function syncPriceRows(existing?: Array<{ model_name: string; input_per_mtok_minor: number | null; cache_hit_per_mtok_minor: number | null; output_per_mtok_minor: number | null }>) {
+  const fromApi = new Map((existing ?? []).map((row) => [row.model_name, row]));
+  const fromForm = new Map(priceRows.value.map((row) => [row.model_name, row]));
+  priceRows.value = modelNamesFromForm().map((name) => {
+    const draft = fromForm.get(name);
+    if (draft) {
+      return { ...draft, model_name: name };
+    }
+    const row = fromApi.get(name);
+    return {
+      model_name: name,
+      input_yuan: row?.input_per_mtok_minor == null ? null : row.input_per_mtok_minor / 1_000_000,
+      cache_yuan: row?.cache_hit_per_mtok_minor == null ? null : row.cache_hit_per_mtok_minor / 1_000_000,
+      output_yuan: row?.output_per_mtok_minor == null ? null : row.output_per_mtok_minor / 1_000_000,
+    };
+  });
+}
+
 function openCreate() {
   editingId.value = null;
   form.value = emptyVendorForm();
+  syncPriceRows();
   open.value = true;
 }
 
-function openEdit(record: Vendor) {
+async function openEdit(record: Vendor) {
   editingId.value = record.id;
   form.value = {
     name: record.name,
@@ -62,6 +105,12 @@ function openEdit(record: Vendor) {
     enabled: record.enabled,
   };
   open.value = true;
+  try {
+    const prices = await getVendorPrices(record.id);
+    syncPriceRows(prices);
+  } catch {
+    syncPriceRows();
+  }
 }
 const bind = ref({ task: 'interpret', vendor_id: undefined as number | undefined, model: '' });
 
@@ -130,23 +179,42 @@ async function load() {
 }
 
 function canWrite() {
-  return access.accessCodes.includes('write');
+  return hasTataWrite('ai');
 }
 async function save() {
+  const models = modelNamesFromForm();
   const payload = {
     name: form.value.name,
     base_url: form.value.base_url,
     api_key: form.value.api_key,
-    models: form.value.models.split(',').map((item) => item.trim()).filter(Boolean),
+    models,
     timeout_sec: form.value.timeout_sec,
     enabled: form.value.enabled,
   };
-  if (editingId.value) {
-    await updateVendor(editingId.value, payload);
+  let vendorId = editingId.value;
+  if (vendorId) {
+    await updateVendor(vendorId, payload);
   } else {
     const created = await createVendor(payload);
+    vendorId = created.id;
     bind.value.vendor_id = created.id;
     bind.value.model = '';
+  }
+  const priced = priceRows.value.filter(
+    (row) => models.includes(row.model_name) && row.input_yuan != null && row.output_yuan != null,
+  );
+  if (priced.length > 0 && vendorId) {
+    await putVendorPrices(
+      vendorId,
+      priced.map((row) => ({
+        model_name: row.model_name,
+        currency: 'CNY',
+        input_per_mtok_minor: Math.round((row.input_yuan as number) * 1_000_000),
+        cache_hit_per_mtok_minor:
+          row.cache_yuan == null ? null : Math.round(row.cache_yuan * 1_000_000),
+        output_per_mtok_minor: Math.round((row.output_yuan as number) * 1_000_000),
+      })),
+    );
   }
   message.success(form.value.enabled ? '已保存，并应用到全部调用' : '已保存，密钥不会回显');
   open.value = false;
@@ -181,7 +249,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="启用并保存后立即用于问题检测、改写、推荐、解读、塔罗师。密钥保存后不明文回显。" title="模型供应商">
+  <Page description="密钥保存后不明文回显。可按模型配置高档单价（元/百万 token），落库时按该价算成本，不区分峰谷时段。App 解读使用 interpret 绑定。" title="模型供应商">
     <template #extra>
       <Button v-if="canWrite()" type="primary" @click="openCreate">新建</Button>
     </template>
@@ -272,7 +340,7 @@ onMounted(async () => {
         </Form>
       </div>
     </Card>
-    <Modal v-model:open="open" :title="editingId ? '编辑供应商' : '新建供应商'" @ok="save">
+    <Modal v-model:open="open" :title="editingId ? '编辑供应商' : '新建供应商'" width="720" @ok="save">
       <Form layout="vertical">
         <Form.Item label="名称"><Input v-model:value="form.name" /></Form.Item>
         <Form.Item label="Base URL"><Input v-model:value="form.base_url" /></Form.Item>
@@ -282,8 +350,38 @@ onMounted(async () => {
             :placeholder="editingId ? '留空则不改已有密钥' : '稍后填入 DeepSeek API Key'"
           />
         </Form.Item>
-        <Form.Item label="模型，逗号分隔"><Input v-model:value="form.models" /></Form.Item>
+        <Form.Item label="模型，逗号分隔">
+          <Input v-model:value="form.models" @blur="syncPriceRows()" />
+        </Form.Item>
         <Form.Item label="启用"><Switch v-model:checked="form.enabled" /></Form.Item>
+        <Form.Item label="模型单价（元 / 百万 token）">
+          <p class="mb-2 text-xs text-gray-500">按该模型最高档计费，不区分时段。输入、输出都填才保存；缓存命中可空，空则按输入价。</p>
+          <Table
+            :columns="[
+              { title: '模型', dataIndex: 'model_name', width: 160 },
+              { title: '输入', dataIndex: 'input_yuan', width: 120 },
+              { title: '缓存命中', dataIndex: 'cache_yuan', width: 120 },
+              { title: '输出', dataIndex: 'output_yuan', width: 120 },
+            ]"
+            :data-source="priceRows"
+            :pagination="false"
+            row-key="model_name"
+            size="small"
+            :locale="{ emptyText: '先填写模型名' }"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.dataIndex === 'input_yuan'">
+                <InputNumber v-model:value="record.input_yuan" :min="0" :step="0.01" style="width: 100%" />
+              </template>
+              <template v-else-if="column.dataIndex === 'cache_yuan'">
+                <InputNumber v-model:value="record.cache_yuan" :min="0" :step="0.01" style="width: 100%" />
+              </template>
+              <template v-else-if="column.dataIndex === 'output_yuan'">
+                <InputNumber v-model:value="record.output_yuan" :min="0" :step="0.01" style="width: 100%" />
+              </template>
+            </template>
+          </Table>
+        </Form.Item>
       </Form>
     </Modal>
   </Page>

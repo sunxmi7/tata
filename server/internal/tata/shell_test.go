@@ -17,14 +17,22 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	token, _ := registerUser(t, ts, store, "shell")
 
 	profile := listOne(t, ts, token, "/api/app/v1/profile")
-	if profile["name"] != "" || profile["bio"] != "" || profile["avatar_url"] != nil {
-		t.Fatalf("empty profile: %#v", profile)
+	name, _ := profile["name"].(string)
+	email, _ := profile["email"].(string)
+	if name == "" || !validGeneratedNickname(name) || profile["nickname"] != name {
+		t.Fatalf("random chinese nickname: %#v", profile)
+	}
+	if strings.HasPrefix(name, "Tarot") {
+		t.Fatalf("must not use Tarot+email prefix: %q", name)
+	}
+	avatar, _ := profile["avatar_url"].(string)
+	if !strings.Contains(avatar, defaultAvatarName) || profile["bio"] != "" {
+		t.Fatalf("default avatar: %#v", profile)
 	}
 	if _, ok := profile["phone"]; ok {
 		t.Fatalf("profile should not expose phone: %#v", profile)
 	}
 	display, _ := profile["account_display"].(string)
-	email, _ := profile["email"].(string)
 	if display == "" || display == email || !strings.Contains(display, "***") {
 		t.Fatalf("account_display should be masked email, got %#v email=%s", profile["account_display"], email)
 	}
@@ -39,33 +47,54 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if profile["name"] != "塔塔" || profile["bio"] != "爱抽牌" || profile["avatar_url"] != "https://cdn.example/avatar.png" {
 		t.Fatalf("profile write: %#v", profile)
 	}
-	if msg, _ := call(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{"name": strings.Repeat("名", 33)}); !strings.Contains(msg, "姓名") {
+	if msg, _ := call(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{"name": strings.Repeat("名", 33)}); !strings.Contains(msg, "昵称") {
 		t.Fatalf("long name: %s", msg)
 	}
 
 	topics := listOne(t, ts, token, "/api/app/v1/explore/topics")
-	groups, _ := topics["groups"].([]any)
-	if len(groups) < 2 {
-		t.Fatalf("topics groups: %#v", topics)
+	themes, _ := topics["themes"].([]any)
+	if len(themes) != 11 {
+		t.Fatalf("explore themes: %#v", topics)
 	}
-	titles := map[string]int{}
-	topicCount := 0
-	for _, raw := range groups {
-		g := raw.(map[string]any)
-		title, _ := g["title"].(string)
-		items, _ := g["topics"].([]any)
-		titles[title] = len(items)
-		topicCount += len(items)
-		if len(items) == 0 {
-			t.Fatalf("empty group %s: %#v", title, g)
+	titles := map[string]string{}
+	for _, raw := range themes {
+		theme := raw.(map[string]any)
+		title, _ := theme["title"].(string)
+		key, _ := theme["theme_key"].(string)
+		if key == "" || theme["subtitle"] == "" || title == "" {
+			t.Fatalf("theme fields: %#v", theme)
 		}
-		first := items[0].(map[string]any)
-		if first["topic_id"] == "" || first["title"] == "" {
-			t.Fatalf("topic fields: %#v", first)
+		if _, ok := theme["spreads"]; ok {
+			t.Fatalf("theme index must not include spreads: %#v", theme)
+		}
+		titles[title] = key
+	}
+	if titles["Yes or No"] != "yes_or_no" || titles["关系走向"] != "relationship" || titles["二选一"] != "either_or" {
+		t.Fatalf("explore catalog: %#v", titles)
+	}
+	yes := listOne(t, ts, token, "/api/app/v1/explore/topics?theme_key=yes_or_no")
+	yesSpreads, _ := yes["spreads"].([]any)
+	if yes["theme_key"] != "yes_or_no" || yes["title"] != "Yes or No" || len(yesSpreads) != 1 {
+		t.Fatalf("yes or no spreads: %#v", yes)
+	}
+	first := yesSpreads[0].(map[string]any)
+	if first["name"] != "单张是非牌阵" || first["id"] == nil || first["short_sentence"] == "" || first["card_count"] == nil {
+		t.Fatalf("spread fields: %#v", first)
+	}
+	questions, _ := first["quick_questions"].([]any)
+	positions, _ := first["positions"].([]any)
+	if len(questions) == 0 || len(positions) == 0 {
+		t.Fatalf("explore positions: %#v", first)
+	}
+	for _, key := range []string{"either_or", "relationship", "inner", "shopping"} {
+		one := listOne(t, ts, token, "/api/app/v1/explore/topics?theme_key="+key)
+		items, _ := one["spreads"].([]any)
+		if one["theme_key"] != key || len(items) != 2 {
+			t.Fatalf("theme %s spreads: %#v", key, one)
 		}
 	}
-	if titles["此刻抉择"] == 0 || titles["主题占卜"] == 0 || topicCount < 3 {
-		t.Fatalf("expected explore catalog, got %#v", titles)
+	if msg, _ := call(t, ts, token, http.MethodGet, "/api/app/v1/explore/topics?theme_key=missing", nil); msg != "探索主题不存在" {
+		t.Fatalf("missing theme: %s", msg)
 	}
 
 	ledger := listOne(t, ts, token, "/api/app/v1/wallet/ledger")
@@ -76,7 +105,7 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if len(items) != 0 {
 		t.Fatalf("empty ledger must not invent rows: %#v", ledger)
 	}
-	if ledger["display_label"] != displayLabelTataCoin || ledger["balance"].(float64) != 0 {
+	if ledger["display_label"] != displayLabelQuota || ledger["balance"].(float64) != 0 {
 		t.Fatalf("empty ledger meta: %#v", ledger)
 	}
 
@@ -94,6 +123,11 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if wish["message"] != "心愿已提交" || wish["id"] == nil {
 		t.Fatalf("wishlist: %#v", wish)
 	}
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	wishes := list(t, ts, admin.access, "/api/admin/v1/wishlists")
+	if len(wishes) == 0 || wishes[0]["content"] != "希望能换牌背" || wishes[0]["image_url"] != "https://cdn.example/wish.png" {
+		t.Fatalf("admin wishlists: %#v", wishes)
+	}
 
 	if msg, _ := call(t, ts, token, http.MethodPost, "/api/app/v1/feedback", map[string]any{"category": "吐槽", "content": "x"}); !strings.Contains(msg, "分类") {
 		t.Fatalf("feedback category: %s", msg)
@@ -110,6 +144,10 @@ func TestAppShellP0ProfileTopicsLedgerFeedback(t *testing.T) {
 	if fb["message"] != "反馈已提交" {
 		t.Fatalf("feedback: %#v", fb)
 	}
+	feedbacks := list(t, ts, admin.access, "/api/admin/v1/feedback")
+	if len(feedbacks) == 0 || feedbacks[0]["category"] != "其他" || feedbacks[0]["content"] != "界面很好" || feedbacks[0]["email"] != "ok@tata.local" {
+		t.Fatalf("admin feedback: %#v", feedbacks)
+	}
 }
 
 func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
@@ -117,26 +155,22 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 	token, uid := registerUser(t, ts, store, "redeem")
 	code := fmt.Sprintf("TATA%d", time.Now().UnixNano())
 	if _, err := store.Exec(t.Context(), `INSERT INTO redeem_codes(code, kind, amount, benefit_name, max_redemptions, enabled)
-		VALUES ($1,'diamonds',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
+		VALUES ($1,'quota',60,'新春钻石礼',1,true)`, strings.ToUpper(code)); err != nil {
 		t.Fatal(err)
 	}
 
 	out := create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": strings.ToLower(code)})
-	if out["benefit_name"] != "新春钻石礼" || out["amount"].(float64) != 60 || out["kind"] != "diamonds" {
+	if out["benefit_name"] != "新春钻石礼" || out["amount"].(float64) != 60 || out["kind"] != "quota" {
 		t.Fatalf("redeem: %#v", out)
 	}
-	if out["display_label"] != displayLabelTataCoin || out["pack_diamonds"].(float64) != 60 || out["balance"].(float64) != 60 {
+	if out["display_label"] != displayLabelQuota || quotaNum(out) != 60 {
 		t.Fatalf("redeem balance: %#v", out)
 	}
 	if msg, _ := call(t, ts, token, http.MethodPost, "/api/app/v1/redeem", map[string]any{"code": code}); msg != "兑换码已使用" {
 		t.Fatalf("second redeem: %s", msg)
 	}
-	var pack int
-	if err := store.QueryRow(t.Context(), `SELECT pack_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&pack); err != nil {
-		t.Fatal(err)
-	}
-	if pack != 60 {
-		t.Fatalf("pack_diamonds=%d", pack)
+	if quotaOf(t, store, uid) != 60 {
+		t.Fatalf("quota_balance=%d", quotaOf(t, store, uid))
 	}
 
 	ledger := listOne(t, ts, token, "/api/app/v1/wallet/ledger")
@@ -150,11 +184,14 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 	}
 
 	quota := listOne(t, ts, token, "/api/app/v1/quota")
-	if quota["display_label"] != displayLabelTataCoin || quota["paid_label"] != "钻石" || quota["balance"].(float64) != 60 {
+	if quota["display_label"] != displayLabelQuota || quota["paid_label"] != displayLabelQuota || quota["is_member"] != false {
 		t.Fatalf("quota labels: %#v", quota)
 	}
+	if _, ok := quota["quota_remaining"]; ok {
+		t.Fatalf("free user should hide quota: %#v", quota)
+	}
 	ent := listOne(t, ts, token, "/api/app/v1/iap/entitlements")
-	if ent["display_label"] != displayLabelTataCoin || ent["unit"] != "diamond" || ent["balance"].(float64) != 60 {
+	if ent["display_label"] != displayLabelQuota || ent["unit"] != "quota" || ent["is_member"] != false {
 		t.Fatalf("entitlements: %#v", ent)
 	}
 	skus := list(t, ts, token, "/api/app/v1/iap/skus")
@@ -162,15 +199,15 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 		t.Fatal("skus empty")
 	}
 	for _, sku := range skus {
-		if sku["display_label"] != displayLabelTataCoin || sku["unit"] != "diamond" {
+		if sku["display_label"] != displayLabelQuota || sku["unit"] != "quota" {
 			t.Fatalf("sku label: %#v", sku)
 		}
 		code, _ := sku["code"].(string)
 		if code == "sub_month" && sku["price_amount_minor"].(float64) != 3900 {
 			t.Fatalf("month price: %#v", sku)
 		}
-		if code == "pack_60" && sku["app_store_product_id"] != "tata.coin.60" {
-			t.Fatalf("apple id: %#v", sku)
+		if code == "pack_quota_20" || code == "pack_60" {
+			t.Fatalf("free user saw pack sku: %#v", sku)
 		}
 	}
 
@@ -235,7 +272,7 @@ func TestAppShellP0RedeemLedgerUploadsNotificationsQuota(t *testing.T) {
 func TestAppShellDailyHomeFieldsPresent(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, uid := registerUser(t, ts, store, "dailyhome")
-	_ = uid
+	seedGift(t, store, uid, 1)
 	raw := get(t, ts, token, "/api/app/v1/calendar")
 	var env struct {
 		Data map[string]any `json:"data"`
@@ -253,7 +290,7 @@ func TestAppShellDailyHomeFieldsPresent(t *testing.T) {
 	}
 
 	msg, body := call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
-	if msg != "" && !strings.Contains(msg, "已占用") && !strings.Contains(msg, "已用完") && !strings.Contains(msg, "钻石") && !strings.Contains(msg, "未配置") {
+	if msg != "" && !strings.Contains(msg, "已占用") && !strings.Contains(msg, "已用完") && !strings.Contains(msg, "额度") && !strings.Contains(msg, "未配置") && !strings.Contains(msg, "开通会员") {
 		t.Fatalf("daily: %s %s", msg, body)
 	}
 	var daily struct {
@@ -275,8 +312,13 @@ func TestAppShellDailyHomeFieldsPresent(t *testing.T) {
 			t.Fatalf("daily missing %s: %#v", key, payload)
 		}
 	}
-	if payload["yi"] != nil {
-		t.Fatalf("yi must stay unset rather than invented: %#v", payload["yi"])
+	name, _ := payload["card_name"].(string)
+	if name == "" {
+		if payload["yi"] != nil || payload["card_message"] != nil {
+			t.Fatalf("daily copy must stay unset without a card: %#v", payload)
+		}
+	} else if payload["yi"] == nil || payload["card_message"] == nil {
+		t.Fatalf("daily copy must come from the card library: %#v", payload)
 	}
 }
 

@@ -102,4 +102,8 @@ func TestAbsoluteAssetURL(t *testing.T) {
 	if got := absoluteAssetURL(req, "/uploads/card-default.png"); got != "https://127.0.0.1:8080/uploads/card-default.png" {
 		t.Fatalf("forwarded: %s", got)
 	}
+	req.Header.Set("X-Forwarded-Host", "admindev.tarot.himoou.com")
+	if got := absoluteAssetURL(req, "/uploads/card-default.png"); got != "https://admindev.tarot.himoou.com/uploads/card-default.png" {
+		t.Fatalf("forwarded host: %s", got)
+	}
 }

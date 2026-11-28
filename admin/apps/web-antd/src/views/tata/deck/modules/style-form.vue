@@ -1,20 +1,52 @@
 <script lang="ts" setup>
+import type { UploadFile } from 'ant-design-vue';
+
 import { computed, ref } from 'vue';
 
 import { useVbenModal } from '@vben/common-ui';
 
-import { message } from 'ant-design-vue';
+import { Image, Table, Upload, message } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
 import { fileListFromURL, fileListToURL, imageUploadProps } from '#/api/core/upload';
-import { updateCopy } from '#/api/tata';
+import { listCards, updateCopy } from '#/api/tata';
 
 const emit = defineEmits(['success']);
+
+type FaceRow = {
+  card_id: number;
+  card_name: string;
+  image_url?: null | string;
+};
 
 type StyleFormData = null | Record<string, unknown>;
 
 const formData = ref<StyleFormData>(null);
-const getTitle = computed(() => (formData.value?.code ? '编辑风格' : '添加风格'));
+const faceRows = ref<FaceRow[]>([]);
+const faceUploads = ref<Record<number, UploadFile[]>>({});
+const getTitle = computed(() => (formData.value?.code ? '编辑牌组' : '添加牌组'));
+
+function applyFaceRows(faces: FaceRow[]) {
+  faceRows.value = faces;
+  const uploads: Record<number, UploadFile[]> = {};
+  for (const row of faces) {
+    uploads[row.card_id] = fileListFromURL(
+      typeof row.image_url === 'string' ? row.image_url : '',
+    );
+  }
+  faceUploads.value = uploads;
+}
+
+async function loadBlankFaces() {
+  const data = await listCards();
+  applyFaceRows(
+    (data.items || []).map((card) => ({
+      card_id: Number(card.card_id ?? card.id),
+      card_name: String(card.card_name || card.name || `牌 ${card.id}`),
+      image_url: '',
+    })),
+  );
+}
 
 const [Form, formApi] = useVbenForm({
   layout: 'vertical',
@@ -34,11 +66,11 @@ const [Form, formApi] = useVbenForm({
     {
       component: 'Upload',
       componentProps: imageUploadProps('decks'),
-      fieldName: 'thumbnail',
-      label: '预览图',
+      fieldName: 'back_url',
+      label: '卡背',
       renderComponentContent: () => {
         return {
-          default: () => '上传图片',
+          default: () => '上传卡背',
         };
       },
     },
@@ -52,7 +84,19 @@ const [Form, formApi] = useVbenForm({
   showDefaultActions: false,
 });
 
+function setFaceUpload(cardId: number, list: UploadFile[]) {
+  faceUploads.value = { ...faceUploads.value, [cardId]: list.slice(-1) };
+}
+
+function buildFacesPayload() {
+  return faceRows.value.map((row) => ({
+    card_id: row.card_id,
+    image_url: fileListToURL(faceUploads.value[row.card_id]),
+  }));
+}
+
 const [Modal, modalApi] = useVbenModal<StyleFormData>({
+  class: 'w-[840px]',
   async onConfirm() {
     const { valid } = await formApi.validate();
     if (!valid) {
@@ -61,12 +105,14 @@ const [Modal, modalApi] = useVbenModal<StyleFormData>({
     const data = await formApi.getValues();
     modalApi.lock();
     try {
+      // 封面上传已下线：不传 cover_url，保留库内原 thumbnail；卡背照常保存。
       await updateCopy('decks', {
         code: data.code,
         name: data.name,
-        thumbnail: fileListToURL(data.thumbnail),
+        back_url: fileListToURL(data.back_url),
         enabled: data.enabled,
         sort_order: formData.value?.sort_order,
+        faces: buildFacesPayload(),
       });
       message.success('已保存');
       modalApi.close();
@@ -75,24 +121,37 @@ const [Modal, modalApi] = useVbenModal<StyleFormData>({
       modalApi.lock(false);
     }
   },
-  onOpenChange(isOpen) {
+  async onOpenChange(isOpen) {
     if (!isOpen) {
       return;
     }
     const data = modalApi.getData();
     if (data?.code) {
       formData.value = data;
+      applyFaceRows(
+        ((data.faces as FaceRow[]) || []).map((row) => ({
+          card_id: Number(row.card_id),
+          card_name: String(row.card_name || `牌 ${row.card_id}`),
+          image_url: row.image_url || '',
+        })),
+      );
       formApi.setValues({
         code: data.code,
         name: data.name,
         enabled: data.enabled ?? true,
-        thumbnail: fileListFromURL(
-          typeof data.thumbnail === 'string' ? data.thumbnail : '',
+        back_url: fileListFromURL(
+          typeof data.back_url === 'string' ? data.back_url : '',
         ),
       });
-    } else {
-      formData.value = null;
-      formApi.reset();
+      return;
+    }
+    formData.value = null;
+    formApi.reset();
+    try {
+      await loadBlankFaces();
+    } catch {
+      faceRows.value = [];
+      faceUploads.value = {};
     }
   },
 });
@@ -103,5 +162,42 @@ defineExpose({ modalApi });
 <template>
   <Modal :title="getTitle">
     <Form class="mx-4" />
+    <div class="mx-4 mb-4">
+      <div class="mb-2 text-sm font-medium">卡面（本套 78 张；文案在「牌目录」，售价在「价位」）</div>
+      <Table
+        :columns="[
+          { title: '序号', dataIndex: 'card_id', width: 72 },
+          { title: '牌名', dataIndex: 'card_name', width: 120 },
+          { title: '预览', dataIndex: 'preview', width: 72 },
+          { title: '图片', dataIndex: 'upload' },
+        ]"
+        :data-source="faceRows"
+        :locale="{ emptyText: '正在加载 78 张牌…' }"
+        :pagination="false"
+        :scroll="{ y: 320 }"
+        row-key="card_id"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'preview'">
+            <Image
+              v-if="fileListToURL(faceUploads[record.card_id])"
+              :src="fileListToURL(faceUploads[record.card_id])"
+              :width="40"
+            />
+            <span v-else>—</span>
+          </template>
+          <template v-else-if="column.dataIndex === 'upload'">
+            <Upload
+              v-bind="imageUploadProps('decks')"
+              :file-list="faceUploads[record.card_id] || []"
+              @update:file-list="(list) => setFaceUpload(record.card_id, list as UploadFile[])"
+            >
+              上传
+            </Upload>
+          </template>
+        </template>
+      </Table>
+    </div>
   </Modal>
 </template>

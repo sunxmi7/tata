@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -24,7 +25,6 @@ const (
 	participationEmptyTitle  = "暂无参与记录"
 	participationPendingNote = "列表字段与空状态待产品确认。此处不展示伪造记录。"
 	rewardEmptyTitle         = "暂无奖励记录"
-	rewardPendingNote        = "奖励发放与记录字段待产品确认。集合页不写未确认的奖励承诺。"
 
 	helpSearchEmptyTitle = "暂时没有找到相关问题"
 	helpSearchEmptyHint  = "换个关键词，或向我们反馈"
@@ -32,14 +32,14 @@ const (
 )
 
 func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
 	if uid == 0 {
 		return biz("登录后才能查看兑换记录")
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT r.id, r.created_at, c.code, c.benefit_name, c.kind, c.amount
+	rows, err := a.Store.Query(r.Context(), `SELECT r.id, r.created_at, c.code, c.benefit_name, c.kind, c.amount, c.sku_code
 		FROM redeem_redemptions r
 		JOIN redeem_codes c ON c.id = r.code_id
 		WHERE r.user_id=$1
@@ -53,24 +53,25 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 	for rows.Next() {
 		var id int64
 		var created sql.NullTime
-		var code, benefit, kind string
+		var code, benefit, kind, skuCode string
 		var amount int
-		if err := rows.Scan(&id, &created, &code, &benefit, &kind, &amount); err != nil {
+		if err := rows.Scan(&id, &created, &code, &benefit, &kind, &amount, &skuCode); err != nil {
 			return err
-		}
-		unit := "diamond"
-		var label any = T(r.Context(), displayLabelTataCoin)
-		if kind == "free_count" {
-			unit = "count"
-			label = nil
 		}
 		var at any
 		if created.Valid {
 			at = created.Time
 		}
+		unit := ""
+		var label any
+		if kind == redeemKindBare || kind == iapKindQuotaPack {
+			unit = "quota"
+			label = T(r.Context(), displayLabelQuota)
+		}
 		items = append(items, map[string]any{
 			"id": id, "created_at": at, "code": code, "benefit_name": benefit,
-			"kind": kind, "amount": amount, "unit": unit, "display_label": label,
+			"kind": kind, "amount": amount, "sku_code": skuCode,
+			"unit": unit, "display_label": label,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -84,19 +85,25 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appCampaigns(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, status
-		FROM campaigns WHERE enabled=true ORDER BY sort_order, campaign_id`)
+	now := time.Now()
+	rows, err := a.Store.Query(r.Context(), `SELECT campaign_id, title, subtitle, badge, status, COALESCE(image_url,'')
+		FROM campaigns WHERE enabled=true
+		AND (start_at IS NULL OR start_at<=$1)
+		AND (end_at IS NULL OR end_at>$1)
+		ORDER BY sort_order, campaign_id`, now)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var id, title, subtitle, badge, status string
-		if err := rows.Scan(&id, &title, &subtitle, &badge, &status); err != nil {
+		var id, title, subtitle, badge, status, imageURL string
+		if err := rows.Scan(&id, &title, &subtitle, &badge, &status, &imageURL); err != nil {
 			return err
 		}
-		items = append(items, campaignCard(r, id, title, subtitle, badge, status))
+		card := campaignCard(r, id, title, subtitle, badge, status)
+		card["image_url"] = emptyAsNil(absoluteAssetURL(r, imageURL))
+		items = append(items, card)
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -128,26 +135,37 @@ func (a *App) appCampaign(w http.ResponseWriter, r *http.Request) error {
 	if !validContentID(id) {
 		return biz("活动不存在")
 	}
-	var title, subtitle, detailTitle, detailBody, detailStatus, status string
+	var title, subtitle, detailTitle, detailBody, detailStatus, status, imageURL string
 	var enabled bool
-	err := a.Store.QueryRow(r.Context(), `SELECT title, subtitle, detail_title, detail_body, detail_status, status, enabled
-		FROM campaigns WHERE campaign_id=$1`, id).Scan(&title, &subtitle, &detailTitle, &detailBody, &detailStatus, &status, &enabled)
+	var startAt, endAt sql.NullTime
+	err := a.Store.QueryRow(r.Context(), `SELECT title, subtitle, detail_title, detail_body, detail_status, status, enabled, start_at, end_at, COALESCE(image_url,'')
+		FROM campaigns WHERE campaign_id=$1`, id).Scan(&title, &subtitle, &detailTitle, &detailBody, &detailStatus, &status, &enabled, &startAt, &endAt, &imageURL)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !enabled) {
 		return biz("活动不存在")
 	}
 	if err != nil {
 		return err
 	}
+	now := time.Now()
+	if startAt.Valid && now.Before(startAt.Time) {
+		return biz("活动不存在")
+	}
+	if endAt.Valid && !now.Before(endAt.Time) {
+		return biz("活动不存在")
+	}
 	writeOK(w, map[string]any{
 		"id": id, "title": detailTitle, "list_title": title, "subtitle": subtitle,
 		"status": status, "body": detailBody, "body_status": detailStatus,
 		"detail_delivered": detailStatus == "ready",
+		"image_url":        emptyAsNil(absoluteAssetURL(r, imageURL)),
+		"start_at":         nullTime(startAt),
+		"end_at":           nullTime(endAt),
 	})
 	return nil
 }
 
 func (a *App) appCampaignParticipations(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -159,14 +177,47 @@ func (a *App) appCampaignParticipations(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *App) appCampaignRewards(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
 	if uid == 0 {
 		return biz("登录后才能查看奖励记录")
 	}
-	writeOK(w, placeholderList(r, rewardEmptyTitle, rewardPendingNote))
+	rows, err := a.Store.Query(r.Context(), `SELECT id, invitee_name, invitee_avatar, amount, created_at
+		FROM invite_rewards WHERE inviter_id=$1 ORDER BY id DESC LIMIT 100`, uid)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var name, avatar string
+		var amount int
+		var created sql.NullTime
+		if err := rows.Scan(&id, &name, &avatar, &amount, &created); err != nil {
+			return err
+		}
+		var at any
+		if created.Valid {
+			at = created.Time
+		}
+		items = append(items, map[string]any{
+			"id": id, "kind": "friend_invite", "title": inviteRewardTitle(r, name),
+			"friend_name": inviteFriendName(name),
+			"avatar_url":  emptyAsNil(absoluteAssetURL(r, avatar)),
+			"amount":      amount, "unit": "count", "amount_label": inviteAmountLabel(r, amount),
+			"created_at": at,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeOK(w, map[string]any{
+		"items": items, "empty_title": T(r.Context(), rewardEmptyTitle),
+		"fields_confirmed": true,
+	})
 	return nil
 }
 

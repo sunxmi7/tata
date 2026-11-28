@@ -1,4 +1,8 @@
+import type { AppUser, Operator, ReadingRow } from '#/api/tata';
+
 import { ref, shallowRef } from 'vue';
+
+import { useAccessStore } from '@vben/stores';
 
 import { listOperators, listReadings, listUsers } from '#/api/tata';
 
@@ -8,18 +12,12 @@ function asNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-export function formatUserRecord(user: Record<string, unknown>): string {
-  const id = user.id as number;
-  const email = user.email as string | null | undefined;
-  const phone = user.phone as string | null | undefined;
-  const wechat = user.wechat_openid as string | null | undefined;
-  const apple = user.apple_sub as string | null | undefined;
+export function formatUserRecord(user: AppUser): string {
   const hint =
-    (email && String(email).trim()) ||
-    (phone && String(phone).trim()) ||
-    (wechat && `微信 …${String(wechat).slice(-6)}`) ||
-    (apple && `Apple …${String(apple).slice(-6)}`);
-  return hint ? `${hint} (#${id})` : `用户 #${id}`;
+    (user.email && String(user.email).trim()) ||
+    (user.wechat_openid && `微信 …${String(user.wechat_openid).slice(-6)}`) ||
+    (user.apple_sub && `Apple …${String(user.apple_sub).slice(-6)}`);
+  return hint ? `${hint} (#${user.id})` : `用户 #${user.id}`;
 }
 
 export function useTataLookups() {
@@ -29,28 +27,25 @@ export function useTataLookups() {
   const ready = ref(false);
 
   async function loadLookups() {
-    const [users, operators, readings] = await Promise.all([
-      listUsers(),
-      listOperators(),
-      listReadings(),
+    const codes = new Set(useAccessStore().accessCodes);
+    const can = (module: string) => codes.has('write') || codes.has(module);
+    const [usersPage, operators, readings] = await Promise.all([
+      can('accounts')
+        ? listUsers({ limit: 200, offset: 0 })
+        : Promise.resolve({ items: [] as AppUser[] }),
+      can('accounts') ? listOperators() : Promise.resolve([] as Operator[]),
+      can('records') ? listReadings() : Promise.resolve([] as ReadingRow[]),
     ]);
-    userLabels.value = new Map(
-      users.map((user) => [user.id as number, formatUserRecord(user)]),
-    );
+    const users = usersPage.items || [];
+    userLabels.value = new Map(users.map((user) => [user.id, formatUserRecord(user)]));
     operatorLabels.value = new Map(
-      operators.map((op) => {
-        const id = op.id as number;
-        const name = String(op.username ?? id);
-        return [id, `${name} (#${id})`];
-      }),
+      operators.map((op: Operator) => [op.id, `${op.username} (#${op.id})`]),
     );
     readingLabels.value = new Map(
-      readings.map((row) => {
-        const id = row.id as number;
+      readings.map((row: ReadingRow) => {
         const question = String(row.question ?? '').trim();
-        const short =
-          question.length > 24 ? `${question.slice(0, 24)}…` : question;
-        return [id, short ? `#${id} · ${short}` : `#${id}`];
+        const short = question.length > 24 ? `${question.slice(0, 24)}…` : question;
+        return [row.id, short ? `#${row.id} · ${short}` : `#${row.id}`];
       }),
     );
     ready.value = true;

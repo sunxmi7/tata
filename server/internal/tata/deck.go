@@ -66,6 +66,14 @@ type drawnCard struct {
 	CardID       int    `json:"card_id"`
 	Name         string `json:"name"`
 	Orientation  string `json:"orientation"`
+	Number       int    `json:"number,omitempty"`
+}
+
+type numerologySlot struct {
+	Number      int    `json:"number"`
+	CardID      int    `json:"card_id"`
+	Name        string `json:"name"`
+	Orientation string `json:"orientation"`
 }
 
 func drawCards(positions []position) ([]drawnCard, error) {
@@ -122,8 +130,8 @@ func drawCardsSkipping(positions []position, skip map[int]bool) ([]drawnCard, er
 	return out, nil
 }
 
-// drawCardsNumerology maps 1–78 unique numbers onto the Rider-Waite deck in
-// position order. Orientation stays upright; the number only selects the card.
+// drawCardsNumerology is the yearly pick map: number N is Rider-Waite card N,
+// upright. A reading's numerology draw uses a persisted 78-card map instead.
 func drawCardsNumerology(positions []position, numbers []int) ([]drawnCard, error) {
 	return drawCardsNumerologySkipping(positions, numbers, nil)
 }
@@ -154,6 +162,93 @@ func drawCardsNumerologySkipping(positions []position, numbers []int, skip map[i
 			CardID:       c.ID,
 			Name:         c.Name,
 			Orientation:  "upright",
+		}
+	}
+	return out, nil
+}
+
+func newNumerologyMap() ([]numerologySlot, error) {
+	all := deck()
+	order := make([]int, len(all))
+	for i := range order {
+		order[i] = i
+	}
+	for i := len(order) - 1; i > 0; i-- {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return nil, err
+		}
+		j := int(n.Int64())
+		order[i], order[j] = order[j], order[i]
+	}
+	out := make([]numerologySlot, len(all))
+	for i, idx := range order {
+		c := all[idx]
+		out[i] = numerologySlot{Number: i + 1, CardID: c.ID, Name: c.Name}
+	}
+	if err := assignMixedOrientations(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func assignMixedOrientations(out []numerologySlot) error {
+	for {
+		upright, reversed := 0, 0
+		for i := range out {
+			bit, err := rand.Int(rand.Reader, big.NewInt(2))
+			if err != nil {
+				return err
+			}
+			ori := "upright"
+			upright++
+			if bit.Int64() == 1 {
+				ori = "reversed"
+				upright--
+				reversed++
+			}
+			out[i].Orientation = ori
+		}
+		if upright > 0 && reversed > 0 {
+			return nil
+		}
+	}
+}
+
+func cardsFromNumerologyMap(slots []numerologySlot, numbers []int, positions []position) ([]drawnCard, error) {
+	if len(numbers) == 0 {
+		return nil, biz("请输入灵数")
+	}
+	if len(slots) != 78 {
+		return nil, biz("灵数映射不完整")
+	}
+	byNumber := make(map[int]numerologySlot, len(slots))
+	seenCard := make(map[int]bool, len(slots))
+	for _, slot := range slots {
+		if slot.Number < 1 || slot.Number > 78 || byNumber[slot.Number].Number != 0 || seenCard[slot.CardID] {
+			return nil, biz("灵数映射不完整")
+		}
+		byNumber[slot.Number] = slot
+		seenCard[slot.CardID] = true
+	}
+	seen := make(map[int]bool, len(numbers))
+	out := make([]drawnCard, len(numbers))
+	for i, n := range numbers {
+		if n < 1 || n > 78 {
+			return nil, biz("灵数须为 1 到 78 的整数")
+		}
+		if seen[n] {
+			return nil, biz("灵数不能重复")
+		}
+		seen[n] = true
+		slot := byNumber[n]
+		pos := position{Index: i + 1}
+		if i < len(positions) {
+			pos = positions[i]
+		}
+		out[i] = drawnCard{
+			Position: pos.Index, PositionName: pos.Name,
+			CardID: slot.CardID, Name: slot.Name, Orientation: slot.Orientation, Number: n,
 		}
 	}
 	return out, nil

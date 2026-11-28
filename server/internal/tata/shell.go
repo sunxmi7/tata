@@ -33,59 +33,72 @@ var feedbackCategories = map[string]bool{
 }
 
 func (a *App) appExploreTopics(w http.ResponseWriter, r *http.Request) error {
-	rows, err := a.Store.Query(r.Context(), `SELECT topic_id, group_key, group_title, title, subtitle, illustration, spread_id, sort_order
-		FROM explore_topics ORDER BY sort_order, topic_id`)
+	themeKey := strings.TrimSpace(r.URL.Query().Get("theme_key"))
+	q := `SELECT id, name, description, card_count, short_sentence, theme_key, theme_title, theme_subtitle, positions, quick_questions
+		FROM spreads WHERE enabled=true AND theme_key<>''`
+	args := []any{}
+	if themeKey != "" {
+		q += ` AND theme_key=$1`
+		args = append(args, themeKey)
+	}
+	q += ` ORDER BY sort_order, id`
+	rows, err := a.Store.Query(r.Context(), q, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	type group struct {
-		Key    string
-		Title  string
-		Topics []map[string]any
+	type theme struct {
+		Key, Title, Subtitle string
+		Spreads              []map[string]any
 	}
 	order := []string{}
-	groups := map[string]*group{}
+	themes := map[string]*theme{}
 	for rows.Next() {
-		var topicID, groupKey, groupTitle, title, subtitle string
-		var illustration sql.NullString
-		var spreadID sql.NullInt64
-		var sort int
-		if err := rows.Scan(&topicID, &groupKey, &groupTitle, &title, &subtitle, &illustration, &spreadID, &sort); err != nil {
+		var id int64
+		var name, desc, short, key, title, subtitle, positions, questions string
+		var count int
+		if err := rows.Scan(&id, &name, &desc, &count, &short, &key, &title, &subtitle, &positions, &questions); err != nil {
 			return err
 		}
-		g, ok := groups[groupKey]
+		item, ok := themes[key]
 		if !ok {
-			g = &group{Key: groupKey, Title: groupTitle, Topics: []map[string]any{}}
-			groups[groupKey] = g
-			order = append(order, groupKey)
+			item = &theme{Key: key, Title: title, Subtitle: subtitle, Spreads: []map[string]any{}}
+			themes[key] = item
+			order = append(order, key)
 		}
-		item := map[string]any{
-			"topic_id": topicID, "title": title, "subtitle": subtitle,
-			"illustration": nullString(illustration),
-			"spread": map[string]any{
-				"spread_id": nullInt(spreadID),
-				"stub":      !spreadID.Valid,
-			},
-		}
-		g.Topics = append(g.Topics, item)
+		item.Spreads = append(item.Spreads, map[string]any{
+			"id": id, "name": T(r.Context(), name), "card_count": count,
+			"short_sentence": T(r.Context(), short), "description": T(r.Context(), desc),
+			"positions": json.RawMessage(positions), "quick_questions": json.RawMessage(questions),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	if themeKey != "" {
+		item := themes[themeKey]
+		if item == nil || len(item.Spreads) == 0 {
+			return biz("探索主题不存在")
+		}
+		writeOK(w, map[string]any{
+			"theme_key": item.Key, "title": T(r.Context(), item.Title), "subtitle": T(r.Context(), item.Subtitle),
+			"spreads": item.Spreads,
+		})
+		return nil
+	}
 	out := make([]map[string]any, 0, len(order))
 	for _, key := range order {
-		g := groups[key]
+		item := themes[key]
 		out = append(out, map[string]any{
-			"group_key": g.Key, "title": g.Title, "topics": g.Topics,
+			"theme_key": item.Key, "title": T(r.Context(), item.Title), "subtitle": T(r.Context(), item.Subtitle),
 		})
 	}
-	writeOK(w, map[string]any{"groups": out})
+	writeOK(w, map[string]any{"themes": out})
 	return nil
 }
 
 func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -98,7 +111,23 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	rawCode := strings.TrimSpace(req.Code)
+	if _, ok := inviteAccountID(rawCode); ok {
+		if err := a.applyInvite(r.Context(), uid, rawCode, "code"); err != nil {
+			return err
+		}
+		remaining, err := inviteBalance(r.Context(), a.Store, uid)
+		if err != nil {
+			return err
+		}
+		writeOK(w, map[string]any{
+			"code": rawCode, "kind": "invite", "benefit_name": "邀请奖励", "amount": inviteRewardAmount,
+			"unit": "count", "display_label": T(r.Context(), "次"),
+			"invite_remaining": remaining,
+		})
+		return nil
+	}
+	code := strings.ToUpper(rawCode)
 	if code == "" || utf8.RuneCountInString(code) > 64 {
 		return biz("兑换码无效")
 	}
@@ -111,13 +140,13 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var codeID int64
-	var kind, benefit string
+	var kind, benefit, skuCode, addon string
 	var amount int
 	var max sql.NullInt64
 	var enabled bool
 	var expires sql.NullTime
-	err = tx.QueryRow(r.Context(), `SELECT id, kind, amount, benefit_name, max_redemptions, enabled, expires_at
-		FROM redeem_codes WHERE code=$1 FOR UPDATE`, code).Scan(&codeID, &kind, &amount, &benefit, &max, &enabled, &expires)
+	err = tx.QueryRow(r.Context(), `SELECT id, kind, amount, benefit_name, sku_code, addon_deck_code, max_redemptions, enabled, expires_at
+		FROM redeem_codes WHERE code=$1 FOR UPDATE`, code).Scan(&codeID, &kind, &amount, &benefit, &skuCode, &addon, &max, &enabled, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return biz("兑换码无效")
 	}
@@ -147,100 +176,85 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	now := time.Now().UTC()
-	var ledgerID any
-	pack, sub := 0, 0
-	switch kind {
-	case "diamonds":
-		id, p, s, err := creditRedeemDiamonds(r.Context(), tx, uid, amount, codeID, now)
-		if err != nil {
-			return err
-		}
-		ledgerID, pack, sub = id, p, s
-	case "free_count":
-		if err := creditRedeemFree(r.Context(), tx, uid, amount); err != nil {
-			return err
-		}
-		pack, sub, err = diamondTotals(r.Context(), tx, uid)
-		if err != nil {
-			return err
-		}
-	default:
-		return biz("兑换码无效")
+	out := map[string]any{
+		"code": code, "benefit_name": benefit, "kind": kind,
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO redeem_redemptions(code_id, user_id, diamond_ledger_id, created_at)
+	var ledgerID any
+	if skuCode != "" {
+		sku, err := loadRedeemSKU(r.Context(), tx, skuCode)
+		if err != nil {
+			return err
+		}
+		if err := validateRedeemSKU(sku, addon); err != nil {
+			return err
+		}
+		extra, lid, err := fulfillRedeemSKU(r.Context(), tx, uid, codeID, sku, addon)
+		if err != nil {
+			return err
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		if lid != nil {
+			ledgerID = *lid
+		}
+	} else {
+		if kind != redeemKindBare || amount <= 0 {
+			return biz("兑换码无效")
+		}
+		id, err := creditRedeemQuota(r.Context(), tx, uid, amount, codeID)
+		if err != nil {
+			return err
+		}
+		ledgerID = id
+		out["amount"] = amount
+		out["unit"] = "quota"
+		out["kind"] = redeemKindBare
+	}
+	if _, err := tx.Exec(r.Context(), `INSERT INTO redeem_redemptions(code_id, user_id, quota_ledger_id, created_at)
 		VALUES ($1,$2,$3,$4)`, codeID, uid, ledgerID, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	unit := "diamond"
-	if kind == "free_count" {
-		unit = "count"
+	quota, _ := loadQuotaBalance(r.Context(), a.Store, uid)
+	out["display_label"] = T(r.Context(), displayLabelQuota)
+	out["quota_remaining"] = quota
+	out["balance"] = quota
+	if _, ok := out["unit"]; !ok && out["kind"] == redeemKindBare {
+		out["unit"] = "quota"
 	}
-	writeOK(w, map[string]any{
-		"code": code, "benefit_name": benefit, "kind": kind, "amount": amount,
-		"unit": unit, "display_label": T(r.Context(), displayLabelTataCoin),
-		"pack_diamonds": pack, "subscription_diamonds": sub, "balance": pack + sub,
-	})
+	writeOK(w, out)
 	return nil
 }
 
-func creditRedeemDiamonds(ctx context.Context, tx Tx, uid int64, amount int, codeID int64, now time.Time) (int64, int, int, error) {
-	if _, err := tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return 0, 0, 0, err
-	}
-	var pack, sub int
-	if err := tx.QueryRow(ctx, `SELECT pack_diamonds, subscription_diamonds FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&pack, &sub); err != nil {
-		return 0, 0, 0, err
-	}
-	after := pack + amount
-	if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET pack_diamonds=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
-		return 0, 0, 0, err
+func creditRedeemQuota(ctx context.Context, tx Tx, uid int64, amount int, codeID int64) (int64, error) {
+	txn := "redeem:" + fmtID(codeID) + ":" + fmtID(uid)
+	if _, err := creditQuota(ctx, tx, uid, amount, nil, txn, redeemReason); err != nil {
+		return 0, err
 	}
 	var ledgerID int64
-	txn := "redeem:" + fmtID(codeID) + ":" + fmtID(uid)
-	if err := tx.QueryRow(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, store_transaction_id, reason, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		uid, iapBucketPack, amount, after, txn, redeemReason, now).Scan(&ledgerID); err != nil {
-		return 0, 0, 0, err
+	if err := tx.QueryRow(ctx, `SELECT id FROM quota_ledger WHERE user_id=$1 AND store_transaction_id=$2 ORDER BY id DESC LIMIT 1`, uid, txn).Scan(&ledgerID); err != nil {
+		return 0, err
 	}
-	return ledgerID, after, sub, nil
-}
-
-func creditRedeemFree(ctx context.Context, tx Tx, uid int64, amount int) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining)
-		VALUES ($1, now(), now(), 0, 0)
-		ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE rewards SET admin_grant_remaining = admin_grant_remaining + $2 WHERE user_id=$1`, uid, amount)
-	return err
-}
-
-func diamondTotals(ctx context.Context, q rowQuery, uid int64) (int, int, error) {
-	var pack, sub int
-	err := q.QueryRow(ctx, `SELECT pack_diamonds, subscription_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&pack, &sub)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, nil
-	}
-	return pack, sub, err
+	return ledgerID, nil
 }
 
 func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
 	if uid == 0 {
 		return biz("登录后才能查看余额流水")
 	}
-	pack, sub, err := diamondTotals(r.Context(), a.Store, uid)
+	quota, err := loadQuotaBalance(r.Context(), a.Store, uid)
 	if err != nil {
 		return err
 	}
 	rows, err := a.Store.Query(r.Context(), `SELECT created_at, reason, delta, balance_after, bucket
-		FROM diamond_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 100`, uid)
+		FROM quota_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 100`, uid)
 	if err != nil {
 		return err
 	}
@@ -262,8 +276,8 @@ func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	writeOK(w, map[string]any{
-		"items": items, "display_label": T(r.Context(), displayLabelTataCoin), "unit": "diamond",
-		"pack_diamonds": pack, "subscription_diamonds": sub, "balance": pack + sub,
+		"items": items, "display_label": T(r.Context(), displayLabelQuota), "unit": "quota",
+		"quota_remaining": quota, "balance": quota,
 	})
 	return nil
 }
@@ -273,7 +287,7 @@ func ledgerNote(reason string) string {
 	case "iap_pack_grant", "iap_restore_pack_grant":
 		return "充值入账"
 	case "iap_period_refresh", "iap_restore_period_refresh":
-		return "会员钻石刷新"
+		return "会员额度刷新"
 	case "quota_spend":
 		return "占卜消耗"
 	case grantReason:
@@ -286,7 +300,7 @@ func ledgerNote(reason string) string {
 }
 
 func (a *App) appUploads(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -341,6 +355,12 @@ func (a *App) serveUpload(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		_, _ = w.Write(defaultCardPNG)
+		return
+	}
+	if name == defaultAvatarName {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(defaultAvatarPNG)
 		return
 	}
 	if !validUploadPath(name) {
@@ -411,6 +431,7 @@ var uploadFolders = map[string]bool{
 	"cards":    true,
 	"feedback": true,
 	"misc":     true,
+	"custom":   true,
 }
 
 func parseUploadFolder(r *http.Request) (string, error) {
@@ -428,7 +449,7 @@ func parseUploadFolder(r *http.Request) (string, error) {
 }
 
 func validUploadPath(name string) bool {
-	if name == defaultCardThumbnailName {
+	if name == defaultCardThumbnailName || name == defaultAvatarName {
 		return true
 	}
 	folder, file, ok := strings.Cut(name, "/")
@@ -481,19 +502,31 @@ func validUploadName(name string) bool {
 	return false
 }
 
+func forwardedFirst(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	return v
+}
+
 func requestBaseURL(r *http.Request) string {
 	scheme := "http"
-	if r != nil && r.TLS != nil {
-		scheme = "https"
-	}
-	if r != nil {
-		if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
-			scheme = proto
-		}
-	}
 	host := ""
 	if r != nil {
-		host = strings.TrimSpace(r.Host)
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if proto := forwardedFirst(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+			scheme = proto
+		}
+		host = forwardedFirst(r.Header.Get("X-Forwarded-Host"))
+		if host == "" {
+			host = strings.TrimSpace(r.Host)
+		}
 	}
 	if host == "" {
 		host = "127.0.0.1:8080"
@@ -544,7 +577,7 @@ func randomHex(n int) (string, error) {
 }
 
 func (a *App) appWishlist(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -580,7 +613,7 @@ func (a *App) appWishlist(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appFeedback(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -625,7 +658,7 @@ func (a *App) appFeedback(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appGetNotificationPrefs(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -641,7 +674,7 @@ func (a *App) appGetNotificationPrefs(w http.ResponseWriter, r *http.Request) er
 }
 
 func (a *App) appPutNotificationPrefs(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -900,16 +933,38 @@ func publicBlurb(blurb, copy string) string {
 	return copy
 }
 
-func attachDailyHome(item map[string]any, target, business string, yi, thumbnail any) {
+func attachDailyHome(item map[string]any, target, drawDate, targetDate string, yi, message, thumbnail any) {
 	if target == "" {
 		target = "today"
 	}
 	item["target"] = target
-	item["business_date"] = business
+	// Keep persisted draw/target dates on reuse so calendar bucket stays the draw day.
+	if bd, _ := item["business_date"].(string); strings.TrimSpace(bd) == "" {
+		item["business_date"] = drawDate
+	}
+	fortune := strings.TrimSpace(targetDate)
+	if fortune == "" {
+		if td, _ := item["target_date"].(string); strings.TrimSpace(td) != "" {
+			fortune = strings.TrimSpace(td)
+		} else {
+			fortune = drawDate
+		}
+	}
+	if fortune != "" {
+		item["target_date"] = fortune
+	}
+	bucket := drawDate
+	if bd, _ := item["business_date"].(string); strings.TrimSpace(bd) != "" {
+		bucket = strings.TrimSpace(bd)
+	}
+	if bucket != "" {
+		item["draw_date"] = bucket
+	}
 	name := firstCardName(item["cards"])
 	item["card_name"] = name
 	item["short_text"] = clipText(interpText(item["interpretation"]), 48)
 	item["yi"] = yi
+	item["card_message"] = message
 	item["card_thumbnail"] = thumbnail
 	item["has_result"] = name != ""
 }
@@ -960,6 +1015,14 @@ func firstCardName(v any) string {
 	return cards[0].Name
 }
 
+func firstCardOrientation(v any) string {
+	cards := parsePreviewCards(v)
+	if len(cards) == 0 {
+		return ""
+	}
+	return cards[0].Orientation
+}
+
 func readingTypeLabel(typ string) string {
 	switch typ {
 	case "daily":
@@ -999,6 +1062,12 @@ func attachCalendarPreview(r *http.Request, item map[string]any, cfg map[string]
 	item["card_thumbnail"] = absoluteAssetAny(r, resolveCardThumbnail(cfg, name))
 	typ, _ := item["type"].(string)
 	item["type_label"] = readingTypeLabel(typ)
+	// Advance-drawn tomorrow fortune displays as 普通占卜 on the draw-day calendar.
+	if typ == "daily" {
+		if label, _ := item["conversation_label"].(string); label == "普通占卜" {
+			item["type_label"] = label
+		}
+	}
 	item["tarotist_name"] = emptyAsNil(tarotistName)
 	item["tarotist_avatar"] = emptyAsNil(absoluteAssetURL(r, tarotistAvatar))
 	delete(item, "cards")

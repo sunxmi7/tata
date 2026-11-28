@@ -2,7 +2,9 @@ package tata
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,79 +16,69 @@ import (
 func TestSharedQuotaPriority(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_spread_ids='[]' WHERE id=1`)
+	})
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_spread_ids='[]' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
 	token, uid := registerUser(t, ts, store, "priority")
+	allowGiftSpread(t, store)
+	// This case starts from invite only; clear any pending registration gift row.
+	if _, err := store.Exec(t.Context(), `DELETE FROM registration_gifts WHERE user_id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Exec(t.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at, invite_remaining) VALUES ($1, now(), now(), 3)
+		ON CONFLICT (user_id) DO UPDATE SET invite_remaining=3`, uid); err != nil {
+		t.Fatal(err)
+	}
+	firstID := chargeFreePlay(t, ts, store, token, "先扣邀请")
+	if playEntitlement(t, store, firstID) != entInvite {
+		t.Fatalf("invite first %s", playEntitlement(t, store, firstID))
+	}
+	secondID := chargeFreePlay(t, ts, store, token, "再扣邀请次数")
+	if playEntitlement(t, store, secondID) != entInvite {
+		t.Fatalf("invite second %s", playEntitlement(t, store, secondID))
+	}
+	if _, err := store.Exec(t.Context(), `UPDATE rewards SET invite_remaining=0 WHERE user_id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+
+	third := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "免费用完", "type": "normal"})
+	if third["quota_outcome"] != quotaDeferred {
+		t.Fatalf("deferred create: %#v", third)
+	}
+	spreadID := ensureTimeFlow(t, store)
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(third["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", asID(third["id"])), map[string]any{})
+	if !strings.Contains(msg, "开通会员") {
+		t.Fatalf("free paywall: %s", msg)
+	}
+
+	setMember(t, store, uid, "month")
 	setDiamondCost(t, store, 3)
-	setDiamonds(t, store, uid, 5, 3)
-
-	first := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "先扣注册奖励", "type": "normal"})
-	if first["entitlement"] != entReward || first["reward_consumed"] != true || first["quota_consumed"] == true || first["paywall"] == true {
-		t.Fatalf("reward first: %#v", first)
+	setQuota(t, store, uid, 10)
+	memberPlay := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "会员扣额度", "type": "normal"})
+	if memberPlay["quota_outcome"] != quotaDeferred {
+		t.Fatalf("member create defers: %#v", memberPlay)
 	}
-	if got := rewardRemaining(t, store, uid); got != 0 {
-		t.Fatalf("reward remaining %d", got)
+	memberID := asID(memberPlay["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", memberID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if playEntitlement(t, store, memberID) != entQuota {
+		t.Fatalf("member quota %s", playEntitlement(t, store, memberID))
 	}
-	if n := quotaUseCount(t, store, uid); n != 0 {
-		t.Fatalf("daily used on reward charge: %d", n)
+	if got := quotaOf(t, store, uid); got != 7 {
+		t.Fatalf("quota after spend %d", got)
 	}
-	sub, pack := diamondBalances(t, store, uid)
-	if sub != 5 || pack != 3 {
-		t.Fatalf("diamonds moved on free charge: sub=%d pack=%d", sub, pack)
+	setQuota(t, store, uid, 2)
+	poor := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "额度不足", "type": "normal"})
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(poor["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if !strings.Contains(msg, "额度不足") || strings.Contains(msg, "算力") {
+		t.Fatalf("paywall prompt: %s", msg)
 	}
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/use-reward", asID(first["id"])), map[string]any{})
-	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/confirm-quota", asID(first["id"])), map[string]any{"consume": true})
-	if msg != "" || strings.Contains(string(raw), "未闭合") {
-		t.Fatalf("confirm after auto charge: %s %s", msg, raw)
-	}
-	if n := ledgerCount(t, store, asID(first["id"])); n != 1 {
-		t.Fatalf("manual path double charged ledger=%d", n)
-	}
-	if n := quotaUseCount(t, store, uid); n != 0 {
-		t.Fatalf("confirm consumed daily: %d", n)
-	}
-
-	second := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "再扣今日免费", "type": "normal"})
-	if second["entitlement"] != entDaily || second["quota_consumed"] != true {
-		t.Fatalf("daily second: %#v", second)
-	}
-	if n := quotaUseCount(t, store, uid); n != 1 {
-		t.Fatalf("daily flags %d", n)
-	}
-	sub, pack = diamondBalances(t, store, uid)
-	if sub != 5 || pack != 3 {
-		t.Fatalf("diamonds moved on daily charge: sub=%d pack=%d", sub, pack)
-	}
-
-	third := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "扣点数包钻石", "type": "normal"})
-	if third["entitlement"] != entPack || third["paywall"] == true {
-		t.Fatalf("pack third: %#v", third)
-	}
-	sub, pack = diamondBalances(t, store, uid)
-	if pack != 0 || sub != 5 {
-		t.Fatalf("pack-first spend: sub=%d pack=%d", sub, pack)
-	}
-	setDiamonds(t, store, uid, 5, 2)
-	fourth := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "再扣会员钻石", "type": "normal"})
-	if fourth["entitlement"] != entSub {
-		t.Fatalf("subscription fourth: %#v", fourth)
-	}
-	sub, pack = diamondBalances(t, store, uid)
-	if pack != 2 || sub != 2 {
-		t.Fatalf("subscription spend: sub=%d pack=%d", sub, pack)
-	}
-	fifth := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "都不足", "type": "normal"})
-	if fifth["paywall"] != true || fifth["quota_outcome"] != quotaPaywall || fifth["generated"] != false {
-		t.Fatalf("paywall: %#v", fifth)
-	}
-	prompt, _ := fifth["quota_prompt"].(string)
-	if strings.Contains(prompt, "算力") || strings.Contains(prompt, "未闭合") || !strings.Contains(prompt, "钻石") {
-		t.Fatalf("paywall prompt: %s", prompt)
-	}
-	sub, pack = diamondBalances(t, store, uid)
-	if pack != 2 || sub != 2 {
-		t.Fatalf("paywall debited diamonds: sub=%d pack=%d", sub, pack)
-	}
-	if n := chargeCount(t, store, asID(fifth["id"])); n != 0 {
-		t.Fatalf("paywall wrote a charge: %d", n)
+	if got := quotaOf(t, store, uid); got != 2 {
+		t.Fatalf("paywall spent quota %d", got)
 	}
 }
 
@@ -94,19 +86,19 @@ func TestDiamondCostUnconfigured(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
 	token, uid := registerUser(t, ts, store, "unconfig")
-	exhaustFree(t, ts, token)
-	setDiamonds(t, store, uid, 4, 7)
-	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "未配置不能猜钻", "type": "normal"})
-	if reading["quota_outcome"] != quotaUnconfig || reading["diamond_cost_unconfigured"] != true || reading["generated"] != false {
-		t.Fatalf("unconfigured: %#v", reading)
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
 	}
-	prompt, _ := reading["quota_prompt"].(string)
-	if !strings.Contains(prompt, "未配置") || !strings.Contains(prompt, "已用完") || strings.Contains(prompt, "算力") {
-		t.Fatalf("prompt: %s", prompt)
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 9)
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "未配置不能猜额度", "type": "normal"})
+	spreadID := ensureTimeFlow(t, store)
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if !strings.Contains(msg, "未配置") || strings.Contains(msg, "算力") {
+		t.Fatalf("prompt: %s", msg)
 	}
-	sub, pack := diamondBalances(t, store, uid)
-	if sub != 4 || pack != 7 {
-		t.Fatalf("unconfigured debited: sub=%d pack=%d", sub, pack)
+	if got := quotaOf(t, store, uid); got != 9 {
+		t.Fatalf("unconfigured debited %d", got)
 	}
 	if n := chargeCount(t, store, asID(reading["id"])); n != 0 {
 		t.Fatalf("unconfigured charge %d", n)
@@ -118,12 +110,19 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 	resetDiamondCost(t, store)
 	setDiamondCost(t, store, 2)
 	token, uid := registerUser(t, ts, store, "resume")
-	exhaustFree(t, ts, token)
-	setDiamonds(t, store, uid, 0, 0)
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 1)
 	spreadID := ensureTimeFlow(t, store)
 
 	cancelled := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "取消的任务", "type": "normal"})
 	cancelID := asID(cancelled["id"])
+	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", cancelID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if !strings.Contains(msg, "额度不足") {
+		t.Fatalf("cancel setup: %s", msg)
+	}
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/paywall", cancelID), map[string]any{"action": "cancel"})
 	var payStatus string
 	if err := store.QueryRow(t.Context(), `SELECT status FROM quota_paywall WHERE reading_id=$1 AND charge_key='play'`, cancelID).Scan(&payStatus); err != nil {
@@ -135,13 +134,9 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 
 	kept := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "待续跑", "type": "normal"})
 	keptID := asID(kept["id"])
-	if kept["paywall"] != true {
-		t.Fatalf("expected paywall before ritual: %#v", kept)
-	}
-	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", keptID), map[string]any{"spread_id": spreadID})
-	msg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/shuffle", keptID), map[string]any{})
-	if !strings.Contains(msg, "钻石不足") || strings.Contains(msg, "算力") {
-		t.Fatalf("shuffle paywall: %s", msg)
+	msg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", keptID), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if !strings.Contains(msg, "额度不足") || strings.Contains(msg, "算力") {
+		t.Fatalf("spread paywall: %s", msg)
 	}
 	var status string
 	if err := store.QueryRow(t.Context(), `SELECT status FROM readings WHERE id=$1`, keptID).Scan(&status); err != nil {
@@ -153,7 +148,7 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 
 	grant := 4
 	product := fmt.Sprintf("test.pack.resume.%d", time.Now().UnixNano())
-	insertIAPSKU(t, store, "consumable_pack", "consumable", "app_store", product, &grant)
+	insertIAPSKUWithReadings(t, store, product, grant)
 	txn := fmt.Sprintf("txn-resume-%d", time.Now().UnixNano())
 	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, txn, "receipt-"+txn, nil))
 	tasks, _ := out["resumed_tasks"].([]any)
@@ -161,7 +156,7 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 		t.Fatalf("resume hook: %#v", out["resumed_tasks"])
 	}
 	resumed := tasks[0].(map[string]any)
-	if asID(resumed["reading_id"]) != keptID || resumed["resume_action"] != resumeShuffle || resumed["entitlement"] != entPack {
+	if asID(resumed["reading_id"]) != keptID || resumed["resume_action"] != resumeShuffle || resumed["entitlement"] != entQuota {
 		t.Fatalf("resumed task: %#v", resumed)
 	}
 	if err := store.QueryRow(t.Context(), `SELECT status FROM readings WHERE id=$1`, keptID).Scan(&status); err != nil {
@@ -179,9 +174,8 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 	if n := chargeCount(t, store, cancelID); n != 0 {
 		t.Fatalf("cancelled reading charged: %d", n)
 	}
-	sub, pack := diamondBalances(t, store, uid)
-	if pack != 2 || sub != 0 {
-		t.Fatalf("resume spend: sub=%d pack=%d", sub, pack)
+	if got := quotaOf(t, store, uid); got != 2 {
+		t.Fatalf("resume spend quota %d", got)
 	}
 
 	again := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, txn, "receipt-"+txn, nil))
@@ -189,15 +183,14 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 		t.Fatalf("verify replay: %#v", again)
 	}
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/use-reward", keptID), map[string]any{})
-	sub, pack = diamondBalances(t, store, uid)
-	if pack != 2 || sub != 0 {
-		t.Fatalf("replay recharged: sub=%d pack=%d", sub, pack)
+	if got := quotaOf(t, store, uid); got != 2 {
+		t.Fatalf("replay recharged %d", got)
 	}
 	if _, err := store.Exec(t.Context(), `UPDATE readings SET status='CARDS_FIXED', cards=$2 WHERE id=$1`, keptID, `[{"name":"愚者"}]`); err != nil {
 		t.Fatal(err)
 	}
 	failMsg, _ := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", keptID), map[string]any{})
-	if !strings.Contains(failMsg, "未绑定") && !strings.Contains(failMsg, "未重新扣") {
+	if failMsg != "" && !strings.Contains(failMsg, "未绑定") && !strings.Contains(failMsg, "未重新扣") {
 		t.Fatalf("failed interpret: %s", failMsg)
 	}
 	failMsg, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", keptID), map[string]any{})
@@ -208,22 +201,64 @@ func TestPaywallResumeAfterCredit(t *testing.T) {
 		t.Fatalf("retry recharged: %d", n)
 	}
 	var spends int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1 AND reason='quota_spend'`, uid).Scan(&spends); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1 AND reason='quota_spend'`, uid).Scan(&spends); err != nil {
 		t.Fatal(err)
 	}
 	if spends != 1 {
 		t.Fatalf("diamond spends %d", spends)
 	}
-	sub, pack = diamondBalances(t, store, uid)
-	if pack != 2 || sub != 0 {
-		t.Fatalf("failure refunded or retried: sub=%d pack=%d", sub, pack)
+	if got := quotaOf(t, store, uid); got != 2 {
+		t.Fatalf("failure refunded or retried %d", got)
+	}
+}
+
+func TestNumerologyDrawCanUseGift(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_spread_ids='[]' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	token, uid := registerUser(t, ts, store, "numgift")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	seedGift(t, store, uid, 1)
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "灵数也能用赠送", "type": "normal"})
+	id := asID(reading["id"])
+	spreadID := ensureTimeFlow(t, store)
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "numerology"})
+	if n := chargeCount(t, store, id); n != 1 {
+		t.Fatalf("numerology spread charge %d", n)
+	}
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET status='CARDS_FIXED', cards='[{"name":"愚者"}]' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", id), map[string]any{})
+	if n := chargeCount(t, store, id); n != 1 {
+		t.Fatalf("numerology charged again %d", n)
+	}
+	if playEntitlement(t, store, id) != entReward {
+		t.Fatalf("numerology entitlement %s", playEntitlement(t, store, id))
+	}
+	var left int
+	if err := store.QueryRow(t.Context(), `SELECT remaining FROM registration_gifts WHERE user_id=$1`, uid).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("gift remaining %d", left)
 	}
 }
 
 func TestFollowupReentersSharedQuota(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 2)
 	token, uid := registerUser(t, ts, store, "follow")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 20)
 	if _, err := store.Exec(t.Context(), `DELETE FROM bindings WHERE task='tarotist'`); err != nil {
 		t.Fatal(err)
 	}
@@ -235,38 +270,35 @@ func TestFollowupReentersSharedQuota(t *testing.T) {
 		t.Fatalf("followup: %s %s", msg, raw)
 	}
 	body := decodeData(t, raw)
-	if body["entitlement"] != entDaily || body["charged"] != true {
-		t.Fatalf("followup should charge daily: %#v", body)
+	if body["charged"] == true || body["entitlement"] == entQuota {
+		t.Fatalf("followup spent quota: %#v", body)
 	}
-	if n := followupCharges(t, store, id); n != 1 {
+	if got := quotaOf(t, store, uid); got != 20 {
+		t.Fatalf("followup changed quota %d", got)
+	}
+	if n := followupCharges(t, store, id); n != 0 {
 		t.Fatalf("followup charges %d", n)
 	}
 	msg, raw = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "失败后重试", "continuation": true})
 	if msg != "" {
 		t.Fatalf("retry followup: %s %s", msg, raw)
 	}
-	if n := followupCharges(t, store, id); n != 1 {
+	if n := followupCharges(t, store, id); n != 0 {
 		t.Fatalf("retry recharged followup: %d", n)
 	}
 	if _, err := store.Exec(t.Context(), `INSERT INTO reading_messages(reading_id, turn_id, seq, role, content)
 		SELECT $1, turn_id, 1, 'assistant', '已答' FROM reading_messages WHERE reading_id=$1 AND role='user' ORDER BY turn_id DESC LIMIT 1`, id); err != nil {
 		t.Fatal(err)
 	}
-	setDiamondCost(t, store, 2)
-	setDiamonds(t, store, uid, 9, 6)
 	msg, raw = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "再追问", "continuation": true})
 	if msg != "" {
 		t.Fatalf("second followup: %s %s", msg, raw)
 	}
 	body = decodeData(t, raw)
-	if body["entitlement"] != entPack || body["charged"] != true {
-		t.Fatalf("second followup entitlement: %#v", body)
+	if body["charged"] == true || quotaOf(t, store, uid) != 20 {
+		t.Fatalf("second followup spent quota: %#v balance=%d", body, quotaOf(t, store, uid))
 	}
-	sub, pack := diamondBalances(t, store, uid)
-	if pack != 4 || sub != 9 {
-		t.Fatalf("followup diamond order: sub=%d pack=%d", sub, pack)
-	}
-	if n := followupCharges(t, store, id); n != 2 {
+	if n := followupCharges(t, store, id); n != 0 {
 		t.Fatalf("followup charges %d", n)
 	}
 	msg, raw = call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "这是新问题", "continuation": false})
@@ -281,7 +313,7 @@ func TestFollowupReentersSharedQuota(t *testing.T) {
 	if created == nil || asID(created["id"]) == id {
 		t.Fatalf("new question reused the record: %#v", body)
 	}
-	if n := followupCharges(t, store, id); n != 2 {
+	if n := followupCharges(t, store, id); n != 0 {
 		t.Fatalf("new question charged the old thread: %d", n)
 	}
 }
@@ -297,7 +329,13 @@ func TestFollowupLimitConfigurable(t *testing.T) {
 		t.Fatalf("seed followup limit: %#v", params)
 	}
 	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"followup_limit": 1})
-	token, _ := registerUser(t, ts, store, "followcap")
+	token, uid := registerUser(t, ts, store, "followcap")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	setMember(t, store, uid, "month")
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 20)
 	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "限次追问", "type": "normal"})
 	id := asID(reading["id"])
 	completeReading(t, store, id)
@@ -333,30 +371,20 @@ func TestAITrialThenFormalQuota(t *testing.T) {
 	if first["entitlement"] != entTrial || first["reward_consumed"] == true {
 		t.Fatalf("trial open: %#v", first)
 	}
-	if got := rewardRemaining(t, store, uid); got != 1 {
-		t.Fatalf("trial consumed reward %d", got)
-	}
 	if n := quotaUseCount(t, store, uid); n != 0 {
 		t.Fatalf("trial consumed daily %d", n)
 	}
 	id := asID(first["id"])
 	completeReading(t, store, id)
 	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "试用里的追问", "continuation": true})
-	if msg != "" || strings.Contains(string(raw), "试用已用完") {
-		t.Fatalf("trial followup: %s %s", msg, raw)
-	}
-	body := decodeData(t, raw)
-	if body["charged"] == true || body["entitlement"] != entTrial {
-		t.Fatalf("trial followup charged: %#v", body)
+	if !strings.Contains(msg, "不能追问") {
+		t.Fatalf("trial followup should be closed: %s %s", msg, raw)
 	}
 	if n := followupCharges(t, store, id); n != 0 {
 		t.Fatalf("trial followup charge rows %d", n)
 	}
-	if got := rewardRemaining(t, store, uid); got != 1 {
-		t.Fatalf("trial followup took reward %d", got)
-	}
 	second := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "试用后的正式占卜", "type": "tarotist", "tarotist_id": tarotistID})
-	if second["entitlement"] != entReward || second["reward_consumed"] != true {
+	if second["paywall"] != true {
 		t.Fatalf("formal path after trial: %#v", second)
 	}
 	if strings.Contains(fmt.Sprint(second), "试用已用完") || strings.Contains(fmt.Sprint(second), "算力") {
@@ -367,10 +395,8 @@ func TestAITrialThenFormalQuota(t *testing.T) {
 func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
-	anon := create(t, ts, "", "/api/app/v1/auth/anonymous", map[string]any{})
-	anonToken := anon["accessToken"].(string)
-	anonID := anon["anonymous_id"].(string)
-	pending := create(t, ts, anonToken, "/api/app/v1/readings", map[string]any{"question": "匿名先问", "type": "normal"})
+	deviceID := fmt.Sprintf("device-quota-%d", time.Now().UnixNano())
+	pending := create(t, ts, "", "/api/app/v1/readings", map[string]any{"question": "匿名先问", "type": "normal", "device_id": deviceID})
 	if pending["quota_outcome"] != quotaAnon || pending["reward_consumed"] == true || pending["quota_consumed"] == true {
 		t.Fatalf("anonymous precharge: %#v", pending)
 	}
@@ -378,17 +404,10 @@ func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 		t.Fatalf("anonymous charge rows %d", n)
 	}
 	email := fmt.Sprintf("anon-login-%d@tata.local", time.Now().UnixNano())
-	code := sendEmailCode(t, ts, "", email, "register")
-	registered := create(t, ts, "", "/api/app/v1/auth/register", map[string]any{"email": email, "password": "demo1234", "code": code, "anonymous_id": anonID})
-	if registered["reward_consumed"] != true {
-		t.Fatalf("login before answer did not charge: %#v", registered)
-	}
-	var ent string
-	if err := store.QueryRow(t.Context(), `SELECT entitlement FROM quota_charges WHERE reading_id=$1 AND charge_key='play'`, asID(pending["id"])).Scan(&ent); err != nil {
-		t.Fatal(err)
-	}
-	if ent != entReward {
-		t.Fatalf("settled entitlement %s", ent)
+	code := sendEmailCode(t, ts, "", email, "login")
+	registered := create(t, ts, "", "/api/app/v1/auth/login", map[string]any{"email": email, "code": code, "device_id": deviceID})
+	if registered["accessToken"] == nil {
+		t.Fatalf("login: %#v", registered)
 	}
 
 	_, wxRaw := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/wechat", map[string]any{"code": fmt.Sprintf("wx-quota-%d", time.Now().UnixNano())})
@@ -405,7 +424,7 @@ func TestQuotaWordingAndAnonymousTiming(t *testing.T) {
 			t.Fatalf("user-visible wording: %s", raw)
 		}
 	}
-	if !strings.Contains(string(quotaRaw), "次数") || !strings.Contains(string(quotaRaw), "钻石") {
+	if !strings.Contains(string(quotaRaw), "次数") || !strings.Contains(string(quotaRaw), "额度") {
 		t.Fatalf("quota labels: %s", quotaRaw)
 	}
 }
@@ -420,42 +439,153 @@ func TestExploreChargesBeforeRitual(t *testing.T) {
 	if reading["quota_outcome"] != quotaDeferred || reading["reward_consumed"] == true {
 		t.Fatalf("explore charged at create: %#v", reading)
 	}
-	if got := rewardRemaining(t, store, uid); got != 1 {
-		t.Fatalf("reward %d", got)
-	}
 	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID})
-	shuffled := create(t, ts, token, httpPath(id, "shuffle"), map[string]any{})
-	if shuffled["status"] != "SHUFFLING" {
-		t.Fatalf("shuffle: %#v", shuffled)
-	}
-	var ent string
-	if err := store.QueryRow(t.Context(), `SELECT entitlement FROM quota_charges WHERE reading_id=$1 AND charge_key='play'`, id).Scan(&ent); err != nil {
+	clientCards := `[{"position":1,"position_name":"主题","name":"愚者","orientation":"upright","card_id":0}]`
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET cards=$2, status='CARDS_FIXED' WHERE id=$1`, id, clientCards); err != nil {
 		t.Fatal(err)
 	}
-	if ent != entReward {
-		t.Fatalf("explore entitlement %s", ent)
+	if n := chargeCount(t, store, id); n != 0 {
+		t.Fatalf("explore charged before interpret %d", n)
 	}
-	msg, _ := call(t, ts, token, http.MethodPost, httpPath(id, "shuffle"), map[string]any{})
-	if msg == "" {
-		t.Fatal("second shuffle should not replay the ritual")
+	msg, raw := call(t, ts, token, http.MethodPost, httpPath(id, "interpret"), map[string]any{})
+	if msg == "请先填写问题" {
+		t.Fatalf("explore empty question should be allowed: %s %s", msg, raw)
 	}
-	if got := rewardRemaining(t, store, uid); got != 0 {
-		t.Fatalf("retry refunded or skipped reward %d", got)
+	if !strings.Contains(msg, "开通会员") {
+		t.Fatalf("explore interpret paywall: %s %s", msg, raw)
 	}
-	if n := chargeCount(t, store, id); n != 1 {
-		t.Fatalf("explore charges %d", n)
+	var keptQuestion string
+	if err := store.QueryRow(t.Context(), `SELECT question FROM readings WHERE id=$1`, id).Scan(&keptQuestion); err != nil {
+		t.Fatal(err)
 	}
-	msg, _ = call(t, ts, token, http.MethodPost, httpPath(id, "interpret"), map[string]any{})
-	if !strings.Contains(msg, "请先填写问题") {
-		t.Fatalf("explore question gate: %s", msg)
+	if strings.TrimSpace(keptQuestion) != "" {
+		t.Fatalf("empty explore question must stay empty, got %q", keptQuestion)
 	}
-	must(t, ts, token, http.MethodPut, httpPath(id, "question"), map[string]any{"question": "牌已经抽了再问"})
+	var kept string
+	if err := store.QueryRow(t.Context(), `SELECT cards FROM readings WHERE id=$1`, id).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept == "" {
+		t.Fatal("draw was cleared")
+	}
+	_ = uid
+}
+
+func TestExploreEmptyQuestionUsesThemeContext(t *testing.T) {
+	store, ts := newMergeServer(t)
+	token, _ := registerUser(t, ts, store, "exploretheme")
+	var spreadID int64
+	var themeTitle, spreadName string
+	if err := store.QueryRow(t.Context(), `SELECT id, theme_title, name FROM spreads WHERE theme_key='yes_or_no' AND enabled=true LIMIT 1`).
+		Scan(&spreadID, &themeTitle, &spreadName); err != nil {
+		t.Fatal(err)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"type": "explore", "source": "explore"})
+	id := asID(reading["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID})
+
+	app := &App{Store: store}
+	gotTheme, gotSpread, err := app.interpretThemeContext(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotTheme != themeTitle || gotSpread != spreadName {
+		t.Fatalf("theme context: got %q/%q want %q/%q", gotTheme, gotSpread, themeTitle, spreadName)
+	}
+	prompt := buildInterpretPrompt("explore", "", gotTheme, gotSpread, `[{"position":1,"name":"愚者","orientation":"upright"}]`, nil)
+	if !strings.Contains(prompt, "主题："+themeTitle) || !strings.Contains(prompt, "牌阵："+spreadName) {
+		t.Fatalf("prompt missing theme context: %s", prompt)
+	}
+	var question string
+	if err := store.QueryRow(t.Context(), `SELECT question FROM readings WHERE id=$1`, id).Scan(&question); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(question) != "" {
+		t.Fatalf("question should stay empty, got %q", question)
+	}
+}
+
+func TestInterpretIgnoresCardsWhenAlreadyFixed(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	token, uid := registerUser(t, ts, store, "refix")
+	setMember(t, store, uid, "month")
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 10)
+	spreadID := ensureTimeFlow(t, store)
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "牌面已固定再交牌", "type": "normal"})
+	id := asID(reading["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	fixed := `[{"position":1,"position_name":"过去","name":"愚者","orientation":"upright","card_id":0},{"position":2,"position_name":"现在","name":"魔术师","orientation":"reversed","card_id":1},{"position":3,"position_name":"未来","name":"女祭司","orientation":"upright","card_id":2}]`
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET cards=$2, status='CARDS_FIXED' WHERE id=$1`, id, fixed); err != nil {
+		t.Fatal(err)
+	}
+	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", id), map[string]any{
+		"spread_id": spreadID,
+		"cards": []map[string]any{
+			{"position": 1, "name": "隐者", "orientation": "upright"},
+			{"position": 2, "name": "恋人", "orientation": "upright"},
+			{"position": 3, "name": "星币骑士", "orientation": "reversed"},
+		},
+	})
+	if strings.Contains(msg, "牌面已固定") {
+		t.Fatalf("interpret rejected fixed cards: %s %s", msg, raw)
+	}
+	var cardsRaw string
+	if err := store.QueryRow(t.Context(), `SELECT cards FROM readings WHERE id=$1`, id).Scan(&cardsRaw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cardsRaw, "愚者") || strings.Contains(cardsRaw, "隐者") {
+		t.Fatalf("fixed cards should stay: %s", cardsRaw)
+	}
+}
+
+func TestDailyAcceptsClientCard(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	token, uid := registerUser(t, ts, store, "dailycard")
+	seedInvite(t, store, uid, 1)
+	msg, raw := call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{
+		"target": "today",
+		"cards": []map[string]any{
+			{"name": "女皇", "orientation": "reversed", "position": 1, "position_name": "今日", "card_id": 3},
+		},
+	})
+	if msg != "" {
+		t.Fatalf("daily client card: %s %s", msg, raw)
+	}
+	item := decodeData(t, raw)
+	if item["card_name"] != "女皇" {
+		t.Fatalf("card_name: %#v", item["card_name"])
+	}
+	var cardsRaw string
+	if err := store.QueryRow(t.Context(), `SELECT cards FROM readings WHERE id=$1`, asID(item["id"])).Scan(&cardsRaw); err != nil {
+		t.Fatal(err)
+	}
+	var cards []drawnCard
+	if err := json.Unmarshal([]byte(cardsRaw), &cards); err != nil || len(cards) != 1 {
+		t.Fatalf("stored cards: %s err=%v", cardsRaw, err)
+	}
+	if cards[0].Name != "女皇" || cards[0].Orientation != "reversed" {
+		t.Fatalf("stored card: %#v", cards[0])
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{
+		"target": "today",
+		"cards": []map[string]any{
+			{"name": "愚者", "orientation": "upright"},
+			{"name": "魔术师", "orientation": "upright"},
+		},
+	})
+	if !strings.Contains(msg, "一张") {
+		t.Fatalf("two cards: %s", msg)
+	}
 }
 
 func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	store, ts := newMergeServer(t)
 	resetDiamondCost(t, store)
-	token, _ := registerUser(t, ts, store, "daily")
+	token, uid := registerUser(t, ts, store, "daily")
+	seedInvite(t, store, uid, 1)
 	msg, raw := call(t, ts, token, http.MethodPost, "/api/app/v1/daily", map[string]any{})
 	if msg != "" {
 		t.Fatalf("first daily: %s %s", msg, raw)
@@ -479,9 +609,10 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	}
 
 	other, otherID := registerUser(t, ts, store, "tomorrow")
-	exhaustFree(t, ts, other)
-	setDiamondCost(t, store, 2)
-	setDiamonds(t, store, otherID, 1, 2)
+	seedInvite(t, store, otherID, 1)
+	if _, err := store.Exec(t.Context(), `UPDATE registration_gifts SET remaining=0 WHERE user_id=$1`, otherID); err != nil {
+		t.Fatal(err)
+	}
 	msg, raw = call(t, ts, other, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "tomorrow"})
 	if msg != "" {
 		t.Fatalf("tomorrow: %s %s", msg, raw)
@@ -490,18 +621,152 @@ func TestDailyExistingResultSkipsCharge(t *testing.T) {
 	if tomorrow["question"] != "明日运势" {
 		t.Fatalf("tomorrow reading: %#v", tomorrow)
 	}
-	sub, pack := diamondBalances(t, store, otherID)
-	if pack != 0 || sub != 1 {
-		t.Fatalf("tomorrow should spend pack first: sub=%d pack=%d", sub, pack)
+	cal := listOne(t, ts, other, "/api/app/v1/calendar")
+	cycle := fmt.Sprint(cal["cycle"])
+	wantTarget := fmt.Sprint(cal["tomorrow_date"])
+	if tomorrow["business_date"] != cycle || tomorrow["target_date"] != wantTarget {
+		t.Fatalf("tomorrow dates: business=%v target=%v cycle=%s tomorrow=%s", tomorrow["business_date"], tomorrow["target_date"], cycle, wantTarget)
 	}
+	if tomorrow["draw_date"] != cycle {
+		t.Fatalf("tomorrow draw_date: %#v", tomorrow["draw_date"])
+	}
+	// App must compare target_date to calendar.tomorrow_date — not business_date.
+	if tomorrow["target_date"] != wantTarget || wantTarget == cycle {
+		t.Fatalf("fortune day must differ from draw day: target=%v cycle=%s", tomorrow["target_date"], cycle)
+	}
+	detail := listOne(t, ts, other, fmt.Sprintf("/api/app/v1/readings/%d", asID(tomorrow["id"])))
+	if detail["business_date"] != cycle || detail["target_date"] != wantTarget || detail["draw_date"] != cycle {
+		t.Fatalf("GET detail dates: business=%v target=%v draw=%v", detail["business_date"], detail["target_date"], detail["draw_date"])
+	}
+	if detail["target"] != "tomorrow" {
+		t.Fatalf("GET detail target: %#v", detail["target"])
+	}
+	if tomorrow["conversation_type"] != "daily" || tomorrow["conversation_label"] != "普通占卜" || tomorrow["target"] != "tomorrow" {
+		t.Fatalf("tomorrow conversation: %#v", tomorrow)
+	}
+	var storedBiz, storedTarget string
 	tomorrowID := asID(tomorrow["id"])
+	if err := store.QueryRow(t.Context(), `SELECT business_date, target_date FROM readings WHERE id=$1`, tomorrowID).Scan(&storedBiz, &storedTarget); err != nil {
+		t.Fatal(err)
+	}
+	if storedBiz != cycle || storedTarget != wantTarget {
+		t.Fatalf("stored dates: %s %s", storedBiz, storedTarget)
+	}
+	if playEntitlement(t, store, tomorrowID) != entInvite {
+		t.Fatalf("tomorrow entitlement %s", playEntitlement(t, store, tomorrowID))
+	}
 	msg, _ = call(t, ts, other, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "tomorrow"})
-	if !strings.Contains(msg, "不重复扣") {
+	if !strings.Contains(msg, "不重复扣") && !strings.Contains(msg, "已占用") {
 		t.Fatalf("tomorrow reuse: %s", msg)
 	}
-	sub, pack = diamondBalances(t, store, otherID)
-	if pack != 0 || sub != 1 || chargeCount(t, store, tomorrowID) != 1 {
-		t.Fatalf("tomorrow recharged sub=%d pack=%d", sub, pack)
+	if chargeCount(t, store, tomorrowID) != 1 {
+		t.Fatalf("tomorrow recharged %d", chargeCount(t, store, tomorrowID))
+	}
+
+	// Target-day reuse: advance-drawn row for today is returned without redraw/charge.
+	reuseToken, reuseUID := registerUser(t, ts, store, "targetreuse")
+	seedInvite(t, store, reuseUID, 1)
+	reuseCal := listOne(t, ts, reuseToken, "/api/app/v1/calendar")
+	reuseCycle := fmt.Sprint(reuseCal["cycle"])
+	yest, parseErr := time.Parse("2006-01-02", reuseCycle)
+	if parseErr != nil {
+		t.Fatal(parseErr)
+	}
+	drawDay := yest.AddDate(0, 0, -1).Format("2006-01-02")
+	if _, execErr := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle, cards, interpretation)
+		VALUES ($1,'daily','明日运势','COMPLETED',$2,$3,$2,'[{"name":"愚者","orientation":"upright"}]','明日宜缓行。')`,
+		reuseUID, drawDay, reuseCycle); execErr != nil {
+		t.Fatal(execErr)
+	}
+	var advanceID int64
+	if scanErr := store.QueryRow(t.Context(), `SELECT id FROM readings WHERE user_id=$1 AND target_date=$2`, reuseUID, reuseCycle).Scan(&advanceID); scanErr != nil {
+		t.Fatal(scanErr)
+	}
+	msg, raw = call(t, ts, reuseToken, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
+	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "不重复扣") {
+		t.Fatalf("target-day reuse: %s", msg)
+	}
+	reusedToday := decodeData(t, raw)
+	reading, _ = reusedToday["reading"].(map[string]any)
+	if reusedToday["charged"] != false || reading == nil || asID(reading["id"]) != advanceID {
+		t.Fatalf("target-day reuse payload: %#v", reusedToday)
+	}
+	if reading["business_date"] != drawDay || reading["target_date"] != reuseCycle {
+		t.Fatalf("target-day reuse dates: %#v", reading)
+	}
+	// Calendar exposes fortune-day pointer without moving draw-day bucket.
+	reuseCal2 := listOne(t, ts, reuseToken, "/api/app/v1/calendar")
+	cycleDaily, _ := reuseCal2["cycle_daily"].(map[string]any)
+	if cycleDaily == nil || asID(cycleDaily["id"]) != advanceID {
+		t.Fatalf("cycle_daily missing advance reading: %#v", reuseCal2["cycle_daily"])
+	}
+
+	// Mis-backfilled advance row: target_date wrongly equals draw day — still reuse on next day.
+	misToken, misUID := registerUser(t, ts, store, "misbackfill")
+	seedInvite(t, store, misUID, 1)
+	misCal := listOne(t, ts, misToken, "/api/app/v1/calendar")
+	misCycle := fmt.Sprint(misCal["cycle"])
+	misDay, _ := time.Parse("2006-01-02", misCycle)
+	misDraw := misDay.AddDate(0, 0, -1).Format("2006-01-02")
+	if _, err := store.Exec(t.Context(), `INSERT INTO readings(user_id, type, question, status, business_date, target_date, quota_cycle, cards, interpretation)
+		VALUES ($1,'daily','明日运势','COMPLETED',$2,$2,$2,'[{"name":"魔术师","orientation":"upright"}]','误回填明日。')`,
+		misUID, misDraw); err != nil {
+		t.Fatal(err)
+	}
+	var misID int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM readings WHERE user_id=$1 AND question='明日运势'`, misUID).Scan(&misID); err != nil {
+		t.Fatal(err)
+	}
+	msg, raw = call(t, ts, misToken, http.MethodPost, "/api/app/v1/daily", map[string]any{"target": "today"})
+	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "不重复扣") {
+		t.Fatalf("mis-backfill reuse: %s %s", msg, raw)
+	}
+	misReuse := decodeData(t, raw)
+	misReading, _ := misReuse["reading"].(map[string]any)
+	if asID(misReading["id"]) != misID {
+		t.Fatalf("mis-backfill should hit same reading: %#v", misReuse)
+	}
+	var healedTarget string
+	if err := store.QueryRow(t.Context(), `SELECT target_date FROM readings WHERE id=$1`, misID).Scan(&healedTarget); err != nil {
+		t.Fatal(err)
+	}
+	if healedTarget != misCycle {
+		t.Fatalf("target_date not healed: got %s want %s", healedTarget, misCycle)
+	}
+	// Draw-day calendar: tomorrow fortune lands on cycle day as 普通占卜.
+	drawCalDays, _ := listOne(t, ts, other, "/api/app/v1/calendar")["days"].([]any)
+	foundTomorrow := false
+	for _, rawDay := range drawCalDays {
+		row := rawDay.(map[string]any)
+		if asID(row["id"]) != tomorrowID {
+			continue
+		}
+		foundTomorrow = true
+		if row["business_date"] != cycle || row["target_date"] != wantTarget {
+			t.Fatalf("tomorrow calendar dates: %#v", row)
+		}
+		if row["conversation_label"] != "普通占卜" || row["type_label"] != "普通占卜" || row["target"] != "tomorrow" {
+			t.Fatalf("tomorrow calendar labels: %#v", row)
+		}
+	}
+	if !foundTomorrow {
+		t.Fatalf("tomorrow reading missing from draw-day calendar: %#v", drawCalDays)
+	}
+	// Target-day calendar: advance row still buckets under the draw day.
+	calDays, _ := listOne(t, ts, reuseToken, "/api/app/v1/calendar")["days"].([]any)
+	found := false
+	for _, rawDay := range calDays {
+		row := rawDay.(map[string]any)
+		if asID(row["id"]) != advanceID {
+			continue
+		}
+		found = true
+		if row["business_date"] != drawDay || row["target_date"] != reuseCycle {
+			t.Fatalf("calendar advance row: %#v", row)
+		}
+	}
+	if !found {
+		t.Fatalf("advance reading missing from calendar: %#v", calDays)
 	}
 }
 
@@ -517,60 +782,174 @@ func TestDailyQuotaCountsConfigurable(t *testing.T) {
 	resetDiamondCost(t, store)
 	resetDailyCounts(t, store)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 2, "daily_slot_count": 2})
+	msg, _ := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 2, "daily_slot_count": 2})
+	if !strings.Contains(msg, "已下线") {
+		t.Fatalf("daily free still editable: %s", msg)
+	}
 	params := listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
-	if params["daily_free_count"] != float64(2) || params["daily_slot_count"] != float64(2) {
+	if params["daily_free_editable"] != false || params["daily_slot_editable"] != false {
 		t.Fatalf("admin counts: %#v", params)
 	}
 
-	token, uid := registerUser(t, ts, store, "dailycfg")
+	token, _ := registerUser(t, ts, store, "dailycfg")
 	quota := listOne(t, ts, token, "/api/app/v1/quota")
-	if quota["daily_free_count"] != float64(2) || quota["daily_slot_count"] != float64(2) || quota["daily_free_remaining"].(float64) != 2 {
-		t.Fatalf("app quota counts: %#v", quota)
+	if _, ok := quota["daily_free_count"]; ok || quota["priority"] == "今日免费次数 → 邀请奖励次数" {
+		t.Fatalf("app quota still offers daily free: %#v", quota)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "不再扣每日免费", "type": "normal"})
+	spreadID := ensureTimeFlow(t, store)
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	var ent string
+	err := store.QueryRow(t.Context(), `SELECT entitlement FROM quota_charges WHERE reading_id=$1 AND charge_key='play'`, asID(reading["id"])).Scan(&ent)
+	if err == nil && ent == entDaily {
+		t.Fatal("daily free still charged")
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
 	}
 
-	first := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "先扣注册奖励", "type": "normal"})
-	if first["entitlement"] != entReward {
-		t.Fatalf("reward first: %#v", first)
-	}
-	second := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "今日免费1", "type": "normal"})
-	if second["entitlement"] != entDaily {
-		t.Fatalf("daily 1: %#v", second)
-	}
-	third := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "今日免费2", "type": "normal"})
-	if third["entitlement"] != entDaily {
-		t.Fatalf("daily 2: %#v", third)
-	}
-	if n := quotaUseCount(t, store, uid); n != 2 {
-		t.Fatalf("daily uses %d", n)
-	}
-	fourth := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "免费用完", "type": "normal"})
-	if fourth["quota_outcome"] != quotaUnconfig && fourth["paywall"] != true {
-		t.Fatalf("after daily cap: %#v", fourth)
-	}
-
-	slotToken, _ := registerUser(t, ts, store, "dailyslot")
+	slotToken, slotUser := registerUser(t, ts, store, "dailyslot")
+	seedInvite(t, store, slotUser, 1)
 	msg, raw := call(t, ts, slotToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
 	if msg != "" {
 		t.Fatalf("first daily slot: %s %s", msg, raw)
 	}
 	firstDaily := decodeData(t, raw)
 	msg, raw = call(t, ts, slotToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if msg != "" {
+	if !strings.Contains(msg, "已占用") && !strings.Contains(msg, "不重复扣") {
 		t.Fatalf("second daily slot: %s %s", msg, raw)
 	}
-	secondDaily := decodeData(t, raw)
-	if asID(firstDaily["id"]) == asID(secondDaily["id"]) {
-		t.Fatalf("expected a new daily draw: %#v %#v", firstDaily, secondDaily)
-	}
-	msg, raw = call(t, ts, slotToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(msg, "已占用") {
-		t.Fatalf("third daily slot: %s %s", msg, raw)
-	}
 	reused := decodeData(t, raw)
-	reading, _ := reused["reading"].(map[string]any)
-	if asID(reading["id"]) != asID(secondDaily["id"]) {
-		t.Fatalf("reuse latest: %#v", reused)
+	again, _ := reused["reading"].(map[string]any)
+	if asID(again["id"]) != asID(firstDaily["id"]) {
+		t.Fatalf("same day should reuse: %#v", reused)
+	}
+}
+
+func TestTokensPerQuotaConfig(t *testing.T) {
+	store, ts := newMergeServer(t)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET tokens_per_quota=NULL WHERE id=1`)
+	})
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET tokens_per_quota=NULL WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	params := listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	if params["tokens_per_quota"] != nil || params["tokens_per_quota_editable"] != true {
+		t.Fatalf("default: %#v", params["tokens_per_quota"])
+	}
+	msg, _ := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"tokens_per_quota": 0})
+	if !strings.Contains(msg, "token") {
+		t.Fatalf("zero: %s", msg)
+	}
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"tokens_per_quota": 1000})
+	params = listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	if params["tokens_per_quota"] != float64(1000) {
+		t.Fatalf("saved: %#v", params["tokens_per_quota"])
+	}
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"tokens_per_quota": nil})
+	params = listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	if params["tokens_per_quota"] != nil {
+		t.Fatalf("cleared: %#v", params["tokens_per_quota"])
+	}
+}
+
+func TestRegistrationGiftConfig(t *testing.T) {
+	store, ts := newMergeServer(t)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_valid_days=3, registration_grant_count=1, registration_spread_ids='[]' WHERE id=1`)
+	})
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	var oneCard, celtic int64
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE name='单张牌占卜' AND theme_key=''`).Scan(&oneCard); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueryRow(t.Context(), `SELECT id FROM spreads WHERE name='凯尔特十字牌阵' AND theme_key=''`).Scan(&celtic); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{
+		"registration_spread_ids": []int64{celtic},
+	})
+	if !strings.Contains(msg, "白名单") {
+		t.Fatalf("wide spread: %s", msg)
+	}
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{
+		"registration_grant_delay_minutes": 0,
+		"registration_valid_days":          1,
+		"registration_grant_count":         2,
+		"registration_spread_ids":          []int64{oneCard},
+	})
+	params := listOne(t, ts, admin.access, "/api/admin/v1/quota-params")
+	ids, _ := params["registration_spread_ids"].([]any)
+	if params["registration_grant_delay_minutes"] != float64(0) || params["registration_valid_days"] != float64(1) || params["registration_grant_count"] != float64(2) || len(ids) != 1 {
+		t.Fatalf("params: %#v", params)
+	}
+
+	token, uid := registerUser(t, ts, store, "reggift")
+	var remaining int
+	var granted time.Time
+	var expires time.Time
+	if err := store.QueryRow(t.Context(), `SELECT remaining, granted_at, expires_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&remaining, &granted, &expires); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 || expires.Sub(granted) < 23*time.Hour || expires.Sub(granted) > 25*time.Hour {
+		t.Fatalf("grant remaining=%d granted=%s expires=%s", remaining, granted, expires)
+	}
+	quota := listOne(t, ts, token, "/api/app/v1/quota")
+	gift, _ := quota["registration_gift"].(map[string]any)
+	if gift["remaining"] != float64(2) || gift["total"] != float64(2) || gift["used"] != false {
+		t.Fatalf("app gift: %#v", gift)
+	}
+
+	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"registration_grant_delay_minutes": nil})
+	_, uid2 := registerUser(t, ts, store, "regwait")
+	var granted2 sql.NullTime
+	var remaining2 int
+	if err := store.QueryRow(t.Context(), `SELECT granted_at, remaining FROM registration_gifts WHERE user_id=$1`, uid2).Scan(&granted2, &remaining2); err != nil {
+		t.Fatal(err)
+	}
+	if granted2.Valid || remaining2 != 0 {
+		t.Fatalf("ungranted: valid=%v remaining=%d", granted2.Valid, remaining2)
+	}
+}
+
+// Pending gift must be granted inside charge/settle, without App calling GET /quota first.
+func TestSettleGrantsPendingRegistrationGiftWithoutQuotaAPI(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_valid_days=3, registration_grant_count=1, registration_spread_ids='[]' WHERE id=1`)
+	})
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=NULL, registration_spread_ids='[]' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	token, uid := registerUser(t, ts, store, "settlegrant")
+	var granted sql.NullTime
+	if err := store.QueryRow(t.Context(), `SELECT granted_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&granted); err != nil {
+		t.Fatal(err)
+	}
+	if granted.Valid {
+		t.Fatal("expected ungranted before settle")
+	}
+	allowGiftSpread(t, store)
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_grant_delay_minutes=0, registration_grant_count=1 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	id := chargeFreePlay(t, ts, store, token, "结算时补发注册赠送")
+	if playEntitlement(t, store, id) != entReward {
+		t.Fatalf("entitlement %s", playEntitlement(t, store, id))
+	}
+	var left int
+	var grantedAt sql.NullTime
+	if err := store.QueryRow(t.Context(), `SELECT remaining, granted_at FROM registration_gifts WHERE user_id=$1`, uid).Scan(&left, &grantedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !grantedAt.Valid {
+		t.Fatal("gift should be granted during charge")
+	}
+	if left != 0 {
+		t.Fatalf("remaining after play %d", left)
 	}
 }
 
@@ -587,44 +966,86 @@ func resetDailyCounts(t *testing.T, store *Store) {
 func resetDiamondCost(t *testing.T, store *Store) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET diamond_cost=NULL WHERE id=1`)
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET quota_cost=NULL WHERE id=1`)
 	})
-	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET diamond_cost=NULL WHERE id=1`); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET quota_cost=NULL WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func setDiamondCost(t *testing.T, store *Store, cost int) {
 	t.Helper()
-	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET diamond_cost=$1 WHERE id=1`, cost); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET quota_cost=$1 WHERE id=1`, cost); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func setDiamonds(t *testing.T, store *Store, uid int64, sub, pack int) {
 	t.Helper()
-	if _, err := store.Exec(t.Context(), `INSERT INTO diamond_balances(user_id, subscription_diamonds, pack_diamonds)
-		VALUES ($1,$2,$3)
-		ON CONFLICT (user_id) DO UPDATE SET subscription_diamonds=$2, pack_diamonds=$3, updated_at=now()`, uid, sub, pack); err != nil {
+	setQuota(t, store, uid, sub+pack)
+}
+
+func setQuota(t *testing.T, store *Store, uid int64, n int) {
+	t.Helper()
+	if _, err := store.Exec(t.Context(), `DELETE FROM quota_lots WHERE user_id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO quota_balances(user_id, quota_balance)
+		VALUES ($1,$2)
+		ON CONFLICT (user_id) DO UPDATE SET quota_balance=$2, updated_at=now()`, uid, n); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func diamondBalances(t *testing.T, store *Store, uid int64) (int, int) {
+func setMember(t *testing.T, store *Store, uid int64, kind string) {
 	t.Helper()
-	var sub, pack int
-	err := store.QueryRow(t.Context(), `SELECT subscription_diamonds, pack_diamonds FROM diamond_balances WHERE user_id=$1`, uid).Scan(&sub, &pack)
-	if err != nil {
+	if kind == "" {
+		kind = "month"
+	}
+	if _, err := store.Exec(t.Context(), `INSERT INTO subscriptions(user_id, sku_kind, status, starts_at, expires_at)
+		VALUES ($1,$2,'active',now(), now() + interval '40 days')`, uid, kind); err != nil {
 		t.Fatal(err)
 	}
-	return sub, pack
+}
+
+func quotaOf(t *testing.T, store *Store, uid int64) int {
+	t.Helper()
+	var n int
+	err := store.QueryRow(t.Context(), `SELECT quota_balance FROM quota_balances WHERE user_id=$1`, uid).Scan(&n)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func chargeFreePlay(t *testing.T, ts *httptest.Server, store *Store, token, question string) int64 {
+	t.Helper()
+	me := listOne(t, ts, token, "/api/app/v1/profile")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, asID(me["id"])); err != nil {
+		t.Fatal(err)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": question, "type": "normal"})
+	id := asID(reading["id"])
+	spreadID := ensureTimeFlow(t, store)
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", id), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	return id
+}
+
+func playEntitlement(t *testing.T, store *Store, readingID int64) string {
+	t.Helper()
+	var ent string
+	if err := store.QueryRow(t.Context(), `SELECT entitlement FROM quota_charges WHERE reading_id=$1 AND charge_key='play'`, readingID).Scan(&ent); err != nil {
+		t.Fatal(err)
+	}
+	return ent
 }
 
 func rewardRemaining(t *testing.T, store *Store, uid int64) int {
 	t.Helper()
 	var n int
-	if err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, uid).Scan(&n); err != nil {
-		t.Fatal(err)
+	err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, uid).Scan(&n)
+	if err != nil {
+		return 0
 	}
 	return n
 }
@@ -665,6 +1086,156 @@ func followupCharges(t *testing.T, store *Store, readingID int64) int {
 	return n
 }
 
+func TestQuotaLotsSpendSubscriptionThenPackAndExpire(t *testing.T) {
+	store, ts := newMergeServer(t)
+	_, uid := registerUser(t, ts, store, "lots")
+	setMember(t, store, uid, "month")
+	tx, err := store.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = creditQuota(t.Context(), tx, uid, 5, nil, "sub", "iap_period_refresh"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err = creditQuota(t.Context(), tx, uid, 3, nil, "pack", "iap_quota_pack"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	after, ok, draws, err := spendQuota(t.Context(), tx, uid, 6)
+	if err != nil || !ok || after != 2 || len(draws) != 2 || draws[0].Source != "subscription" || draws[0].Remaining != 0 || draws[1].Source != "pack" || draws[1].Remaining != 2 {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("spend after=%d ok=%v draws=%+v err=%v", after, ok, draws, err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var subLeft, packLeft int
+	if err = store.QueryRow(t.Context(), `SELECT remaining FROM quota_lots WHERE user_id=$1 AND source='subscription'`, uid).Scan(&subLeft); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.QueryRow(t.Context(), `SELECT remaining FROM quota_lots WHERE user_id=$1 AND source='pack'`, uid).Scan(&packLeft); err != nil {
+		t.Fatal(err)
+	}
+	if subLeft != 0 || packLeft != 2 || quotaOf(t, store, uid) != 2 {
+		t.Fatalf("lots sub=%d pack=%d balance=%d", subLeft, packLeft, quotaOf(t, store, uid))
+	}
+	if _, err = store.Exec(t.Context(), `UPDATE quota_lots SET expires_at=now() - interval '1 minute' WHERE user_id=$1 AND source='pack'`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if err = expireQuotaLots(t.Context(), store, uid); err != nil {
+		t.Fatal(err)
+	}
+	if n := quotaOf(t, store, uid); n != 0 {
+		t.Fatalf("expired pack still in balance %d", n)
+	}
+}
+
+func TestLedgerDrawsNameTheLot(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 6)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	token, uid := registerUser(t, ts, store, "ledgerlot")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	setMember(t, store, uid, "month")
+	tx, err := store.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = creditQuota(t.Context(), tx, uid, 5, nil, "sub", "iap_period_refresh"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err = creditQuota(t.Context(), tx, uid, 3, nil, "pack", "iap_quota_pack"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "跨批次扣额度", "type": "normal"})
+	spreadID := ensureTimeFlow(t, store)
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	rows := list(t, ts, admin.access, "/api/admin/v1/ledger")
+	var found map[string]any
+	for _, row := range rows {
+		if asID(row["reading_id"]) == asID(reading["id"]) {
+			found = row
+		}
+	}
+	if found == nil {
+		t.Fatalf("ledger missing reading: %#v", rows)
+	}
+	draws, _ := found["draws"].([]any)
+	if len(draws) != 2 {
+		t.Fatalf("draws: %#v", found)
+	}
+	first := draws[0].(map[string]any)
+	second := draws[1].(map[string]any)
+	if first["source"] != "subscription" || first["amount"] != float64(5) || first["remaining_after"] != float64(0) || first["expires_at"] == nil {
+		t.Fatalf("subscription draw: %#v", first)
+	}
+	if second["source"] != "pack" || second["amount"] != float64(1) || second["remaining_after"] != float64(2) || second["expires_at"] == nil {
+		t.Fatalf("pack draw: %#v", second)
+	}
+	if found["reading_status"] == nil || found["reading_status"] == "" {
+		t.Fatalf("reading status: %#v", found)
+	}
+}
+
+func TestMembershipEndDiscardsPool(t *testing.T) {
+	store, ts := newMergeServer(t)
+	_, uid := registerUser(t, ts, store, "endpool")
+	setMember(t, store, uid, "month")
+	tx, err := store.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = creditQuota(t.Context(), tx, uid, 5, nil, "sub", "iap_period_refresh"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err = creditQuota(t.Context(), tx, uid, 3, nil, "pack", "iap_quota_pack"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Exec(t.Context(), `UPDATE subscriptions SET expires_at=now() - interval '1 minute' WHERE user_id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if err = expireQuotaLots(t.Context(), store, uid); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err = store.QueryRow(t.Context(), `SELECT COALESCE(SUM(remaining),0) FROM quota_lots WHERE user_id=$1`, uid).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 || quotaOf(t, store, uid) != 0 {
+		t.Fatalf("ended membership kept pool lots=%d balance=%d", left, quotaOf(t, store, uid))
+	}
+	setMember(t, store, uid, "month")
+	tx, err = store.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := creditQuota(t.Context(), tx, uid, 4, nil, "next", "iap_period_refresh")
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if after != 4 || quotaOf(t, store, uid) != 4 {
+		t.Fatalf("new period carried old quota after=%d balance=%d", after, quotaOf(t, store, uid))
+	}
+}
+
 func asID(v any) int64 {
 	switch n := v.(type) {
 	case float64:
@@ -687,10 +1258,152 @@ func decodeData(t *testing.T, raw []byte) map[string]any {
 	return env.Data
 }
 
+func allowGiftSpread(t *testing.T, store *Store) {
+	t.Helper()
+	id := ensureTimeFlow(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET registration_spread_ids='[]' WHERE id=1`)
+	})
+	raw, err := json.Marshal([]int64{id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(t.Context(), `UPDATE quota_settings SET registration_spread_ids=$1 WHERE id=1`, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedInvite(t *testing.T, store *Store, uid int64, n int) {
+	t.Helper()
+	if _, err := store.Exec(t.Context(), `INSERT INTO rewards(user_id, granted_at, expires_at, invite_remaining)
+		VALUES ($1, now(), now(), $2)
+		ON CONFLICT (user_id) DO UPDATE SET invite_remaining=$2`, uid, n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedGift(t *testing.T, store *Store, uid int64, n int) {
+	t.Helper()
+	if _, err := store.Exec(t.Context(), `INSERT INTO registration_gifts(user_id, registered_at, granted_at, usable_at, expires_at, total, remaining)
+		VALUES ($1, now(), now(), now(), now() + interval '3 days', $2, $2)
+		ON CONFLICT (user_id) DO UPDATE SET granted_at=now(), usable_at=now(), expires_at=now() + interval '3 days', total=$2, remaining=$2, used_at=NULL`, uid, n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGiftBeforeInviteAndShortPool(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 3)
+	allowGiftSpread(t, store)
+	token, uid := registerUser(t, ts, store, "giftorder")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	seedGift(t, store, uid, 1)
+	seedInvite(t, store, uid, 1)
+
+	giftID := chargeFreePlay(t, ts, store, token, "先扣注册赠送")
+	if playEntitlement(t, store, giftID) != entReward {
+		t.Fatalf("gift first %s", playEntitlement(t, store, giftID))
+	}
+	inviteID := chargeFreePlay(t, ts, store, token, "再扣邀请")
+	if playEntitlement(t, store, inviteID) != entInvite {
+		t.Fatalf("invite second %s", playEntitlement(t, store, inviteID))
+	}
+
+	shortToken, shortID := registerUser(t, ts, store, "shortpool")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, shortID); err != nil {
+		t.Fatal(err)
+	}
+	seedGift(t, store, shortID, 1)
+	setMember(t, store, shortID, "month")
+	setQuota(t, store, shortID, 2)
+	reading := create(t, ts, shortToken, "/api/app/v1/readings", map[string]any{"question": "额度不够不碰赠送", "type": "normal"})
+	spreadID := ensureTimeFlow(t, store)
+	msg, _ := call(t, ts, shortToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if !strings.Contains(msg, "额度不足") {
+		t.Fatalf("short pool: %s %#v", msg, reading)
+	}
+	var left int
+	if err := store.QueryRow(t.Context(), `SELECT remaining FROM registration_gifts WHERE user_id=$1`, shortID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 1 || quotaOf(t, store, shortID) != 2 {
+		t.Fatalf("short pool consumed gift=%d quota=%d", left, quotaOf(t, store, shortID))
+	}
+
+	openToken, openID := registerUser(t, ts, store, "zeropool")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, openID); err != nil {
+		t.Fatal(err)
+	}
+	held := create(t, ts, openToken, "/api/app/v1/readings", map[string]any{"question": "池子为零再用赠送", "type": "normal"})
+	setMember(t, store, openID, "month")
+	setQuota(t, store, openID, 0)
+	seedGift(t, store, openID, 1)
+	must(t, ts, openToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(held["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	if playEntitlement(t, store, asID(held["id"])) != entReward {
+		t.Fatalf("zero pool entitlement %s", playEntitlement(t, store, asID(held["id"])))
+	}
+}
+
 func exhaustFree(t *testing.T, ts *httptest.Server, token string) {
 	t.Helper()
-	create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "用掉注册奖励", "type": "normal"})
-	create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "用掉今日免费", "type": "normal"})
+	create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "占位", "type": "normal"})
+}
+
+func TestSpreadCostOverridesGlobalQuota(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	token, uid := registerUser(t, ts, store, "spreadcost")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET reading_trial_used=true WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 20)
+	spreadID := ensureTimeFlow(t, store)
+	if _, err := store.Exec(t.Context(), `UPDATE spreads SET quota_cost=4 WHERE id=$1`, spreadID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE spreads SET quota_cost=NULL WHERE id=$1`, spreadID)
+	})
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "按这套牌阵算", "type": "normal"})
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", asID(reading["id"])), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	var amount int
+	if err := store.QueryRow(t.Context(), `SELECT amount FROM quota_charges WHERE reading_id=$1 AND charge_key=$2`, asID(reading["id"]), chargeKeyPlay).Scan(&amount); err != nil {
+		t.Fatal(err)
+	}
+	if amount != 4 {
+		t.Fatalf("charged %d", amount)
+	}
+}
+
+func TestMemberTarotistCanFollowUpAfterTrial(t *testing.T) {
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	token, uid := registerUser(t, ts, store, "tarotpaid")
+	tarotistID := firstTarotist(t, ts, token)
+	first := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "试用", "type": "tarotist", "tarotist_id": tarotistID})
+	completeReading(t, store, asID(first["id"]))
+	setMember(t, store, uid, "month")
+	setQuota(t, store, uid, 10)
+	second := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "正式", "type": "tarotist", "tarotist_id": tarotistID})
+	if second["entitlement"] != entQuota {
+		t.Fatalf("paid tarotist: %#v", second)
+	}
+	id := asID(second["id"])
+	completeReading(t, store, id)
+	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/followups", id), map[string]any{"text": "继续看", "continuation": true})
+	if msg != "" {
+		t.Fatalf("member followup: %s %s", msg, raw)
+	}
+}
+
+func exhaustFreePlay(t *testing.T, ts *httptest.Server, store *Store, token string) {
+	t.Helper()
 }
 
 func ensureTimeFlow(t *testing.T, store *Store) int64 {

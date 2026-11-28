@@ -27,17 +27,17 @@ func TestIAPSeedPricesAndAppleProductIDs(t *testing.T) {
 		}
 	}
 	type spec struct {
-		kind, bucket, apple string
-		price               float64
-		readings            any
+		kind, apple string
+		price       float64
+		grant       any
 	}
 	want := map[string]spec{
-		"sub_month":     {"month_subscription", "subscription", "tata.membership.month", 3900, nil},
-		"sub_year":      {"year_subscription", "subscription", "tata.membership.year", 19800, nil},
-		"sub_times":     {"reading_pack", "consumable", "tata.membership.times", 1990, 5.0},
-		"pack_60":       {"consumable_pack", "consumable", "tata.coin.60", 600, nil},
-		"pack_180":      {"consumable_pack", "consumable", "tata.coin.180", 1800, nil},
-		"unlock_yearly": {"yearly_unlock", "consumable", "tata.unlock.yearly", 2880, nil},
+		"sub_month":      {"month_subscription", "tata.membership.month", 3900, nil},
+		"sub_year":       {"year_subscription", "tata.membership.year", 19800, nil},
+		"pack_quota_20":  {"quota_pack", "tata.quota.20", 2000, float64(50)},
+		"pack_quota_60":  {"quota_pack", "tata.quota.60", 6000, float64(160)},
+		"pack_quota_100": {"quota_pack", "tata.quota.100", 10000, float64(300)},
+		"unlock_yearly":  {"yearly_unlock", "tata.unlock.yearly", 2880, nil},
 	}
 	found := map[string]bool{}
 	skus := list(t, ts, ro.access, "/api/admin/v1/iap/skus")
@@ -48,7 +48,7 @@ func TestIAPSeedPricesAndAppleProductIDs(t *testing.T) {
 			continue
 		}
 		found[code] = true
-		if row["kind"] != spec.kind || row["ledger_bucket"] != spec.bucket {
+		if row["kind"] != spec.kind {
 			t.Fatalf("%s mapping: %#v", code, row)
 		}
 		if row["price_amount_minor"].(float64) != spec.price || row["price_currency"] != "CNY" {
@@ -57,8 +57,8 @@ func TestIAPSeedPricesAndAppleProductIDs(t *testing.T) {
 		if row["app_store_product_id"] != spec.apple {
 			t.Fatalf("%s apple id: %#v", code, row)
 		}
-		if spec.readings != nil && row["reading_grant"] != spec.readings {
-			t.Fatalf("%s reading_grant: %#v", code, row)
+		if row["quota_grant"] != spec.grant {
+			t.Fatalf("%s grant: %#v", code, row)
 		}
 	}
 	if len(found) != len(want) {
@@ -82,13 +82,13 @@ func TestIAPVerifyCreditsDiamondsAndIgnoresFreeQuota(t *testing.T) {
 	txn := fmt.Sprintf("txn-credit-%d", time.Now().UnixNano())
 	expires := time.Now().Add(30 * 24 * time.Hour).UTC()
 	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, "orig-"+txn, "receipt-"+txn, &expires))
-	if out["idempotent"] != false || out["verify_status"] != "verified" || out["credit_status"] != "credited" || out["unit"] != "diamond" {
+	if out["idempotent"] != false || out["verify_status"] != "verified" || out["credit_status"] != "credited" || out["unit"] != "quota" {
 		t.Fatalf("verify: %#v", out)
 	}
-	if out["ledger_bucket"] != "subscription" || out["credited_diamonds"].(float64) != float64(grant) {
+	if out["sku_kind"] != "month_subscription" || out["credited_quota"].(float64) != float64(grant) {
 		t.Fatalf("credit: %#v", out)
 	}
-	if out["subscription_diamonds"].(float64) != float64(grant) || out["pack_diamonds"].(float64) != 0 {
+	if quotaNum(out) != float64(grant) {
 		t.Fatalf("balances: %#v", out)
 	}
 	sub := out["subscription"].(map[string]any)
@@ -108,6 +108,42 @@ func TestIAPVerifyCreditsDiamondsAndIgnoresFreeQuota(t *testing.T) {
 	}
 }
 
+func TestIAPEntitlementsMatchesQuotaForMember(t *testing.T) {
+	store, ts := newMergeServer(t)
+	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
+	token, uid := registerUser(t, ts, store, "iap-ent")
+	month := create(t, ts, admin.access, "/api/admin/v1/redeem-codes", map[string]any{
+		"sku_code": "sub_month", "count": 1, "max_redemptions": 1,
+	})
+	code := month["items"].([]any)[0].(map[string]any)["code"].(string)
+	redeemed := create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": code})
+	if redeemed["kind"] != "month_subscription" {
+		t.Fatalf("redeem: %#v", redeemed)
+	}
+	quota := listOne(t, ts, token, "/api/app/v1/quota")
+	ent := listOne(t, ts, token, "/api/app/v1/iap/entitlements")
+	if quota["is_member"] != true || ent["is_member"] != true {
+		t.Fatalf("member flags quota=%#v ent=%#v uid=%d", quota, ent, uid)
+	}
+	qm, _ := quota["membership"].(map[string]any)
+	em, _ := ent["membership"].(map[string]any)
+	es, _ := ent["subscription"].(map[string]any)
+	if qm == nil || em == nil || es == nil {
+		t.Fatalf("membership missing quota=%#v ent=%#v", quota, ent)
+	}
+	for _, key := range []string{"sku_kind", "status", "expires_at", "type_label"} {
+		if qm[key] != em[key] || em[key] != es[key] {
+			t.Fatalf("%s mismatch quota=%#v ent.membership=%#v ent.subscription=%#v", key, qm, em, es)
+		}
+	}
+	if em["sku_kind"] != "month" || em["status"] != "active" || em["type_label"] != "月度会员" {
+		t.Fatalf("month membership: %#v", em)
+	}
+	if quota["quota_remaining"] != ent["quota_remaining"] || quota["balance"] != ent["balance"] {
+		t.Fatalf("balance mismatch quota=%#v ent=%#v", quota, ent)
+	}
+}
+
 func TestIAPDuplicateTransactionDoesNotDoubleCredit(t *testing.T) {
 	store, ts := newMergeServer(t)
 	email := fmt.Sprintf("iap-idem-%d@tata.local", time.Now().UnixNano())
@@ -124,14 +160,14 @@ func TestIAPDuplicateTransactionDoesNotDoubleCredit(t *testing.T) {
 	if first["idempotent"] != false || second["idempotent"] != true {
 		t.Fatalf("idempotent flags: %#v %#v", first["idempotent"], second["idempotent"])
 	}
-	if second["credited_diamonds"].(float64) != float64(grant) || second["subscription_diamonds"].(float64) != float64(grant) {
+	if second["credited_quota"].(float64) != float64(grant) || quotaNum(second) != float64(grant) {
 		t.Fatalf("second credit changed balance: %#v", second)
 	}
 	var orders, ledger int
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM iap_orders WHERE store_transaction_id=$1`, txn).Scan(&orders); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1`, uid).Scan(&ledger); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1`, uid).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
 	if orders != 1 || ledger != 1 {
@@ -153,25 +189,25 @@ func TestIAPSubscriptionRefreshAndPackStaySeparate(t *testing.T) {
 	monthProduct := fmt.Sprintf("test.split.month.%d", time.Now().UnixNano())
 	packProduct := fmt.Sprintf("test.split.pack.%d", time.Now().UnixNano())
 	insertIAPSKU(t, store, "month_subscription", "subscription", "app_store", monthProduct, &subGrant)
-	insertIAPSKU(t, store, "consumable_pack", "consumable", "play", packProduct, &packGrant)
+	insertIAPSKUWithReadings(t, store, packProduct, packGrant)
 
 	expires := time.Now().Add(20 * 24 * time.Hour).UTC()
 	orig := fmt.Sprintf("orig-split-%d", time.Now().UnixNano())
 	firstTxn := orig + "-1"
 	first := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", monthProduct, firstTxn, orig, "receipt-sub-1", &expires))
-	if first["subscription_diamonds"].(float64) != 4 || first["pack_diamonds"].(float64) != 0 {
+	if quotaNum(first) != 4 {
 		t.Fatalf("first grant: %#v", first)
 	}
-	if _, err := store.Exec(t.Context(), `UPDATE diamond_balances SET subscription_diamonds=1 WHERE user_id=$1`, uid); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE quota_balances SET quota_balance=1 WHERE user_id=$1`, uid); err != nil {
 		t.Fatal(err)
 	}
 	later := time.Now().Add(40 * 24 * time.Hour).UTC()
 	secondTxn := orig + "-2"
 	refreshed := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", monthProduct, secondTxn, orig, "receipt-sub-2", &later))
-	if refreshed["subscription_diamonds"].(float64) != float64(subGrant) || refreshed["pack_diamonds"].(float64) != 0 {
-		t.Fatalf("refresh should replace the subscription bucket, not add: %#v", refreshed)
+	if refreshed["credit_status"] != "deferred" || quotaNum(refreshed) != 1 {
+		t.Fatalf("early renewal should wait: %#v", refreshed)
 	}
-	if refreshed["ledger_bucket"] != "subscription" || refreshed["credited_diamonds"].(float64) != float64(subGrant) {
+	if refreshed["sku_kind"] != "month_subscription" || refreshed["credited_quota"] != nil {
 		t.Fatalf("refresh credit: %#v", refreshed)
 	}
 	var subRows int
@@ -183,41 +219,38 @@ func TestIAPSubscriptionRefreshAndPackStaySeparate(t *testing.T) {
 	}
 
 	packTxn := fmt.Sprintf("txn-pack-%d", time.Now().UnixNano())
-	pack := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("play", packProduct, packTxn, packTxn, "receipt-pack", nil))
-	if pack["ledger_bucket"] != "consumable" || pack["credited_diamonds"].(float64) != float64(packGrant) {
+	pack := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", packProduct, packTxn, packTxn, "receipt-pack", nil))
+	if pack["sku_kind"] != "quota_pack" || pack["credited_quota"].(float64) != float64(packGrant) {
 		t.Fatalf("pack credit: %#v", pack)
 	}
-	if pack["pack_diamonds"].(float64) != float64(packGrant) || pack["subscription_diamonds"].(float64) != float64(subGrant) {
-		t.Fatalf("buckets mixed: %#v", pack)
+	if quotaNum(pack) != float64(1+packGrant) {
+		t.Fatalf("pack quota: %#v", pack)
 	}
 	if pack["subscription"] != nil || pack["period_end"] != nil {
-		t.Fatalf("consumable should not gain a subscription term: %#v", pack)
+		t.Fatalf("pack should not gain a subscription term: %#v", pack)
 	}
-	again := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("play", packProduct, packTxn, packTxn, "receipt-pack", nil))
-	if again["idempotent"] != true || again["pack_diamonds"].(float64) != float64(packGrant) {
+	again := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", packProduct, packTxn, packTxn, "receipt-pack", nil))
+	if again["idempotent"] != true || quotaNum(again) != float64(1+packGrant) {
 		t.Fatalf("pack replay: %#v", again)
 	}
 
-	var subLedger, packLedger int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1 AND bucket='subscription'`, uid).Scan(&subLedger); err != nil {
+	var quotaLedger int
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1 AND bucket='quota'`, uid).Scan(&quotaLedger); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1 AND bucket='consumable'`, uid).Scan(&packLedger); err != nil {
-		t.Fatal(err)
+	if quotaLedger != 2 {
+		t.Fatalf("ledger rows quota=%d", quotaLedger)
 	}
-	if subLedger != 2 || packLedger != 1 {
-		t.Fatalf("ledger rows subscription=%d pack=%d", subLedger, packLedger)
-	}
-	view := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/iap/diamonds?user_id=%d", uid))
-	if view["subscription_diamonds"].(float64) != float64(subGrant) || view["pack_diamonds"].(float64) != float64(packGrant) {
-		t.Fatalf("admin diamonds: %#v", view)
+	view := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/iap/quota?user_id=%d", uid))
+	if quotaNum(view) != float64(1+packGrant) {
+		t.Fatalf("admin quota: %#v", view)
 	}
 	buckets := map[string]bool{}
 	for _, item := range view["ledger"].([]any) {
 		row := item.(map[string]any)
 		buckets[row["bucket"].(string)] = true
 	}
-	if !buckets["subscription"] || !buckets["consumable"] {
+	if !buckets["quota"] {
 		t.Fatalf("admin ledger buckets: %#v", view["ledger"])
 	}
 	orders := list(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/iap/orders?user_id=%d&verify_status=verified", uid))
@@ -229,10 +262,10 @@ func TestIAPSubscriptionRefreshAndPackStaySeparate(t *testing.T) {
 		if row["user_id"].(float64) != float64(uid) || row["verify_status"] != "verified" {
 			t.Fatalf("order filter: %#v", row)
 		}
-		seen[row["ledger_bucket"].(string)] = true
+		seen[row["sku_kind"].(string)] = true
 	}
-	if !seen["subscription"] || !seen["consumable"] {
-		t.Fatalf("order buckets: %#v", orders)
+	if !seen["month_subscription"] || !seen["quota_pack"] {
+		t.Fatalf("order kinds: %#v", orders)
 	}
 	others := list(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/iap/orders?user_id=%d", other))
 	for _, row := range others {
@@ -241,6 +274,66 @@ func TestIAPSubscriptionRefreshAndPackStaySeparate(t *testing.T) {
 		}
 	}
 	assertFreeQuotaUntouched(t, store, uid)
+}
+
+func TestPrepaidPeriodCreditsWhenCurrentEnds(t *testing.T) {
+	store, ts := newMergeServer(t)
+	email := fmt.Sprintf("iap-hold-%d@tata.local", time.Now().UnixNano())
+	token := register(t, ts, email)
+	uid := userIDByEmail(t, store, email)
+	grant := 4
+	product := fmt.Sprintf("test.hold.month.%d", time.Now().UnixNano())
+	insertIAPSKU(t, store, "month_subscription", "subscription", "app_store", product, &grant)
+	firstEnd := time.Now().Add(20 * 24 * time.Hour).UTC()
+	orig := fmt.Sprintf("orig-hold-%d", time.Now().UnixNano())
+	first := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, orig+"-1", orig, "receipt-hold-1", &firstEnd))
+	if quotaNum(first) != float64(grant) {
+		t.Fatalf("first grant: %#v", first)
+	}
+	var expires time.Time
+	if err := store.QueryRow(t.Context(), `SELECT expires_at FROM subscriptions WHERE user_id=$1`, uid).Scan(&expires); err != nil {
+		t.Fatal(err)
+	}
+	nextEnd := time.Now().Add(40 * 24 * time.Hour).UTC()
+	held := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, orig+"-2", orig, "receipt-hold-2", &nextEnd))
+	if held["credit_status"] != "deferred" || quotaNum(held) != float64(grant) {
+		t.Fatalf("held: %#v", held)
+	}
+	var still, pending time.Time
+	if err := store.QueryRow(t.Context(), `SELECT expires_at, pending_expires_at FROM subscriptions WHERE user_id=$1`, uid).Scan(&still, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if !still.Equal(expires) || !pending.After(still) {
+		t.Fatalf("expires moved early: current %s pending %s", still, pending)
+	}
+	if _, err := store.Exec(t.Context(), `UPDATE subscriptions SET expires_at=now() - interval '1 minute' WHERE user_id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if err := expireQuotaLots(t.Context(), store, uid); err != nil {
+		t.Fatal(err)
+	}
+	var balance int
+	var rolled time.Time
+	var pendingLeft *time.Time
+	if err := store.QueryRow(t.Context(), `SELECT quota_balance FROM quota_balances WHERE user_id=$1`, uid).Scan(&balance); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueryRow(t.Context(), `SELECT expires_at, pending_expires_at FROM subscriptions WHERE user_id=$1`, uid).Scan(&rolled, &pendingLeft); err != nil {
+		t.Fatal(err)
+	}
+	if balance != grant || pendingLeft != nil || !rolled.After(time.Now()) {
+		t.Fatalf("rolled balance=%d expires=%s pending=%v", balance, rolled, pendingLeft)
+	}
+	if err := expireQuotaLots(t.Context(), store, uid); err != nil {
+		t.Fatal(err)
+	}
+	var again int
+	if err := store.QueryRow(t.Context(), `SELECT quota_balance FROM quota_balances WHERE user_id=$1`, uid).Scan(&again); err != nil {
+		t.Fatal(err)
+	}
+	if again != grant {
+		t.Fatalf("second roll credited again: %d", again)
+	}
 }
 
 func TestIAPYearSubscriptionRefreshesSameBucket(t *testing.T) {
@@ -254,7 +347,7 @@ func TestIAPYearSubscriptionRefreshesSameBucket(t *testing.T) {
 	expires := time.Now().Add(300 * 24 * time.Hour).UTC()
 	txn := fmt.Sprintf("txn-year-%d", time.Now().UnixNano())
 	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, txn, "receipt-year", &expires))
-	if out["ledger_bucket"] != "subscription" || out["pack_diamonds"].(float64) != 0 || out["subscription_diamonds"].(float64) != float64(grant) {
+	if out["sku_kind"] != "year_subscription" || quotaNum(out) != float64(grant) {
 		t.Fatalf("year credit: %#v", out)
 	}
 	sub := out["subscription"].(map[string]any)
@@ -303,7 +396,7 @@ func TestIAPRestoreHookUpdatesSubscriptionAndDiamonds(t *testing.T) {
 	}
 	verifyTxn := fmt.Sprintf("txn-while-hook-off-%d", time.Now().UnixNano())
 	verified := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, verifyTxn, verifyTxn, "receipt-verify", &expires))
-	if verified["credit_status"] != "credited" || verified["subscription_diamonds"].(float64) != float64(grant) {
+	if verified["credit_status"] != "credited" || quotaNum(verified) != float64(grant) {
 		t.Fatalf("verify must stay available when restore is off: %#v", verified)
 	}
 	if _, err := store.Exec(t.Context(), `UPDATE iap_settings SET restore_hook_enabled=TRUE WHERE id=1`); err != nil {
@@ -325,7 +418,7 @@ func TestIAPRestoreHookUpdatesSubscriptionAndDiamonds(t *testing.T) {
 	if first["verify_status"] != "verified" || first["source"] != "restore" || first["idempotent"] != false {
 		t.Fatalf("restore result: %#v", first)
 	}
-	if first["subscription_diamonds"].(float64) != float64(grant) || first["pack_diamonds"].(float64) != 0 {
+	if quotaNum(first) != float64(grant) {
 		t.Fatalf("restore balances: %#v", first)
 	}
 	sub := first["subscription"].(map[string]any)
@@ -344,11 +437,11 @@ func TestIAPRestoreHookUpdatesSubscriptionAndDiamonds(t *testing.T) {
 		"purchases": []map[string]any{iapBody("app_store", product, restoreTxn, restoreTxn, "receipt-restore", &expires)},
 	})
 	replay := again["results"].([]any)[0].(map[string]any)
-	if replay["idempotent"] != true || replay["subscription_diamonds"].(float64) != float64(grant) {
+	if replay["idempotent"] != true || quotaNum(replay) != float64(grant) {
 		t.Fatalf("restore replay: %#v", replay)
 	}
 	var ledger int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1 AND store_transaction_id=$2`, uid, restoreTxn).Scan(&ledger); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1 AND store_transaction_id=$2`, uid, restoreTxn).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
 	if ledger != 1 {
@@ -367,29 +460,29 @@ func TestIAPNullGrantDoesNotInventDiamonds(t *testing.T) {
 	txn := fmt.Sprintf("txn-empty-%d", time.Now().UnixNano())
 	expires := time.Now().Add(10 * 24 * time.Hour).UTC()
 	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, txn, "receipt-empty", &expires))
-	if out["verify_status"] != "verified" || out["credit_status"] != "amount_unconfigured" || out["credited_diamonds"] != nil {
+	if out["verify_status"] != "verified" || out["credit_status"] != "amount_unconfigured" || out["credited_quota"] != nil {
 		t.Fatalf("unconfigured grant: %#v", out)
 	}
-	if out["subscription_diamonds"].(float64) != 0 || out["pack_diamonds"].(float64) != 0 {
-		t.Fatalf("invented diamonds: %#v", out)
+	if quotaNum(out) != 0 {
+		t.Fatalf("invented quota: %#v", out)
 	}
 	sub := out["subscription"].(map[string]any)
 	if sub["status"] != "active" {
 		t.Fatalf("subscription should still update: %#v", sub)
 	}
 	var ledger int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1`, uid).Scan(&ledger); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1`, uid).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
 	if ledger != 0 {
 		t.Fatalf("ledger rows %d", ledger)
 	}
 	laterGrant := 4
-	if _, err := store.Exec(t.Context(), `UPDATE iap_skus SET diamond_grant=$1 WHERE app_store_product_id=$2`, laterGrant, product); err != nil {
+	if _, err := store.Exec(t.Context(), `UPDATE iap_skus SET quota_grant=$1 WHERE app_store_product_id=$2`, laterGrant, product); err != nil {
 		t.Fatal(err)
 	}
 	replay := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, txn, "receipt-empty", &expires))
-	if replay["idempotent"] != true || replay["credit_status"] != "amount_unconfigured" || replay["subscription_diamonds"].(float64) != 0 {
+	if replay["idempotent"] != true || replay["credit_status"] != "amount_unconfigured" || quotaNum(replay) != 0 {
 		t.Fatalf("later grant must not rewrite a verified order: %#v", replay)
 	}
 	assertFreeQuotaUntouched(t, store, uid)
@@ -403,30 +496,26 @@ func TestIAPTransactionCannotCreditSecondUser(t *testing.T) {
 	idA := userIDByEmail(t, store, fmt.Sprintf("iap-a-%d@tata.local", stamp))
 	grant := 4
 	product := fmt.Sprintf("test.bind.%d", stamp)
-	insertIAPSKU(t, store, "consumable_pack", "consumable", "play", product, &grant)
+	insertIAPSKU(t, store, "quota_pack", "", "play", product, &grant)
 	txn := fmt.Sprintf("txn-bind-%d", stamp)
 	body := iapBody("play", product, txn, txn, "receipt-bind", nil)
 	first := create(t, ts, tokenA, "/api/app/v1/iap/verify", body)
-	if first["pack_diamonds"].(float64) != float64(grant) {
-		t.Fatalf("first user: %#v", first)
+	if first["verify_status"] != "failed" || !strings.Contains(fmt.Sprint(first["verify_message"]), "仅会员") {
+		t.Fatalf("non-member pack: %#v", first)
 	}
 	msg, _ := call(t, ts, tokenB, http.MethodPost, "/api/app/v1/iap/verify", body)
 	if !strings.Contains(msg, "交易号已使用") {
 		t.Fatalf("second user: %s", msg)
 	}
 	var ledger int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE store_transaction_id=$1`, txn).Scan(&ledger); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE store_transaction_id=$1`, txn).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
-	if ledger != 1 {
-		t.Fatalf("ledger %d", ledger)
+	if ledger != 0 {
+		t.Fatalf("offline pack wrote ledger %d", ledger)
 	}
-	var packA int
-	if err := store.QueryRow(t.Context(), `SELECT pack_diamonds FROM diamond_balances WHERE user_id=$1`, idA).Scan(&packA); err != nil {
-		t.Fatal(err)
-	}
-	if packA != grant {
-		t.Fatalf("first balance changed: %d", packA)
+	if n := quotaOf(t, store, idA); n != 0 {
+		t.Fatalf("first balance changed: %d", n)
 	}
 }
 
@@ -453,15 +542,15 @@ func TestIAPVerifyRejectsUnmappedAndMissingExpiry(t *testing.T) {
 	if noExp["verify_status"] != "failed" || !strings.Contains(noExp["verify_message"].(string), "有效期") {
 		t.Fatalf("missing expiry: %#v", noExp)
 	}
-	var subs, diamonds int
+	var subs, quota int
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM subscriptions WHERE user_id=$1 AND store_original_transaction_id=$2`, uid, noExpTxn).Scan(&subs); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1`, uid).Scan(&diamonds); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1`, uid).Scan(&quota); err != nil {
 		t.Fatal(err)
 	}
-	if subs != 0 || diamonds != 0 {
-		t.Fatalf("failed verify wrote entitlement subs=%d diamonds=%d", subs, diamonds)
+	if subs != 0 || quota != 0 {
+		t.Fatalf("failed verify wrote entitlement subs=%d quota=%d", subs, quota)
 	}
 	orders := list(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/iap/orders?user_id=%d&verify_status=failed", uid))
 	if len(orders) < 2 {
@@ -470,7 +559,7 @@ func TestIAPVerifyRejectsUnmappedAndMissingExpiry(t *testing.T) {
 	past := time.Now().Add(-time.Hour).UTC()
 	expiredTxn := fmt.Sprintf("txn-expired-%d", time.Now().UnixNano())
 	expired := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, expiredTxn, expiredTxn, "receipt-expired", &past))
-	if expired["verify_status"] != "verified" || expired["credit_status"] != "skipped_expired" || expired["subscription_diamonds"].(float64) != 0 {
+	if expired["verify_status"] != "verified" || expired["credit_status"] != "skipped_expired" || quotaNum(expired) != 0 {
 		t.Fatalf("expired: %#v", expired)
 	}
 	sub := expired["subscription"].(map[string]any)
@@ -487,9 +576,10 @@ func TestIAPConcurrentVerifyCreditsOnce(t *testing.T) {
 	uid := userIDByEmail(t, store, email)
 	grant := 4
 	product := fmt.Sprintf("test.race.%d", time.Now().UnixNano())
-	insertIAPSKU(t, store, "consumable_pack", "consumable", "app_store", product, &grant)
+	insertIAPSKU(t, store, "month_subscription", "subscription", "app_store", product, &grant)
 	txn := fmt.Sprintf("txn-race-%d", time.Now().UnixNano())
-	body := iapBody("app_store", product, txn, txn, "receipt-race", nil)
+	expires := time.Now().Add(20 * 24 * time.Hour).UTC()
+	body := iapBody("app_store", product, txn, txn, "receipt-race", &expires)
 	var wg sync.WaitGroup
 	type result struct {
 		code int
@@ -514,7 +604,7 @@ func TestIAPConcurrentVerifyCreditsOnce(t *testing.T) {
 		if item.data["idempotent"] != true {
 			credited++
 		}
-		if item.data["pack_diamonds"].(float64) != float64(grant) {
+		if quotaNum(item.data) != float64(grant) {
 			t.Fatalf("balance: %#v", item.data)
 		}
 	}
@@ -522,7 +612,7 @@ func TestIAPConcurrentVerifyCreditsOnce(t *testing.T) {
 		t.Fatalf("expected one fresh credit, got %d (%#v %#v)", credited, out[0].data["idempotent"], out[1].data["idempotent"])
 	}
 	var ledger int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1 AND store_transaction_id=$2`, uid, txn).Scan(&ledger); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1 AND store_transaction_id=$2`, uid, txn).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
 	if ledger != 1 {
@@ -548,8 +638,8 @@ func insertIAPSKU(t *testing.T, store *Store, kind, bucket, platform, productID 
 	if grant != nil {
 		amount = *grant
 	}
-	if _, err := store.Exec(t.Context(), `INSERT INTO iap_skus(code, kind, ledger_bucket, display_name, app_store_product_id, play_product_id, diamond_grant)
-		VALUES ($1,$2,$3,'测试商品位',$4,$5,$6)`, code, kind, bucket, appID, playID, amount); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO iap_skus(code, kind, display_name, app_store_product_id, play_product_id, quota_grant)
+		VALUES ($1,$2,'测试商品位',$3,$4,$5)`, code, kind, appID, playID, amount); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -568,14 +658,28 @@ func iapBody(platform, product, txn, original, receipt string, expires *time.Tim
 	return body
 }
 
+func quotaNum(m map[string]any) float64 {
+	if m == nil {
+		return 0
+	}
+	if v, ok := m["quota_remaining"].(float64); ok {
+		return v
+	}
+	if v, ok := m["balance"].(float64); ok {
+		return v
+	}
+	return 0
+}
+
 func assertFreeQuotaUntouched(t *testing.T, store *Store, uid int64) {
 	t.Helper()
 	var reward, ledgerN, quotaN int
-	if err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, uid).Scan(&reward); err != nil {
-		t.Fatal(err)
+	err := store.QueryRow(t.Context(), `SELECT remaining FROM rewards WHERE user_id=$1`, uid).Scan(&reward)
+	if err != nil {
+		reward = 0
 	}
-	if reward != 1 {
-		t.Fatalf("free reward remaining %d", reward)
+	if reward != 0 {
+		t.Fatalf("registration reward remaining %d", reward)
 	}
 	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM ledger WHERE user_id=$1`, uid).Scan(&ledgerN); err != nil {
 		t.Fatal(err)
@@ -592,7 +696,7 @@ func TestAdminIAPSKUCreateByKindAndPrice(t *testing.T) {
 	store, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	ro := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "readonly", "password": "readonly123"})
-	token, _ := registerUser(t, ts, store, "skuadmin")
+	token, uid := registerUser(t, ts, store, "skuadmin")
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	t.Cleanup(func() {
 		_, _ = store.Exec(context.Background(), `UPDATE iap_skus SET enabled=FALSE WHERE code LIKE $1`, "%"+suffix)
@@ -603,50 +707,50 @@ func TestAdminIAPSKUCreateByKindAndPrice(t *testing.T) {
 		"code": "month_" + suffix, "kind": "month_subscription", "display_name": "月卡测试",
 		"price_amount_minor": price, "price_currency": "CNY", "period_count": 1,
 	})
-	if month["kind"] != "month_subscription" || month["ledger_bucket"] != "subscription" || month["price_amount_minor"].(float64) != 3900 {
+	if month["kind"] != "month_subscription" || month["price_amount_minor"].(float64) != 3900 {
 		t.Fatalf("month sku: %#v", month)
 	}
 	pack := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
-		"code": "pack_" + suffix, "kind": "consumable_pack", "display_name": "60 测试",
-		"price_amount_minor": int64(600), "diamond_grant": grant,
+		"code": "pack_" + suffix, "kind": "quota_pack", "display_name": "60 测试",
+		"price_amount_minor": int64(600), "quota_grant": grant,
 	})
-	if pack["kind"] != "consumable_pack" || pack["diamond_grant"].(float64) != 60 || pack["price_currency"] != "CNY" {
+	if pack["kind"] != "quota_pack" || pack["quota_grant"].(float64) != 60 || pack["price_currency"] != "CNY" {
 		t.Fatalf("pack sku: %#v", pack)
 	}
 	unlock := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
 		"code": "yearunlock_" + suffix, "kind": "yearly_unlock", "display_name": "年运测试",
 		"price_amount_minor": int64(2880),
 	})
-	if unlock["kind"] != "yearly_unlock" || unlock["ledger_bucket"] != "consumable" || unlock["diamond_grant"] != nil {
+	if unlock["kind"] != "yearly_unlock" || unlock["quota_grant"] != nil {
 		t.Fatalf("unlock sku: %#v", unlock)
 	}
-	times := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
-		"code": "times_" + suffix, "kind": "reading_pack", "display_name": "次卡测试",
-		"price_amount_minor": int64(1990), "reading_grant": 5,
+	deck := create(t, ts, admin.access, "/api/admin/v1/iap/skus", map[string]any{
+		"code": "deck_" + suffix, "kind": "deck_single", "display_name": "单套测试",
+		"price_amount_minor": int64(660),
 	})
-	if times["kind"] != "reading_pack" || times["ledger_bucket"] != "consumable" || times["diamond_grant"] != nil || times["reading_grant"].(float64) != 5 {
-		t.Fatalf("reading pack sku: %#v", times)
+	if deck["kind"] != "deck_single" || deck["quota_grant"] != nil {
+		t.Fatalf("deck sku: %#v", deck)
 	}
 	msg, _ := call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
-		"code": "badtimes_" + suffix, "kind": "reading_pack", "display_name": "坏次卡", "diamond_grant": 10,
+		"code": "baddeck_" + suffix, "kind": "deck_year", "display_name": "坏牌组", "quota_grant": 10,
 	})
-	if !strings.Contains(msg, "不能发放钻石") {
-		t.Fatalf("reading pack grant: %s", msg)
+	if !strings.Contains(msg, "不入账额度") {
+		t.Fatalf("deck grant: %s", msg)
 	}
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
-		"code": "badpack_" + suffix, "kind": "consumable_pack", "display_name": "坏币包", "reading_grant": 5,
+		"code": "badpack_" + suffix, "kind": "coin_pack", "display_name": "坏币包",
 	})
-	if !strings.Contains(msg, "只有次卡") {
-		t.Fatalf("pack reading grant: %s", msg)
+	if !strings.Contains(msg, "商品类型不正确") {
+		t.Fatalf("removed kind: %s", msg)
 	}
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
-		"code": "bad_" + suffix, "kind": "yearly_unlock", "display_name": "坏年运", "diamond_grant": 10,
+		"code": "bad_" + suffix, "kind": "yearly_unlock", "display_name": "坏年运", "quota_grant": 10,
 	})
-	if !strings.Contains(msg, "不能发放钻石") {
+	if !strings.Contains(msg, "不入账额度") {
 		t.Fatalf("yearly grant: %s", msg)
 	}
 	msg, _ = call(t, ts, ro.access, http.MethodPost, "/api/admin/v1/iap/skus", map[string]any{
-		"code": "ro_" + suffix, "kind": "consumable_pack", "display_name": "只读",
+		"code": "ro_" + suffix, "kind": "month_subscription", "display_name": "只读",
 	})
 	if !strings.Contains(msg, "只读") {
 		t.Fatalf("readonly create: %s", msg)
@@ -661,12 +765,23 @@ func TestAdminIAPSKUCreateByKindAndPrice(t *testing.T) {
 	if !foundUnlock {
 		t.Fatalf("app kind filter: %#v", filtered)
 	}
-	timesList := list(t, ts, token, "/api/app/v1/iap/skus?kind=reading_pack")
+	timesList := list(t, ts, token, "/api/app/v1/iap/skus?kind=quota_pack")
+	for _, row := range timesList {
+		if row["code"] == "pack_"+suffix {
+			t.Fatalf("free user saw reading pack: %#v", timesList)
+		}
+	}
+	msg, _ = call(t, ts, token, http.MethodPost, "/api/app/v1/yearly-reports/2026/unlock", map[string]any{})
+	if !strings.Contains(msg, "内购") {
+		t.Fatalf("unlock with priced sku: %s", msg)
+	}
+	setMember(t, store, uid, "month")
+	timesList = list(t, ts, token, "/api/app/v1/iap/skus?kind=quota_pack")
 	foundTimes := false
 	for _, row := range timesList {
-		if row["code"] == "times_"+suffix {
+		if row["code"] == "pack_"+suffix {
 			foundTimes = true
-			if row["reading_grant"].(float64) != 5 {
+			if row["quota_grant"].(float64) != 60 {
 				t.Fatalf("app reading pack: %#v", row)
 			}
 		}
@@ -675,12 +790,16 @@ func TestAdminIAPSKUCreateByKindAndPrice(t *testing.T) {
 		t.Fatalf("app reading pack filter: %#v", timesList)
 	}
 	yearView := listOne(t, ts, token, "/api/app/v1/yearly-reports/2026")
-	if yearView["unlock_price_minor"].(float64) != 2880 || yearView["unlock_price_currency"] != "CNY" {
+	if yearView["unlock_price_minor"].(float64) != 2880 || yearView["unlock_price_currency"] != "CNY" || yearView["standalone_purchase"] != false || yearView["unlocked"] != true {
 		t.Fatalf("yearly price from sku: %#v", yearView)
 	}
-	msg, _ = call(t, ts, token, http.MethodPost, "/api/app/v1/yearly-reports/2026/unlock", map[string]any{})
-	if !strings.Contains(msg, "内购") {
-		t.Fatalf("unlock with priced sku: %s", msg)
+	memberSKUs := list(t, ts, token, "/api/app/v1/iap/skus?kind=yearly_unlock")
+	if len(memberSKUs) != 0 {
+		t.Fatalf("member saw yearly unlock: %#v", memberSKUs)
+	}
+	opened := create(t, ts, token, "/api/app/v1/yearly-reports/2026/unlock", map[string]any{})
+	if opened["unlocked"] != true {
+		t.Fatalf("member unlock: %#v", opened)
 	}
 	id := asID(month["id"])
 	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/iap/skus/%d", id), map[string]any{
@@ -710,35 +829,37 @@ func TestIAPReadingPackCreditsFreeCounts(t *testing.T) {
 	product := fmt.Sprintf("test.times.%d", time.Now().UnixNano())
 	insertIAPSKUWithReadings(t, store, product, grant)
 	txn := fmt.Sprintf("txn-times-%d", time.Now().UnixNano())
-	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, "orig-"+txn, "receipt-"+txn, nil))
+	blocked := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txn, "orig-"+txn, "receipt-"+txn, nil))
+	if blocked["verify_status"] != "failed" || !strings.Contains(fmt.Sprint(blocked["verify_message"]), "仅会员") {
+		t.Fatalf("non-member pack: %#v", blocked)
+	}
+	setMember(t, store, uid, "month")
+	txnOK := fmt.Sprintf("txn-times-ok-%d", time.Now().UnixNano())
+	out := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", product, txnOK, "orig-"+txnOK, "receipt-"+txnOK, nil))
 	if out["idempotent"] != false || out["verify_status"] != "verified" || out["credit_status"] != "credited" {
 		t.Fatalf("verify: %#v", out)
 	}
-	if out["sku_kind"] != "reading_pack" || out["credited_diamonds"] != nil || out["credited_readings"].(float64) != 5 {
+	if out["sku_kind"] != "quota_pack" || out["credited_quota"].(float64) != 5 {
 		t.Fatalf("credit: %#v", out)
 	}
-	if out["subscription_diamonds"].(float64) != 0 || out["pack_diamonds"].(float64) != 0 {
-		t.Fatalf("diamonds: %#v", out)
+	if quotaNum(out) != float64(grant) {
+		t.Fatalf("quota: %#v", out)
 	}
-	var remaining, adminGrant int
-	if err := store.QueryRow(t.Context(), `SELECT remaining, admin_grant_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&remaining, &adminGrant); err != nil {
-		t.Fatal(err)
-	}
-	if remaining != 1 || adminGrant != grant {
-		t.Fatalf("rewards remaining=%d admin=%d", remaining, adminGrant)
+	if quotaOf(t, store, uid) != grant {
+		t.Fatalf("quota remaining %d", quotaOf(t, store, uid))
 	}
 	var ledger int
-	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM diamond_ledger WHERE user_id=$1`, uid).Scan(&ledger); err != nil {
+	if err := store.QueryRow(t.Context(), `SELECT count(*) FROM quota_ledger WHERE user_id=$1 AND bucket='quota'`, uid).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
-	if ledger != 0 {
-		t.Fatalf("diamond ledger %d", ledger)
+	if ledger != 1 {
+		t.Fatalf("quota ledger %d", ledger)
 	}
 	blank := fmt.Sprintf("test.times.blank.%d", time.Now().UnixNano())
 	insertIAPSKUWithReadings(t, store, blank, 0)
 	txn2 := fmt.Sprintf("txn-times-blank-%d", time.Now().UnixNano())
 	unconfig := create(t, ts, token, "/api/app/v1/iap/verify", iapBody("app_store", blank, txn2, "orig-"+txn2, "receipt-"+txn2, nil))
-	if unconfig["credit_status"] != "amount_unconfigured" || unconfig["credited_readings"] != nil {
+	if unconfig["credit_status"] != "amount_unconfigured" || unconfig["credited_quota"] != nil {
 		t.Fatalf("unconfigured: %#v", unconfig)
 	}
 }
@@ -750,14 +871,27 @@ func insertIAPSKUWithReadings(t *testing.T, store *Store, productID string, gran
 	if grant > 0 {
 		amount = grant
 	}
-	if _, err := store.Exec(t.Context(), `INSERT INTO iap_skus(code, kind, ledger_bucket, display_name, app_store_product_id, reading_grant)
-		VALUES ($1,'reading_pack','consumable','次卡测试',$2,$3)`, code, productID, amount); err != nil {
+	if _, err := store.Exec(t.Context(), `INSERT INTO iap_skus(code, kind, display_name, app_store_product_id, quota_grant)
+		VALUES ($1,'quota_pack','额度补充测试',$2,$3)`, code, productID, amount); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func postIAP(ts *httptest.Server, token, path string, body any) (int, map[string]any, string) {
 	rawBody, _ := json.Marshal(body)
+	if rawApp, ok := liveTestApps.Load(ts.URL); ok {
+		if _, raw, handled := dispatchRetired(rawApp.(*App), http.MethodPost, path, rawBody, token); handled {
+			var env struct {
+				Code    int            `json:"code"`
+				Message string         `json:"message"`
+				Data    map[string]any `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &env); err != nil {
+				return 1, nil, err.Error()
+			}
+			return env.Code, env.Data, env.Message
+		}
+	}
 	req, err := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(rawBody))
 	if err != nil {
 		return 1, nil, err.Error()
@@ -787,7 +921,7 @@ func TestSchemaCommentsMapPriceKinds(t *testing.T) {
 	if err := store.QueryRow(t.Context(), `SELECT obj_description('iap_skus'::regclass)`).Scan(&table); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(table, "会员") || !strings.Contains(table, "塔塔币") || !strings.Contains(table, "年运") {
+	if !strings.Contains(table, "会员") || !strings.Contains(table, "牌组") || !strings.Contains(table, "年运") {
 		t.Fatalf("iap_skus table comment: %s", table)
 	}
 	if err := store.QueryRow(t.Context(), `
@@ -795,15 +929,22 @@ func TestSchemaCommentsMapPriceKinds(t *testing.T) {
 		WHERE attrelid='iap_skus'::regclass AND attname='kind'`).Scan(&kind); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(kind, "reading_pack") || !strings.Contains(kind, "consumable_pack") {
+	if !strings.Contains(kind, "quota_pack") || !strings.Contains(kind, "deck_year") || strings.Contains(kind, "consumable_pack") {
 		t.Fatalf("iap_skus.kind comment: %s", kind)
 	}
 	if err := store.QueryRow(t.Context(), `
 		SELECT col_description('iap_skus'::regclass, attnum) FROM pg_attribute
-		WHERE attrelid='iap_skus'::regclass AND attname='reading_grant'`).Scan(&grant); err != nil {
+		WHERE attrelid='iap_skus'::regclass AND attname='quota_grant'`).Scan(&grant); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(grant, "次卡") {
-		t.Fatalf("reading_grant comment: %s", grant)
+	if !strings.Contains(grant, "额度") {
+		t.Fatalf("quota_grant comment: %s", grant)
+	}
+	var gone bool
+	if err := store.QueryRow(t.Context(), `SELECT to_regclass('public.deck_products') IS NULL`).Scan(&gone); err != nil {
+		t.Fatal(err)
+	}
+	if !gone {
+		t.Fatal("deck_products still exists")
 	}
 }

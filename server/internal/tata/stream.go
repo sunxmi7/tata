@@ -49,7 +49,7 @@ func sseStart(w http.ResponseWriter) func(event string, payload any) {
 // 额度门槛与非流式一致（拦截时走普通 JSON 的 QuotaBlock），通过后以 SSE 逐段下发解读。
 // 事件：delta（{text}）多次、done（{reading}）或 error（{message}）。
 func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -57,15 +57,14 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
-	var kind, question string
-	if err := a.Store.QueryRow(r.Context(), `SELECT type, question FROM readings WHERE id=$1`, id).Scan(&kind, &question); err != nil {
+	if err := a.takeClientCards(r, id); err != nil {
 		return err
 	}
-	if kind == "explore" && strings.TrimSpace(question) == "" {
-		return biz("请先填写问题")
+	if uid == 0 {
+		return biz(paywallNeedLogin)
 	}
 	stop, err := a.gatePlay(w, r, resumeInterpret)
 	if err != nil || stop {
@@ -78,7 +77,7 @@ func (a *App) appInterpretStream(w http.ResponseWriter, r *http.Request) error {
 // 额度/轮次/扣费与非流式一致；拦截时走普通 JSON 的 QuotaBlock，通过后以 SSE 逐段下发。
 // 事件：delta（{text}）多次、done（{followup}）或 error（{message}）。
 func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -86,7 +85,7 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
 	var req struct {
@@ -114,7 +113,10 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 		return biz("牌面尚未固定")
 	}
 	if uid == 0 {
-		return biz("登录后才会扣次数或钻石")
+		return biz("登录后才能追问")
+	}
+	if err := rejectFreeFollowup(r.Context(), a.Store, uid, id, kind); err != nil {
+		return err
 	}
 	text := strings.TrimSpace(req.Text)
 	if strings.Contains(req.Text, "别这样说") || strings.Contains(req.Text, "不舒服") {
@@ -176,7 +178,13 @@ func (a *App) appFollowupStream(w http.ResponseWriter, r *http.Request) error {
 		body["quota_outcome"] = decision.Status
 		body["entitlement"] = decision.Entitlement
 		body["charged"] = decision.Status == quotaCharged && decision.Entitlement != entTrial
-		send("done", map[string]any{"followup": body})
+		if err := a.attachRedrawOffer(r.Context(), id, turn, body); err != nil {
+			return err
+		}
+		if err := a.attachConversation(r, id, body); err != nil {
+			return err
+		}
+		send("done", map[string]any{"followup": body, "reading_id": id, "messages": body["messages"], "has_more": false})
 		return nil
 	})
 	return nil
@@ -187,7 +195,7 @@ func (a *App) streamGenerate(w http.ResponseWriter, r *http.Request, id int64, w
 }
 
 func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
-	id, target, business, existing, written, err := a.openDaily(w, r, true)
+	id, target, drawDate, targetDate, existing, written, err := a.openDaily(w, r, true)
 	if err != nil || written {
 		return err
 	}
@@ -195,7 +203,12 @@ func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
 		status, _ := existing["status"].(string)
 		if status == "COMPLETED" {
 			send := sseStart(w)
-			a.attachDailyHome(r.Context(), r, existing, target, business)
+			a.attachDailyHome(r.Context(), r, existing, target, drawDate, targetDate)
+			// Reuse has no generation deltas; emit full正文 once so App「运势解读」
+			// that only accumulates delta text still paints on reopen.
+			if text := strings.TrimSpace(interpText(existing["interpretation"])); text != "" {
+				send("delta", map[string]any{"text": text})
+			}
 			send("done", map[string]any{"reading": existing, "reused": true})
 			return nil
 		}
@@ -207,7 +220,8 @@ func (a *App) appDailyStream(w http.ResponseWriter, r *http.Request) error {
 		id = asInt64(existing["id"])
 	}
 	return a.streamGenerate(w, r, id, func(item map[string]any) map[string]any {
-		a.attachDailyHome(r.Context(), r, item, target, business)
+		attachConversationMeta(item, drawDate)
+		a.attachDailyHome(r.Context(), r, item, target, drawDate, targetDate)
 		return item
 	})
 }
@@ -226,39 +240,6 @@ func asInt64(v any) int64 {
 	default:
 		return 0
 	}
-}
-
-func (a *App) appDetectStream(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
-	if err != nil {
-		return err
-	}
-	id, err := pathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
-		return err
-	}
-	item, err := a.loadReadingAbs(r.Context(), r, id)
-	if err != nil {
-		return err
-	}
-	question, _ := item["question"].(string)
-	run, err := a.ensureDetectJob(r.Context(), id, question)
-	if err != nil {
-		return err
-	}
-	send := sseStart(w)
-	a.attachJobSSE(r.Context(), send, run, func() error {
-		payload, _ := run.result().(map[string]any)
-		if payload == nil {
-			payload = map[string]any{"text": run.snapshot(), "suggestions": 3}
-		}
-		send("done", payload)
-		return nil
-	})
-	return nil
 }
 
 func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) error {
@@ -284,10 +265,10 @@ func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) er
 		return biz("请先填写基本信息")
 	}
 	if row.rhythmJSON == "" {
-		return biz("请先选完 12 张全年节奏牌")
+		return biz("请先抽完十二宫牌阵")
 	}
 	if row.domainJSON == "" {
-		return biz("请先抽完六大领域牌")
+		return biz("请先抽完四季牌阵")
 	}
 	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
 		view, err := a.buildYearlyReport(r.Context(), uid, year, r)
@@ -297,6 +278,9 @@ func (a *App) appYearlyGenerateStream(w http.ResponseWriter, r *http.Request) er
 		send := sseStart(w)
 		send("done", map[string]any{"report": view, "reused": true})
 		return nil
+	}
+	if err := a.chargeYearlyGenerate(r.Context(), uid, year); err != nil {
+		return err
 	}
 	run, err := a.ensureYearlyJob(r.Context(), uid, year, row)
 	if err != nil {

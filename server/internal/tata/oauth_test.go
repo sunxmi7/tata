@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -43,12 +44,12 @@ func TestWeChatExchangeUnionID(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := NewWeChatClient(WeChatConfig{Enabled: true, AppID: "wx", AppSecret: "secret"})
 	c.tokenURL = srv.URL
-	id, err := c.ExchangeCode(context.Background(), " code-1 ")
+	prof, err := c.ExchangeCode(context.Background(), " code-1 ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "uid-1" || gotAppID != "wx" || gotSecret != "secret" || gotCode != "code-1" {
-		t.Fatalf("exchange: id=%s appid=%s secret=%s code=%s", id, gotAppID, gotSecret, gotCode)
+	if prof.ID != "uid-1" || gotAppID != "wx" || gotSecret != "secret" || gotCode != "code-1" {
+		t.Fatalf("exchange: id=%s appid=%s secret=%s code=%s", prof.ID, gotAppID, gotSecret, gotCode)
 	}
 }
 
@@ -64,9 +65,9 @@ func TestWeChatExchangeOpenIDAndInvalidCode(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := NewWeChatClient(WeChatConfig{Enabled: true, AppID: "wx", AppSecret: "secret"})
 	c.tokenURL = srv.URL
-	id, err := c.ExchangeCode(context.Background(), "ok")
-	if err != nil || id != "oid-only" {
-		t.Fatalf("openid fallback: %s %v", id, err)
+	prof, err := c.ExchangeCode(context.Background(), "ok")
+	if err != nil || prof.ID != "oid-only" {
+		t.Fatalf("openid fallback: %s %v", prof.ID, err)
 	}
 	_, err = c.ExchangeCode(context.Background(), "bad")
 	if err == nil || !strings.Contains(err.Error(), "微信授权码无效") {
@@ -132,6 +133,29 @@ func TestWechatAppleUnconfiguredHTTP(t *testing.T) {
 	}
 }
 
+func TestMergedWechatAppleCannotLogin(t *testing.T) {
+	store, ts := newMergeServer(t)
+	wxCode := fmt.Sprintf("wx-merged-%d", time.Now().UnixNano())
+	data := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]string{"code": wxCode})
+	uid := asID(data["id"])
+	_, primary := registerUser(t, ts, store, "wxprimary")
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET merged_into=$1 WHERE id=$2`, primary, uid); err != nil {
+		t.Fatal(err)
+	}
+	if msg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/wechat", map[string]string{"code": wxCode}); msg != "账号已合并" {
+		t.Fatalf("merged wechat: %s", msg)
+	}
+	appleTok := fmt.Sprintf("apple-merged-%d", time.Now().UnixNano())
+	apple := create(t, ts, "", "/api/app/v1/auth/apple", map[string]string{"identity_token": appleTok})
+	appleID := asID(apple["id"])
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET merged_into=$1 WHERE id=$2`, primary, appleID); err != nil {
+		t.Fatal(err)
+	}
+	if msg, _ := call(t, ts, "", http.MethodPost, "/api/app/v1/auth/apple", map[string]string{"identity_token": appleTok}); msg != "账号已合并" {
+		t.Fatalf("merged apple: %s", msg)
+	}
+}
+
 func TestWechatAppleLoginAndBind(t *testing.T) {
 	store, ts := newMergeServer(t)
 	wxCode := fmt.Sprintf("wx-login-%d", time.Now().UnixNano())
@@ -159,6 +183,194 @@ func TestWechatAppleLoginAndBind(t *testing.T) {
 	bindCode := fmt.Sprintf("wx-bind-%d", time.Now().UnixNano())
 	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": bindCode})
 	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-apple", map[string]string{"identity_token": fmt.Sprintf("apple-bind-%d", time.Now().UnixNano())})
+}
+
+func TestWeChatExchangeUserInfo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("access_token") != "" {
+			if r.URL.Query().Get("access_token") != "tok" || r.URL.Query().Get("openid") != "oid-1" {
+				t.Fatalf("userinfo query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"nickname":   "塔塔用户",
+				"headimgurl": "https://thirdwx.qlogo.cn/mmopen/demo/132",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "tok", "openid": "oid-1", "unionid": "uid-1",
+		})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWeChatClient(WeChatConfig{Enabled: true, AppID: "wx", AppSecret: "secret"})
+	c.tokenURL = srv.URL
+	c.userInfoURL = srv.URL
+	prof, err := c.ExchangeCode(context.Background(), "code-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.ID != "uid-1" || prof.Nickname != "塔塔用户" || !strings.Contains(prof.Avatar, "thirdwx.qlogo.cn") {
+		t.Fatalf("profile: %+v", prof)
+	}
+}
+
+func TestWeChatUserInfoFailureStillReturnsID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("access_token") != "" {
+			_, _ = w.Write([]byte(`{"errcode":"40001","errmsg":"invalid credential"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "openid": "oid-2"})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWeChatClient(WeChatConfig{Enabled: true, AppID: "wx", AppSecret: "secret"})
+	c.tokenURL = srv.URL
+	c.userInfoURL = srv.URL
+	prof, err := c.ExchangeCode(context.Background(), "code-2")
+	if err != nil || prof.ID != "oid-2" || prof.Nickname != "" {
+		t.Fatalf("fallback: %+v %v", prof, err)
+	}
+}
+
+type stubWeChat struct {
+	nickname string
+	avatar   string
+}
+
+func (s stubWeChat) Ready() bool { return true }
+
+func (s stubWeChat) ExchangeCode(_ context.Context, code string) (wechatProfile, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return wechatProfile{}, biz("微信授权码不能为空")
+	}
+	return wechatProfile{ID: code, Nickname: s.nickname, Avatar: s.avatar}, nil
+}
+
+var png1x1 = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+	0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+	0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+	0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+	0x42, 0x60, 0x82,
+}
+
+func TestWeChatLoginFillsEmptyProfile(t *testing.T) {
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png1x1)
+	}))
+	t.Cleanup(img.Close)
+	wechatAvatarTestHook = func(u *url.URL) bool { return u.Hostname() == "127.0.0.1" }
+	t.Cleanup(func() { wechatAvatarTestHook = nil })
+
+	store, _ := newMergeServer(t)
+	app := testApp(store)
+	app.WeChat = stubWeChat{nickname: "微信昵称", avatar: img.URL + "/head.png"}
+	app.Upload = NewUploader(UploadConfig{Driver: "local", LocalDir: t.TempDir()})
+	ts := httptest.NewServer(app.Handler())
+	t.Cleanup(ts.Close)
+
+	code := fmt.Sprintf("wx-profile-%d", time.Now().UnixNano())
+	data := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]string{"code": code})
+	token := data["accessToken"].(string)
+	profile := listOne(t, ts, token, "/api/app/v1/profile")
+	if profile["name"] != "微信昵称" {
+		t.Fatalf("name: %#v", profile["name"])
+	}
+	avatar, _ := profile["avatar_url"].(string)
+	if !strings.Contains(avatar, "/uploads/misc/") || !strings.HasSuffix(avatar, ".png") {
+		t.Fatalf("avatar: %#v", profile["avatar_url"])
+	}
+
+	must(t, ts, token, http.MethodPut, "/api/app/v1/profile", map[string]any{"name": "自己改的"})
+	create(t, ts, "", "/api/app/v1/auth/wechat", map[string]string{"code": code})
+	again := listOne(t, ts, token, "/api/app/v1/profile")
+	if again["name"] != "自己改的" {
+		t.Fatalf("overwrote name: %#v", again["name"])
+	}
+}
+
+func TestWeChatLoginClientProfileFallback(t *testing.T) {
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == "" {
+			t.Fatal("missing user-agent")
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png1x1)
+	}))
+	t.Cleanup(img.Close)
+	wechatAvatarTestHook = func(u *url.URL) bool { return u.Hostname() == "127.0.0.1" }
+	t.Cleanup(func() { wechatAvatarTestHook = nil })
+
+	store, _ := newMergeServer(t)
+	app := testApp(store)
+	app.WeChat = stubWeChat{}
+	app.Upload = NewUploader(UploadConfig{Driver: "local", LocalDir: t.TempDir()})
+	ts := httptest.NewServer(app.Handler())
+	t.Cleanup(ts.Close)
+
+	code := fmt.Sprintf("wx-fallback-%d", time.Now().UnixNano())
+	data := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]any{
+		"code": code, "nickname": "客户端昵称", "headimgurl": img.URL + "/head/132",
+	})
+	profile := listOne(t, ts, data["accessToken"].(string), "/api/app/v1/profile")
+	if profile["name"] != "客户端昵称" {
+		t.Fatalf("name: %#v", profile["name"])
+	}
+	avatar, _ := profile["avatar_url"].(string)
+	if !strings.Contains(avatar, "/uploads/misc/") || !strings.HasSuffix(avatar, ".png") {
+		t.Fatalf("avatar: %#v", profile["avatar_url"])
+	}
+}
+
+func TestWeChatBindFillsEmptyProfile(t *testing.T) {
+	store, _ := newMergeServer(t)
+	app := testApp(store)
+	app.WeChat = stubWeChat{nickname: "绑定来的昵称"}
+	ts := httptest.NewServer(app.Handler())
+	t.Cleanup(ts.Close)
+	email := uniqueEmail("wx-bind-name")
+	token := register(t, ts, email)
+	before := listOne(t, ts, token, "/api/app/v1/profile")
+	emailNick, _ := before["name"].(string)
+	if emailNick == "" || !validGeneratedNickname(emailNick) {
+		t.Fatalf("email nickname: %#v", before["name"])
+	}
+	code := fmt.Sprintf("wx-bind-name-%d", time.Now().UnixNano())
+	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": code})
+	after := listOne(t, ts, token, "/api/app/v1/profile")
+	if after["name"] != emailNick {
+		t.Fatalf("bind overwrote nickname: %#v", after["name"])
+	}
+
+	if _, err := store.Exec(t.Context(), `UPDATE app_users SET name='' WHERE wechat_openid=$1`, code); err != nil {
+		t.Fatal(err)
+	}
+	must(t, ts, token, http.MethodPost, "/api/app/v1/auth/bind-wechat", map[string]string{"code": code})
+	filled := listOne(t, ts, token, "/api/app/v1/profile")
+	if filled["name"] != "绑定来的昵称" {
+		t.Fatalf("bind fill empty name: %#v", filled["name"])
+	}
+}
+
+func TestWeChatAvatarHostRejected(t *testing.T) {
+	u, ok := wechatAvatarURLOK("https://evil.example/avatar.png")
+	if ok {
+		t.Fatalf("allowed arbitrary host: %v", u)
+	}
+	u, ok = wechatAvatarURLOK("https://thirdwx.qlogo.cn/mmopen/x/132")
+	if !ok || u.Host != "thirdwx.qlogo.cn" || !strings.HasSuffix(u.Path, "/0") {
+		t.Fatalf("qlogo: %v %v", u, ok)
+	}
+	u, ok = wechatAvatarURLOK("https://mmbiz.qpic.cn/mmbiz/abc/132")
+	if !ok || u.Host != "mmbiz.qpic.cn" {
+		t.Fatalf("qpic: %v %v", u, ok)
+	}
 }
 
 func appleTestKey(t *testing.T) (*rsa.PrivateKey, map[string]any) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -19,6 +20,10 @@ func (a *App) appMonthlyReports(w http.ResponseWriter, r *http.Request) error {
 	month := strings.TrimSpace(r.URL.Query().Get("month"))
 	if month == "" {
 		month = now.Format("2006-01")
+	}
+	if mode := reportsDemoMode(r); mode != "" {
+		writeOK(w, demoMonthlyReport(month, mode, now))
+		return nil
 	}
 	year, mon, err := parseYearMonth(month)
 	if err != nil {
@@ -84,11 +89,60 @@ func (a *App) appYearlyReport(w http.ResponseWriter, r *http.Request) error {
 	if year < 2000 || year > 2100 {
 		return biz("年份不正确")
 	}
+	if mode := reportsDemoMode(r); mode != "" {
+		writeOK(w, demoYearlyReport(r, int(year), mode))
+		return nil
+	}
 	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
 	if err != nil {
 		return err
 	}
 	writeOK(w, view)
+	return nil
+}
+
+func (a *App) appYearlyShare(w http.ResponseWriter, r *http.Request) error {
+	uid, err := a.requireAppUser(r)
+	if err != nil {
+		return err
+	}
+	year, err := pathID(r)
+	if err != nil {
+		return err
+	}
+	if year < 2000 || year > 2100 {
+		return biz("年份不正确")
+	}
+	var view map[string]any
+	if mode := reportsDemoMode(r); mode != "" {
+		view = demoYearlyReport(r, int(year), mode)
+	} else {
+		var err error
+		view, err = a.buildYearlyReport(r.Context(), uid, int(year), r)
+		if err != nil {
+			return err
+		}
+	}
+	var name string
+	_ = a.Store.QueryRow(r.Context(), `SELECT COALESCE(name,'') FROM app_users WHERE id=$1`, uid).Scan(&name)
+	name = strings.TrimSpace(name)
+	if name == "" && reportsDemoMode(r) != "" {
+		name = "塔塔体验官"
+	}
+	var generatedFor any
+	if name != "" {
+		generatedFor = fmt.Sprintf(T(r.Context(), "为%s生成"), name)
+	}
+	writeOK(w, map[string]any{
+		"year": year, "unlocked": view["unlocked"], "report_status": view["report_status"],
+		"report": view["report"], "user_name": emptyAsNil(name),
+		"brand": T(r.Context(), "塔塔 Tarot"), "slogan": T(r.Context(), "听见内心的答案"),
+		"title":         fmt.Sprintf(T(r.Context(), "%d 年度运势报告"), year),
+		"subtitle":      T(r.Context(), "为你生成的专属年度指引"),
+		"generated_for": generatedFor,
+		"share_hint":    T(r.Context(), "保存图片后即可分享给好友"),
+		"rhythm_cards":  view["rhythm_cards"], "domain_cards": view["domain_cards"],
+	})
 	return nil
 }
 
@@ -108,7 +162,11 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	if !yearSub {
+	member, err := hasActiveMembership(r.Context(), a.Store, uid)
+	if err != nil {
+		return err
+	}
+	if !member && !yearSub {
 		price, _, err := a.yearlyUnlockPrice(r.Context())
 		if err != nil {
 			return err
@@ -118,10 +176,16 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 		}
 		return biz("年卡未开通，请通过内购单独解锁")
 	}
+	source := "membership"
+	if yearSub {
+		source = "year_subscription"
+	}
 	if _, err := a.Store.Exec(r.Context(), `INSERT INTO yearly_reports(user_id, year, unlocked, unlock_source, unlocked_at)
-		VALUES ($1,$2,TRUE,'year_subscription',now())
-		ON CONFLICT (user_id, year) DO UPDATE SET unlocked=TRUE, unlock_source='year_subscription', unlocked_at=COALESCE(yearly_reports.unlocked_at, now())`,
-		uid, year); err != nil {
+		VALUES ($1,$2,TRUE,$3,now())
+		ON CONFLICT (user_id, year) DO UPDATE SET unlocked=TRUE,
+			unlock_source=CASE WHEN yearly_reports.unlock_source IN ('','membership') THEN EXCLUDED.unlock_source ELSE yearly_reports.unlock_source END,
+			unlocked_at=COALESCE(yearly_reports.unlocked_at, now())`,
+		uid, year, source); err != nil {
 		return err
 	}
 	view, err := a.buildYearlyReport(r.Context(), uid, int(year), r)
@@ -133,7 +197,7 @@ func (a *App) appUnlockYearlyReport(w http.ResponseWriter, r *http.Request) erro
 }
 
 func (a *App) requireAppUser(r *http.Request) (int64, error) {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return 0, err
 	}
@@ -225,7 +289,7 @@ func (a *App) buildMonthlyReport(ctx context.Context, uid int64, loc *time.Locat
 }
 
 func (a *App) topicHitsFromQuestions(ctx context.Context, questions []string) ([]map[string]any, error) {
-	rows, err := a.Store.Query(ctx, `SELECT title FROM explore_topics ORDER BY sort_order, topic_id`)
+	rows, err := a.Store.Query(ctx, `SELECT theme_title FROM spreads WHERE enabled=true AND theme_key<>'' GROUP BY theme_key, theme_title ORDER BY min(sort_order), theme_key`)
 	if err != nil {
 		return nil, err
 	}
@@ -294,16 +358,24 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int, r *htt
 	if err != nil {
 		return nil, err
 	}
+	member, err := hasActiveMembership(ctx, a.Store, uid)
+	if err != nil {
+		return nil, err
+	}
 	var unlocked bool
 	var source string
 	err = a.Store.QueryRow(ctx, `SELECT unlocked, unlock_source FROM yearly_reports WHERE user_id=$1 AND year=$2`, uid, year).Scan(&unlocked, &source)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if yearSub {
+	if member {
 		unlocked = true
 		if source == "" {
-			source = "year_subscription"
+			if yearSub {
+				source = "year_subscription"
+			} else {
+				source = "membership"
+			}
 		}
 	}
 	priceMinor, priceCurrency, err := a.yearlyUnlockPrice(ctx)
@@ -331,6 +403,7 @@ func (a *App) buildYearlyReport(ctx context.Context, uid int64, year int, r *htt
 		"year_member_unlocks":   true,
 		"unlock_price_minor":    priceMinor,
 		"unlock_price_currency": priceCurrency,
+		"standalone_purchase":   !member,
 		"content_status":        status,
 		"theme":                 bodies["theme"],
 		"domain":                bodies["domain"],
@@ -373,10 +446,7 @@ func (a *App) hasYearSubscription(ctx context.Context, uid int64) (bool, error) 
 }
 
 func (a *App) userLocation(ctx context.Context, uid int64) *time.Location {
-	tz := "Asia/Shanghai"
-	if uid > 0 {
-		_ = a.Store.QueryRow(ctx, `SELECT timezone FROM app_users WHERE id=$1`, uid).Scan(&tz)
-	}
+	tz := userTimezone(ctx, a.Store, uid)
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		loc, _ = time.LoadLocation("Asia/Shanghai")
@@ -400,11 +470,11 @@ func (a *App) appGetDeckPreference(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	code, available, err := a.resolveUserDeck(r.Context(), uid, r)
+	code, available, custom, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"code": code, "available": available})
+	writeOK(w, map[string]any{"code": code, "available": available, "custom_deck": custom})
 	return nil
 }
 
@@ -420,18 +490,40 @@ func (a *App) appPutDeckPreference(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	code := strings.TrimSpace(req.Code)
-	if _, ok, err := a.enabledDeck(r.Context(), code); err != nil {
-		return err
-	} else if !ok {
-		return biz("该牌面风格尚未开放")
+	if customID, ok := parseCustomDeckCode(code); ok {
+		d, err := a.loadCustomDeck(r.Context(), uid, customID)
+		if err != nil {
+			return err
+		}
+		if d.Status != "saved" {
+			return biz("请先保存牌组")
+		}
+		if err := a.setUserDeck(r.Context(), uid, d.fallbackOfficial(), customID); err != nil {
+			return err
+		}
+	} else {
+		deck, ok, err := a.enabledDeck(r.Context(), code)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return biz("该牌面风格尚未开放")
+		}
+		unlocks, err := a.loadDeckUnlocks(r.Context(), uid)
+		if err != nil {
+			return err
+		}
+		if !unlocks.allows(deck.Code, deck.UnlockRequired) {
+			return biz("这套牌组还未解锁")
+		}
+		if err := a.setUserDeck(r.Context(), uid, code, 0); err != nil {
+			return err
+		}
 	}
-	if _, err := a.Store.Exec(r.Context(), `UPDATE app_users SET deck_code=$1 WHERE id=$2`, code, uid); err != nil {
-		return err
-	}
-	_, available, err := a.resolveUserDeck(r.Context(), uid, r)
+	code, available, custom, err := a.resolveUserDeck(r.Context(), uid, r)
 	if err != nil {
 		return err
 	}
-	writeOK(w, map[string]any{"code": code, "available": available})
+	writeOK(w, map[string]any{"code": code, "available": available, "custom_deck": custom})
 	return nil
 }

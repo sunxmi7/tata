@@ -51,26 +51,17 @@ func (a *App) appSendEmailCode(w http.ResponseWriter, r *http.Request) error {
 	}
 	scene := strings.TrimSpace(req.Scene)
 	switch scene {
-	case "register", "bind":
+	case "login", "bind":
 	default:
 		return biz("验证码场景不正确")
 	}
 	if scene == "bind" {
-		uid, _, err := a.appActor(r)
+		uid, err := a.appActor(r)
 		if err != nil {
 			return err
 		}
 		if uid == 0 {
 			return authFail{}
-		}
-	}
-	if scene == "register" {
-		var n int
-		if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM app_users WHERE lower(email)=lower($1) AND cancelled_at IS NULL AND merged_into IS NULL`, email).Scan(&n); err != nil {
-			return err
-		}
-		if n > 0 {
-			return biz("邮箱已注册")
 		}
 	}
 	store := a.kv()

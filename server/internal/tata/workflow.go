@@ -32,6 +32,7 @@ func (a *App) adminSimulate(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, true); err != nil {
 		return err
 	}
+	r = r.WithContext(mergeAIBill(r.Context(), aiBill{Kind: "simulate"}))
 	var before int
 	_ = a.Store.QueryRow(r.Context(), `SELECT count(*) FROM readings`).Scan(&before)
 	var req struct {
@@ -69,7 +70,8 @@ func (a *App) adminSimulate(w http.ResponseWriter, r *http.Request) error {
 	if req.Step != "" {
 		return a.simulateOne(w, r, req.Step, req.Question, cards, persona)
 	}
-	out, err := readingflow.RunWorkflow(r.Context(), a.workflowSpecs(r.Context()), readingflow.Input{
+	ctx := a.watchUsage(r.Context())
+	out, err := readingflow.RunWorkflow(ctx, a.workflowSpecs(ctx), readingflow.Input{
 		Question: req.Question,
 		Cards:    cards,
 		Persona:  persona,
@@ -101,7 +103,7 @@ func (a *App) adminSimulate(w http.ResponseWriter, r *http.Request) error {
 			"body": map[string]any{
 				"steps": []string{"detect", "rewrite", "recommend", "interpret"},
 			},
-			"note": "App 在牌面固定前调用检测、改写、推荐；牌面固定后调用 interpret。interpret 才会写入解读。模拟流程不写库、不扣费。",
+			"note": "App 在牌面固定前调用检测、改写、推荐；牌面固定后调用 interpret。interpret 才会写入解读。模拟流程不写占卜记录、不扣用户额度。供应商返回的 token 仍记入 ai_usages。",
 		},
 		"steps": steps,
 	})
@@ -164,7 +166,7 @@ func (a *App) simulateOne(w http.ResponseWriter, r *http.Request, step, question
 }
 
 func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
-	uid, anon, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -172,9 +174,10 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.ownReading(r.Context(), id, uid, anon); err != nil {
+	if err := a.ownReading(r.Context(), id, uid, ""); err != nil {
 		return err
 	}
+	r = r.WithContext(mergeAIBill(r.Context(), aiBill{UserID: uid, ReadingID: id}))
 	var req struct {
 		Steps []string `json:"steps"`
 	}
@@ -201,7 +204,19 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 	steps := make([]flowStep, 0, len(req.Steps))
 	for _, task := range req.Steps {
 		switch task {
-		case "detect", "rewrite", "recommend":
+		case "detect":
+			step := flowStep{Task: "detect", Input: question}
+			payload, derr := a.localDetect(r, uid, question)
+			if derr != nil {
+				step.Error = derr.Error()
+			} else {
+				raw, _ := json.Marshal(payload)
+				step.Output = string(raw)
+			}
+			steps = append(steps, step)
+		case "recommend":
+			steps = append(steps, flowStep{Task: "recommend", Input: question, Error: "正式推荐未配置"})
+		case "rewrite":
 			steps = append(steps, a.runStep(r, task, question))
 		case "interpret", "tarotist":
 			if cards == "" || cards == "null" {
@@ -211,9 +226,13 @@ func (a *App) appWorkflow(w http.ResponseWriter, r *http.Request) error {
 			kind := "normal"
 			if task == "tarotist" || item["type"] == "tarotist" {
 				kind = "tarotist"
+			} else if typ, _ := item["type"].(string); typ != "" {
+				kind = typ
 			}
+			themeTitle, spreadName, _ := a.interpretThemeContext(r.Context(), id)
+			positions := a.loadReadingPositions(r.Context(), id)
 			saved, genErr := a.generate(r.Context(), id, false)
-			step := flowStep{Task: task, Input: buildPrompt(kind, question, cards), Persisted: genErr == nil}
+			step := flowStep{Task: task, Input: buildInterpretPrompt(kind, question, themeTitle, spreadName, cards, positions), Persisted: genErr == nil}
 			if genErr != nil {
 				step.Error = genErr.Error()
 			} else {

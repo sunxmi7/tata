@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"tata/server/internal/readingflow"
 )
 
 type jobEvent struct {
@@ -333,7 +335,11 @@ func (a *App) executeInterpret(id int64) {
 		fail(err)
 		return
 	}
-	if !quotaConsumed && !rewardConsumed && !settled {
+	var onboard, trialUsed bool
+	if userID != nil {
+		_ = a.Store.QueryRow(bg, `SELECT r.onboard_experience, u.reading_trial_used FROM readings r JOIN app_users u ON u.id=r.user_id WHERE r.id=$1`, id).Scan(&onboard, &trialUsed)
+	}
+	if (!onboard || trialUsed) && !quotaConsumed && !rewardConsumed && !settled {
 		fail(biz("额度未扣减，记录已保留，不继续生成"))
 		return
 	}
@@ -341,7 +347,7 @@ func (a *App) executeInterpret(id int64) {
 		fail(biz("牌面尚未固定"))
 		return
 	}
-	vendorName, model, _, _, _, err := a.binding(bg, taskFor(kind))
+	_, vendorName, model, _, _, _, err := a.binding(bg, taskFor(kind))
 	if err != nil {
 		_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2 AND status IN ('CARDS_FIXED','FAILED_RETRYABLE','INTERPRETING')`, "未绑定供应商", id)
 		fail(err)
@@ -366,14 +372,16 @@ func (a *App) executeInterpret(id int64) {
 	}
 	run.jobID = a.insertAIJob(bg, "interpret", id, *userID, 0, 0)
 
-	prompt := buildPrompt(kind, deref(question), *cards)
+	themeTitle, spreadName, _ := a.interpretThemeContext(bg, id)
+	positions := a.loadReadingPositions(bg, id)
+	prompt := buildInterpretPrompt(kind, deref(question), themeTitle, spreadName, *cards, positions)
 	if kind == "tarotist" {
 		var tid *int64
 		_ = a.Store.QueryRow(bg, `SELECT tarotist_id FROM readings WHERE id=$1`, id).Scan(&tid)
 		if tid != nil {
 			var name, persona, voice, banned, ask string
 			_ = a.Store.QueryRow(bg, `SELECT name, persona, voice, banned, ask_style FROM tarotists WHERE id=$1`, *tid).Scan(&name, &persona, &voice, &banned, &ask)
-			prompt = "共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n人设：" + name + "。" + persona + "\n语音：" + voice + "。禁止：" + banned + "。追问：" + ask + "\n" + buildPrompt(kind, deref(question), *cards)
+			prompt = "共用解牌：先按牌面、牌位、正逆位解释，再按人设说话。不得改牌。\n人设：" + name + "。" + persona + "\n语音：" + voice + "。禁止：" + banned + "。追问：" + ask + "\n" + buildInterpretPrompt(kind, deref(question), themeTitle, spreadName, *cards, positions)
 		}
 	}
 
@@ -384,9 +392,19 @@ func (a *App) executeInterpret(id int64) {
 	}
 	jobCtx, cancel := context.WithTimeout(bg, wait)
 	defer cancel()
+	uid := int64(0)
+	if userID != nil {
+		uid = *userID
+	}
+	jobCtx = mergeAIBill(jobCtx, aiBill{UserID: uid, ReadingID: id, JobID: run.jobID, Kind: "interpret"})
 
+	mode := interpretPromptMode(kind, deref(question))
+	system := readingflow.InterpretSystem(mode)
 	lastWrite := time.Now().Add(-time.Second)
-	_, _, text, callErr := a.runEinoStream(jobCtx, taskFor(kind), prompt, func(chunk string) error {
+	_, _, text, callErr := a.runEinoStreamVars(jobCtx, taskFor(kind), map[string]any{
+		"question": prompt,
+		"system":   system,
+	}, func(chunk string) error {
 		partial := run.appendDelta(chunk)
 		if time.Since(lastWrite) >= 200*time.Millisecond {
 			lastWrite = time.Now()
@@ -400,7 +418,20 @@ func (a *App) executeInterpret(id int64) {
 		fail(biz("解读失败，可重试，未重新扣费"))
 		return
 	}
+	if reason := readingflow.InterpretationLeakReason(text); reason != "" {
+		if cleaned, ok := readingflow.StripInterpretationLeak(text); ok && readingflow.InterpretationLeakReason(cleaned) == "" {
+			text = cleaned
+		} else {
+			_, _ = a.Store.Exec(bg, `UPDATE readings SET status='FAILED_RETRYABLE', fail_reason=$1, updated_at=now() WHERE id=$2`, "解读输出异常:"+reason, id)
+			fail(biz("解读失败，可重试，未重新扣费"))
+			return
+		}
+	}
 	if _, err := a.Store.Exec(bg, `UPDATE readings SET status='COMPLETED', interpretation=$1, fail_reason=NULL, updated_at=now() WHERE id=$2`, text, id); err != nil {
+		fail(err)
+		return
+	}
+	if err := a.consumeOnboardIfReady(bg, id); err != nil {
 		fail(err)
 		return
 	}
@@ -432,6 +463,9 @@ func (a *App) executeDetect(id int64, question string) {
 	run := a.jobs().ensure(key)
 	bg := context.Background()
 	run.jobID = a.insertAIJob(bg, "detect", id, 0, 0, 0)
+	var uid int64
+	_ = a.Store.QueryRow(bg, `SELECT COALESCE(user_id, 0) FROM readings WHERE id=$1`, id).Scan(&uid)
+	bg = mergeAIBill(bg, aiBill{UserID: uid, ReadingID: id, JobID: run.jobID, Kind: "detect"})
 	lastWrite := time.Now().Add(-time.Second)
 	vendor, model, output, callErr := a.runEinoStream(bg, "detect", question, func(chunk string) error {
 		partial := run.appendDelta(chunk)
@@ -480,6 +514,7 @@ func (a *App) executeFollowup(readingID, uid, turn int64, text string) {
 	run := a.jobs().ensure(key)
 	bg := context.Background()
 	run.jobID = a.insertAIJob(bg, "followup", readingID, uid, 0, int(turn))
+	bg = mergeAIBill(bg, aiBill{JobID: run.jobID})
 	lastWrite := time.Now().Add(-time.Second)
 	body, err := a.answerFollowupStreaming(bg, readingID, uid, turn, text, func(chunk string) error {
 		partial := run.appendDelta(chunk)
@@ -508,7 +543,7 @@ func (a *App) ensureYearlyJob(ctx context.Context, uid int64, year int, row year
 	if row.reportStatus == "ready" && strings.TrimSpace(row.report) != "" {
 		return finishedRun(nil, nil), nil
 	}
-	if _, _, _, _, _, err := a.binding(ctx, "interpret"); err != nil {
+	if _, _, _, _, _, _, err := a.binding(ctx, "interpret"); err != nil {
 		_, _ = a.Store.Exec(ctx, `UPDATE yearly_reports SET report_status='failed', fail_reason=$1 WHERE user_id=$2 AND year=$3`, "未绑定供应商", uid, year)
 		return nil, err
 	}
@@ -545,7 +580,8 @@ func (a *App) executeYearly(uid int64, year int, row yearlyRow) {
 		return
 	}
 	run.jobID = a.insertAIJob(bg, "yearly", 0, uid, year, 0)
-	prompt := buildYearlyPrompt(year, row.birthDate, row.gender, row.rhythmJSON, row.domainJSON)
+	bg = mergeAIBill(bg, aiBill{UserID: uid, JobID: run.jobID, Kind: "yearly"})
+	prompt := buildYearlyPrompt(year, row.birthDate, row.birthTime, row.birthPlace, row.gender, row.rhythmJSON, row.domainJSON)
 	lastWrite := time.Now().Add(-time.Second)
 	_, _, text, callErr := a.runEinoStream(bg, "interpret", prompt, func(chunk string) error {
 		partial := run.appendDelta(chunk)
@@ -583,7 +619,11 @@ func (a *App) streamInterpretJob(w http.ResponseWriter, r *http.Request, id int6
 		if wrap != nil {
 			item = wrap(item)
 		}
-		send("done", map[string]any{"reading": item})
+		messages, err := a.loadConversation(r, id)
+		if err != nil {
+			return err
+		}
+		send("done", map[string]any{"reading": item, "reading_id": id, "messages": messages, "has_more": false})
 		return nil
 	})
 	return nil

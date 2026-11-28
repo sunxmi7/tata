@@ -14,28 +14,29 @@ import (
 	"time"
 )
 
-// IAP credits diamonds (会员点数). Free 次数 stay on rewards / daily_free / ledger.
-// Subscription period refresh and consumable packs use separate buckets.
-// Price and diamond_grant are nullable; this file never invents amounts.
+// IAP verifies one catalog. Membership and quota packs credit quota_balance.
+// Yearly unlock writes yearly_reports. Deck kinds write user_deck_unlocks.
+// Price and grant amounts are nullable; this file never invents amounts.
 
 const (
 	iapPlatformAppStore = "app_store"
 	iapPlatformPlay     = "play"
 	iapBucketSub        = "subscription"
 	iapBucketPack       = "consumable"
+	iapBucketQuota      = "quota"
 	iapVerifyVerified   = "verified"
 	iapVerifyFailed     = "failed"
 	iapCreditNone       = "none"
 	iapCreditCredited   = "credited"
 	iapCreditUnconfig   = "amount_unconfigured"
 	iapCreditExpired    = "skipped_expired"
+	iapCreditDeferred   = "deferred"
 	iapSourceVerify     = "verify"
 	iapSourceRestore    = "restore"
 
 	iapKindMonth        = "month_subscription"
 	iapKindYear         = "year_subscription"
-	iapKindReadingPack  = "reading_pack"
-	iapKindPack         = "consumable_pack"
+	iapKindQuotaPack    = "quota_pack"
 	iapKindYearlyUnlock = "yearly_unlock"
 )
 
@@ -66,13 +67,11 @@ type iapPurchase struct {
 }
 
 type iapSKU struct {
-	ID           int64
-	Code         string
-	Kind         string
-	Bucket       string
-	Grant        sql.NullInt64
-	ReadingGrant sql.NullInt64
-	Enabled      bool
+	ID      int64
+	Code    string
+	Kind    string
+	Grant   sql.NullInt64
+	Enabled bool
 }
 
 type rowQuery interface {
@@ -80,7 +79,7 @@ type rowQuery interface {
 }
 
 func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -102,9 +101,9 @@ func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
 	if out["credit_status"] == iapCreditCredited {
 		if tasks := a.resumeQuotaAfterCredit(r.Context(), uid); len(tasks) > 0 {
 			out["resumed_tasks"] = tasks
-			if view, viewErr := diamondView(r.Context(), a.Store, uid); viewErr == nil {
-				out["subscription_diamonds"] = view["subscription_diamonds"]
-				out["pack_diamonds"] = view["pack_diamonds"]
+			if view, viewErr := quotaView(r.Context(), a.Store, uid); viewErr == nil {
+				out["quota_remaining"] = view["quota_remaining"]
+				out["balance"] = view["balance"]
 			}
 		}
 	}
@@ -113,7 +112,7 @@ func (a *App) appIAPVerify(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appIAPRestore(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -192,14 +191,14 @@ func (a *App) appIAPRestore(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appIAPEntitlements(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
 	if uid == 0 {
-		return biz("登录后才能查看钻石余额")
+		return biz("登录后才能查看权益")
 	}
-	out, err := diamondView(r.Context(), a.Store, uid)
+	out, err := quotaView(r.Context(), a.Store, uid)
 	if err != nil {
 		return err
 	}
@@ -216,7 +215,31 @@ func (a *App) appIAPSKUs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeOK(w, list)
+	uid, _ := a.appActor(r)
+	member := false
+	if uid > 0 {
+		member, err = hasActiveMembership(r.Context(), a.Store, uid)
+		if err != nil {
+			return err
+		}
+	}
+	filtered := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		k, _ := item["kind"].(string)
+		if isDeckKind(k) {
+			continue
+		}
+		if k == iapKindQuotaPack && !member {
+			continue
+		}
+		if k == iapKindYearlyUnlock && member {
+			continue
+		}
+		item["unit"] = "quota"
+		item["display_label"] = T(r.Context(), displayLabelQuota)
+		filtered = append(filtered, item)
+	}
+	writeOK(w, filtered)
 	return nil
 }
 
@@ -233,52 +256,98 @@ func (a *App) adminListIAPOrders(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	userID, verify, err := iapOrderFilter(r)
+	filter, err := buildIAPOrderFilter(r)
 	if err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT o.id, o.user_id, o.sku_code, o.sku_kind, o.ledger_bucket,
+	page, err := parseAdminPage(r)
+	if err != nil {
+		return err
+	}
+	var total int
+	if err := a.Store.QueryRow(r.Context(), `SELECT count(*) FROM iap_orders o`+filter.where, filter.args...).Scan(&total); err != nil {
+		return err
+	}
+	args := append(append([]any{}, filter.args...), page.Limit, page.Offset)
+	q := `SELECT o.id, o.user_id, o.sku_code, o.sku_kind,
 		o.platform, o.product_id, o.store_transaction_id, o.original_transaction_id,
-		o.verify_status, o.credit_status, o.credited_diamonds, o.credited_readings,
+		o.verify_status, o.credit_status, o.credited_quota,
 		o.period_start, o.period_end, o.source, o.verify_message, o.created_at, o.verified_at,
-		s.status, s.expires_at, s.sku_kind
+		s.status, s.expires_at, s.sku_kind,
+		o.price_amount_minor, o.price_currency, sk.price_amount_minor, sk.price_currency
 		FROM iap_orders o
 		LEFT JOIN subscriptions s ON s.id = o.subscription_id
-		WHERE ($1 = 0 OR o.user_id = $1) AND ($2 = '' OR o.verify_status = $2)
-		ORDER BY o.id DESC LIMIT 200`, userID, verify)
+		LEFT JOIN iap_skus sk ON sk.id = o.sku_id` + filter.where +
+		fmt.Sprintf(" ORDER BY o.id DESC LIMIT $%d OFFSET $%d", len(filter.args)+1, len(filter.args)+2)
+	rows, err := a.Store.Query(r.Context(), q, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	list := []map[string]any{}
 	for rows.Next() {
-		var id, uid int64
-		var skuCode, skuKind, bucket, platform, productID, txn, original string
-		var verifyStatus, creditStatus, source, message string
-		var credited, readings sql.NullInt64
-		var periodStart, periodEnd, verifiedAt sql.NullTime
-		var created time.Time
-		var subStatus, subKind sql.NullString
-		var subExpires sql.NullTime
-		if err := rows.Scan(&id, &uid, &skuCode, &skuKind, &bucket, &platform, &productID, &txn, &original,
-			&verifyStatus, &creditStatus, &credited, &readings, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
-			&subStatus, &subExpires, &subKind); err != nil {
+		item, err := scanAdminIAPOrderRow(rows)
+		if err != nil {
 			return err
 		}
-		list = append(list, map[string]any{
-			"id": id, "user_id": uid, "sku_code": skuCode, "sku_kind": skuKind, "ledger_bucket": bucket,
-			"platform": platform, "product_id": productID, "store_transaction_id": txn, "original_transaction_id": original,
-			"verify_status": verifyStatus, "credit_status": creditStatus, "credited_diamonds": nullInt(credited),
-			"credited_readings": nullInt(readings),
-			"period_start":      nullTime(periodStart), "period_end": nullTime(periodEnd),
-			"source": source, "verify_message": message, "created_at": created, "verified_at": nullTime(verifiedAt),
-			"subscription_status": nullString(subStatus), "subscription_expires_at": nullTime(subExpires),
-			"subscription_sku_kind": nullString(subKind),
-			"unit":                  "diamond",
+		list = append(list, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeAdminPage(w, list, total, page.Limit, page.Offset)
+	return nil
+}
+
+func (a *App) adminExportIAPOrders(w http.ResponseWriter, r *http.Request) error {
+	act, err := a.adminActor(r, false)
+	if err != nil {
+		return err
+	}
+	filter, err := buildIAPOrderFilter(r)
+	if err != nil {
+		return err
+	}
+	args := append(append([]any{}, filter.args...), 10000)
+	q := `SELECT o.id, o.user_id, o.sku_code, o.sku_kind, o.platform, o.verify_status, o.credit_status,
+		o.created_at, o.verified_at, o.price_amount_minor, o.price_currency, sk.price_amount_minor, sk.price_currency
+		FROM iap_orders o
+		LEFT JOIN iap_skus sk ON sk.id = o.sku_id` + filter.where +
+		fmt.Sprintf(" ORDER BY o.id DESC LIMIT $%d", len(filter.args)+1)
+	rows, err := a.Store.Query(r.Context(), q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	csvRows := [][]string{}
+	for rows.Next() {
+		var id, uid int64
+		var skuCode, skuKind, platform, verifyStatus, creditStatus string
+		var created time.Time
+		var verified sql.NullTime
+		var orderPrice, skuPrice sql.NullInt64
+		var orderCur, skuCur sql.NullString
+		if err := rows.Scan(&id, &uid, &skuCode, &skuKind, &platform, &verifyStatus, &creditStatus,
+			&created, &verified, &orderPrice, &orderCur, &skuPrice, &skuCur); err != nil {
+			return err
+		}
+		item := map[string]any{}
+		attachIAPOrderPrice(item, orderPrice, orderCur, skuPrice, skuCur)
+		csvRows = append(csvRows, []string{
+			strconv.FormatInt(id, 10), strconv.FormatInt(uid, 10), skuCode, skuKind, platform,
+			verifyStatus, creditStatus, created.Format(time.RFC3339), nullCSV(nullTime(verified)),
+			nullCSV(item["price_amount_minor"]), nullCSV(item["price_currency"]),
+			fmt.Sprint(item["price_estimated"]),
 		})
 	}
-	writeOK(w, list)
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	a.Store.audit(r.Context(), act.id, "export", "iap_order", "", fmt.Sprintf("rows=%d", len(csvRows)))
+	return writeCSV(w, "iap_orders.csv", []string{
+		"id", "user_id", "sku_code", "sku_kind", "platform", "verify_status", "credit_status",
+		"created_at", "verified_at", "price_amount_minor", "price_currency", "price_estimated",
+	}, csvRows)
 }
 
 func (a *App) adminListIAPSKUs(w http.ResponseWriter, r *http.Request) error {
@@ -305,8 +374,7 @@ type iapSKUBody struct {
 	PlayProductID     string `json:"play_product_id"`
 	PriceAmountMinor  *int64 `json:"price_amount_minor"`
 	PriceCurrency     string `json:"price_currency"`
-	DiamondGrant      *int   `json:"diamond_grant"`
-	ReadingGrant      *int   `json:"reading_grant"`
+	QuotaGrant        *int   `json:"quota_grant"`
 	PeriodCount       *int   `json:"period_count"`
 	Copy              string `json:"copy"`
 	Enabled           *bool  `json:"enabled"`
@@ -327,11 +395,11 @@ func (a *App) adminCreateIAPSKU(w http.ResponseWriter, r *http.Request) error {
 	}
 	var id int64
 	err = a.Store.QueryRow(r.Context(), `INSERT INTO iap_skus(
-		code, kind, ledger_bucket, display_name, app_store_product_id, play_product_id,
-		price_amount_minor, price_currency, diamond_grant, reading_grant, period_unit, period_count, copy, enabled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-		row.code, row.kind, row.bucket, row.name, row.appID, row.playID,
-		row.price, row.currency, row.grant, row.readingGrant, row.periodUnit, row.periodCount, row.copy, row.enabled).Scan(&id)
+		code, kind, display_name, app_store_product_id, play_product_id,
+		price_amount_minor, price_currency, quota_grant, period_unit, period_count, copy, enabled)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+		row.code, row.kind, row.name, row.appID, row.playID,
+		row.price, row.currency, row.grant, row.periodUnit, row.periodCount, row.copy, row.enabled).Scan(&id)
 	if err != nil {
 		return mapIAPSKUWriteErr(err)
 	}
@@ -375,10 +443,10 @@ func (a *App) adminUpdateIAPSKU(w http.ResponseWriter, r *http.Request) error {
 	}
 	tag, err := a.Store.Exec(r.Context(), `UPDATE iap_skus SET
 		display_name=$1, app_store_product_id=$2, play_product_id=$3,
-		price_amount_minor=$4, price_currency=$5, diamond_grant=$6, reading_grant=$7,
-		period_count=$8, copy=$9, enabled=$10, updated_at=now()
-		WHERE id=$11`,
-		row.name, row.appID, row.playID, row.price, row.currency, row.grant, row.readingGrant, row.periodCount, row.copy, row.enabled, id)
+		price_amount_minor=$4, price_currency=$5, quota_grant=$6,
+		period_count=$7, copy=$8, enabled=$9, updated_at=now()
+		WHERE id=$10`,
+		row.name, row.appID, row.playID, row.price, row.currency, row.grant, row.periodCount, row.copy, row.enabled, id)
 	if err != nil {
 		return mapIAPSKUWriteErr(err)
 	}
@@ -395,9 +463,9 @@ func (a *App) adminUpdateIAPSKU(w http.ResponseWriter, r *http.Request) error {
 }
 
 type iapSKUWrite struct {
-	code, kind, bucket, name, periodUnit, copy                       string
-	appID, playID, currency, price, grant, readingGrant, periodCount any
-	enabled                                                          bool
+	code, kind, name, periodUnit, copy                 string
+	appID, playID, currency, price, grant, periodCount any
+	enabled                                            bool
 }
 
 func validateIAPSKUBody(req iapSKUBody, creating bool) (iapSKUWrite, error) {
@@ -420,16 +488,10 @@ func validateIAPSKUBody(req iapSKUBody, creating bool) (iapSKUWrite, error) {
 			return iapSKUWrite{}, biz("商品编码不正确")
 		}
 		out.code = code
-		out.bucket, out.periodUnit = iapKindMeta(kind)
+		out.periodUnit = iapPeriod(kind)
 	}
-	if (kind == iapKindYearlyUnlock || kind == iapKindReadingPack) && req.DiamondGrant != nil {
-		if kind == iapKindReadingPack {
-			return iapSKUWrite{}, biz("次卡不能发放钻石")
-		}
-		return iapSKUWrite{}, biz("年运解锁不能发放钻石")
-	}
-	if kind != iapKindReadingPack && req.ReadingGrant != nil {
-		return iapSKUWrite{}, biz("只有次卡可以发放解读次数")
+	if req.QuotaGrant != nil && !grantsQuota(kind) {
+		return iapSKUWrite{}, biz("这个商品不入账额度")
 	}
 	out.appID = emptyAsNil(strings.TrimSpace(req.AppStoreProductID))
 	out.playID = emptyAsNil(strings.TrimSpace(req.PlayProductID))
@@ -447,17 +509,11 @@ func validateIAPSKUBody(req iapSKUBody, creating bool) (iapSKUWrite, error) {
 		out.price = *req.PriceAmountMinor
 		out.currency = currency
 	}
-	if req.DiamondGrant != nil {
-		if *req.DiamondGrant <= 0 {
-			return iapSKUWrite{}, biz("钻石发放须为正整数")
+	if req.QuotaGrant != nil {
+		if *req.QuotaGrant <= 0 {
+			return iapSKUWrite{}, biz("入账额度须为正整数")
 		}
-		out.grant = *req.DiamondGrant
-	}
-	if req.ReadingGrant != nil {
-		if *req.ReadingGrant <= 0 {
-			return iapSKUWrite{}, biz("解读次数须为正整数")
-		}
-		out.readingGrant = *req.ReadingGrant
+		out.grant = *req.QuotaGrant
 	}
 	if req.PeriodCount != nil {
 		if *req.PeriodCount <= 0 {
@@ -470,10 +526,10 @@ func validateIAPSKUBody(req iapSKUBody, creating bool) (iapSKUWrite, error) {
 
 func validIAPKind(kind string) bool {
 	switch kind {
-	case iapKindMonth, iapKindYear, iapKindReadingPack, iapKindPack, iapKindYearlyUnlock:
+	case iapKindMonth, iapKindYear, iapKindQuotaPack, iapKindYearlyUnlock:
 		return true
 	}
-	return false
+	return isDeckKind(kind)
 }
 
 func validIAPCode(code string) bool {
@@ -487,17 +543,6 @@ func validIAPCode(code string) bool {
 		return false
 	}
 	return true
-}
-
-func iapKindMeta(kind string) (bucket, period string) {
-	switch kind {
-	case iapKindMonth:
-		return iapBucketSub, "month"
-	case iapKindYear:
-		return iapBucketSub, "year"
-	default:
-		return iapBucketPack, ""
-	}
 }
 
 func parseIAPKindQuery(r *http.Request) (string, error) {
@@ -538,7 +583,7 @@ func (a *App) loadIAPSKU(ctx context.Context, id int64) (map[string]any, error) 
 	return nil, biz("商品不存在")
 }
 
-func (a *App) adminIAPDiamonds(w http.ResponseWriter, r *http.Request) error {
+func (a *App) adminIAPQuota(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
@@ -547,12 +592,18 @@ func (a *App) adminIAPDiamonds(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || userID <= 0 {
 		return biz("用户 id 不正确")
 	}
-	view, err := diamondView(r.Context(), a.Store, userID)
+	view, err := quotaView(r.Context(), a.Store, userID)
 	if err != nil {
 		return err
 	}
+	quota, err := loadQuotaBalance(r.Context(), a.Store, userID)
+	if err != nil {
+		return err
+	}
+	view["quota_remaining"] = quota
+	view["balance"] = quota
 	rows, err := a.Store.Query(r.Context(), `SELECT id, bucket, delta, balance_after, order_id, store_transaction_id, reason, created_at
-		FROM diamond_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 50`, userID)
+		FROM quota_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 50`, userID)
 	if err != nil {
 		return err
 	}
@@ -726,23 +777,16 @@ func (a *App) verifyPurchase(ctx context.Context, uid int64, in iapPurchase) (ma
 	}
 	if sku.Grant.Valid && sku.Grant.Int64 < 0 {
 		if err := finishIAPOrder(ctx, tx, orderID, iapOrderWrite{
-			VerifyStatus: iapVerifyFailed, CreditStatus: iapCreditNone, Message: "钻石发放数量无效", SKU: sku,
-		}); err != nil {
-			return nil, err
-		}
-		return commitIAPSnapshot(ctx, tx, uid, orderID, in, false)
-	}
-	if sku.ReadingGrant.Valid && sku.ReadingGrant.Int64 < 0 {
-		if err := finishIAPOrder(ctx, tx, orderID, iapOrderWrite{
-			VerifyStatus: iapVerifyFailed, CreditStatus: iapCreditNone, Message: "解读次数无效", SKU: sku,
+			VerifyStatus: iapVerifyFailed, CreditStatus: iapCreditNone, Message: "入账额度无效", SKU: sku,
 		}); err != nil {
 			return nil, err
 		}
 		return commitIAPSnapshot(ctx, tx, uid, orderID, in, false)
 	}
 
+	membership := sku.Kind == iapKindMonth || sku.Kind == iapKindYear
 	var periodEnd *time.Time
-	if sku.Bucket == iapBucketSub {
+	if membership {
 		if in.ExpiresAt == nil {
 			if err := finishIAPOrder(ctx, tx, orderID, iapOrderWrite{
 				VerifyStatus: iapVerifyFailed, CreditStatus: iapCreditNone, Message: "订阅有效期缺失", SKU: sku,
@@ -766,17 +810,21 @@ func (a *App) verifyPurchase(ctx context.Context, uid int64, in iapPurchase) (ma
 		PeriodStart:  &periodStart,
 		PeriodEnd:    periodEnd,
 	}
-	if sku.Bucket == iapBucketSub {
+	if membership {
 		status := "active"
 		if !periodEnd.After(now) {
 			status = "expired"
 			write.CreditStatus = iapCreditExpired
 		}
-		subID, err := upsertIAPSubscription(ctx, tx, uid, sku, in, periodStart, *periodEnd, status, orderID)
+		subID, held, err := upsertIAPSubscription(ctx, tx, uid, sku, in, periodStart, *periodEnd, status, orderID)
 		if err != nil {
 			return nil, err
 		}
 		write.SubscriptionID = &subID
+		if held {
+			write.CreditStatus = iapCreditDeferred
+			write.Message = "下一期尚未开始"
+		}
 	}
 	if sku.Kind == iapKindYearlyUnlock {
 		if write.CreditStatus == iapCreditCredited {
@@ -788,16 +836,41 @@ func (a *App) verifyPurchase(ctx context.Context, uid int64, in iapPurchase) (ma
 				return nil, err
 			}
 		}
-	} else if sku.Kind == iapKindReadingPack {
+	} else if sku.Kind == iapKindQuotaPack {
 		if write.CreditStatus == iapCreditCredited {
-			if !sku.ReadingGrant.Valid {
+			member, err := hasActiveMembership(ctx, tx, uid)
+			if err != nil {
+				return nil, err
+			}
+			if !member {
+				write.VerifyStatus = iapVerifyFailed
+				write.CreditStatus = iapCreditNone
+				write.Message = "仅会员可购买额度补充包"
+			} else if !sku.Grant.Valid {
 				write.CreditStatus = iapCreditUnconfig
 			} else {
-				grant := int(sku.ReadingGrant.Int64)
-				write.ReadingCredited = &grant
-				if err := creditRedeemFree(ctx, tx, uid, grant); err != nil {
+				grant := int(sku.Grant.Int64)
+				write.Credited = &grant
+				oid := orderID
+				if _, err := creditQuota(ctx, tx, uid, grant, &oid, in.TransactionID, "iap_quota_pack"); err != nil {
 					return nil, err
 				}
+			}
+		}
+	} else if isDeckKind(sku.Kind) {
+		if write.CreditStatus == iapCreditCredited {
+			product, err := loadDeckProductByCode(ctx, tx, sku.Code)
+			if err != nil {
+				return nil, err
+			}
+			_, msg, err := applyDeckUnlock(ctx, tx, uid, product, "")
+			if err != nil {
+				return nil, err
+			}
+			if msg != "" {
+				write.VerifyStatus = iapVerifyFailed
+				write.CreditStatus = iapCreditNone
+				write.Message = msg
 			}
 		}
 	} else if write.CreditStatus == iapCreditCredited && !sku.Grant.Valid {
@@ -805,8 +878,8 @@ func (a *App) verifyPurchase(ctx context.Context, uid int64, in iapPurchase) (ma
 	} else if write.CreditStatus == iapCreditCredited {
 		grant := int(sku.Grant.Int64)
 		write.Credited = &grant
-		reason := diamondReason(in.Source, sku.Bucket)
-		if err := applyDiamonds(ctx, tx, uid, sku.Bucket, grant, periodEnd, in.Platform+":"+in.TransactionID, in.TransactionID, orderID, reason); err != nil {
+		oid := orderID
+		if _, err := creditQuota(ctx, tx, uid, grant, &oid, in.TransactionID, quotaReason(in.Source, sku.Kind)); err != nil {
 			return nil, err
 		}
 	}
@@ -823,7 +896,7 @@ func commitIAPSnapshot(ctx context.Context, tx Tx, uid, orderID int64, in iapPur
 	}
 	detail, err := json.Marshal(map[string]any{
 		"order_id": orderID, "verify_status": snap["verify_status"], "credit_status": snap["credit_status"],
-		"ledger_bucket": snap["ledger_bucket"], "transaction_id": in.TransactionID, "source": in.Source,
+		"sku_kind": snap["sku_kind"], "transaction_id": in.TransactionID, "source": in.Source,
 	})
 	if err != nil {
 		return nil, err
@@ -839,31 +912,38 @@ func commitIAPSnapshot(ctx context.Context, tx Tx, uid, orderID int64, in iapPur
 }
 
 type iapOrderWrite struct {
-	VerifyStatus    string
-	CreditStatus    string
-	Message         string
-	SKU             *iapSKU
-	Credited        *int
-	ReadingCredited *int
-	PeriodStart     *time.Time
-	PeriodEnd       *time.Time
-	SubscriptionID  *int64
+	VerifyStatus   string
+	CreditStatus   string
+	Message        string
+	SKU            *iapSKU
+	Credited       *int
+	PeriodStart    *time.Time
+	PeriodEnd      *time.Time
+	SubscriptionID *int64
 }
 
 func finishIAPOrder(ctx context.Context, tx Tx, orderID int64, w iapOrderWrite) error {
 	var skuID any
-	code, kind, bucket := "", "", ""
+	code, kind := "", ""
+	var price any
+	currency := ""
 	if w.SKU != nil {
 		skuID = w.SKU.ID
-		code, kind, bucket = w.SKU.Code, w.SKU.Kind, w.SKU.Bucket
+		code, kind = w.SKU.Code, w.SKU.Kind
+		var amount sql.NullInt64
+		var cur sql.NullString
+		_ = tx.QueryRow(ctx, `SELECT price_amount_minor, price_currency FROM iap_skus WHERE id=$1`, w.SKU.ID).Scan(&amount, &cur)
+		if amount.Valid {
+			price = amount.Int64
+			currency = strings.TrimSpace(cur.String)
+			if currency == "" {
+				currency = "CNY"
+			}
+		}
 	}
 	var credited any
 	if w.Credited != nil {
 		credited = *w.Credited
-	}
-	var readings any
-	if w.ReadingCredited != nil {
-		readings = *w.ReadingCredited
 	}
 	var verifiedAt any
 	if w.VerifyStatus == iapVerifyVerified {
@@ -874,17 +954,20 @@ func finishIAPOrder(ctx context.Context, tx Tx, orderID int64, w iapOrderWrite) 
 		subID = *w.SubscriptionID
 	}
 	_, err := tx.Exec(ctx, `UPDATE iap_orders SET
-		sku_id=$1, sku_code=$2, sku_kind=$3, ledger_bucket=$4,
-		verify_status=$5, credit_status=$6, credited_diamonds=$7, credited_readings=$8,
-		period_start=$9, period_end=$10, subscription_id=$11,
-		verify_message=$12, verified_at=$13, updated_at=now()
+		sku_id=$1, sku_code=$2, sku_kind=$3,
+		verify_status=$4, credit_status=$5, credited_quota=$6,
+		period_start=$7, period_end=$8, subscription_id=$9,
+		verify_message=$10, verified_at=$11,
+		price_amount_minor=COALESCE($12, price_amount_minor),
+		price_currency=CASE WHEN $12 IS NULL THEN price_currency ELSE $13 END,
+		updated_at=now()
 		WHERE id=$14`,
-		skuID, code, kind, bucket, w.VerifyStatus, w.CreditStatus, credited, readings,
-		w.PeriodStart, w.PeriodEnd, subID, w.Message, verifiedAt, orderID)
+		skuID, code, kind, w.VerifyStatus, w.CreditStatus, credited,
+		w.PeriodStart, w.PeriodEnd, subID, w.Message, verifiedAt, price, currency, orderID)
 	return err
 }
 
-func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, in iapPurchase, start, end time.Time, status string, orderID int64) (int64, error) {
+func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, in iapPurchase, start, end time.Time, status string, orderID int64) (int64, bool, error) {
 	skuKind := "month"
 	if sku.Kind == "year_subscription" {
 		skuKind = "year"
@@ -898,56 +981,36 @@ func upsertIAPSubscription(ctx context.Context, tx Tx, uid int64, sku *iapSKU, i
 			user_id, sku_kind, status, starts_at, expires_at, sku_id, platform, store_original_transaction_id, last_order_id)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
 			uid, skuKind, status, start, end, sku.ID, in.Platform, in.OriginalTransactionID, orderID).Scan(&id)
-		return id, err
+		return id, false, err
 	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
+	}
+	var curStatus string
+	var curExp time.Time
+	if err = tx.QueryRow(ctx, `SELECT status, expires_at FROM subscriptions WHERE id=$1`, id).Scan(&curStatus, &curExp); err != nil {
+		return 0, false, err
+	}
+	now := time.Now().UTC()
+	if status == "active" && curStatus == "active" && curExp.After(now) && end.After(curExp) {
+		var pending any
+		if sku.Grant.Valid && sku.Grant.Int64 > 0 {
+			pending = int(sku.Grant.Int64)
+		}
+		_, err = tx.Exec(ctx, `UPDATE subscriptions
+			SET pending_expires_at=$1, pending_quota=$2, pending_order_id=$3, pending_sku_kind=$4
+			WHERE id=$5`, end, pending, orderID, skuKind, id)
+		return id, true, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE subscriptions
-		SET sku_kind=$1, status=$2, expires_at=$3, sku_id=$4, last_order_id=$5
+		SET sku_kind=$1, status=$2, expires_at=$3, sku_id=$4, last_order_id=$5,
+			pending_expires_at=NULL, pending_quota=NULL, pending_order_id=NULL, pending_sku_kind=''
 		WHERE id=$6`, skuKind, status, end, sku.ID, orderID, id)
-	return id, err
+	return id, false, err
 }
 
-func applyDiamonds(ctx context.Context, tx Tx, uid int64, bucket string, grant int, periodEnd *time.Time, periodKey, txn string, orderID int64, reason string) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO diamond_balances(user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return err
-	}
-	var subBal, packBal int
-	if err := tx.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds
-		FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&subBal, &packBal); err != nil {
-		return err
-	}
-	var delta, after int
-	switch bucket {
-	case iapBucketSub:
-		delta = grant - subBal
-		after = grant
-		var end any
-		if periodEnd != nil {
-			end = *periodEnd
-		}
-		if _, err := tx.Exec(ctx, `UPDATE diamond_balances
-			SET subscription_diamonds=$1, subscription_period_end=$2, subscription_period_key=$3, updated_at=now()
-			WHERE user_id=$4`, after, end, periodKey, uid); err != nil {
-			return err
-		}
-	case iapBucketPack:
-		delta = grant
-		after = packBal + grant
-		if _, err := tx.Exec(ctx, `UPDATE diamond_balances SET pack_diamonds=$1, updated_at=now() WHERE user_id=$2`, after, uid); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown diamond bucket %s", bucket)
-	}
-	_, err := tx.Exec(ctx, `INSERT INTO diamond_ledger(user_id, bucket, delta, balance_after, order_id, store_transaction_id, reason)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`, uid, bucket, delta, after, orderID, txn, reason)
-	return err
-}
-
-func diamondReason(source, bucket string) string {
-	if bucket == iapBucketPack {
+func quotaReason(source, kind string) string {
+	if kind == iapKindQuotaPack {
 		if source == iapSourceRestore {
 			return "iap_restore_pack_grant"
 		}
@@ -960,12 +1023,12 @@ func diamondReason(source, bucket string) string {
 }
 
 func findSKU(ctx context.Context, q rowQuery, platform, productID string) (*iapSKU, error) {
-	query := `SELECT id, code, kind, ledger_bucket, diamond_grant, reading_grant, enabled FROM iap_skus WHERE app_store_product_id=$1`
+	query := `SELECT id, code, kind, quota_grant, enabled FROM iap_skus WHERE app_store_product_id=$1`
 	if platform == iapPlatformPlay {
-		query = `SELECT id, code, kind, ledger_bucket, diamond_grant, reading_grant, enabled FROM iap_skus WHERE play_product_id=$1`
+		query = `SELECT id, code, kind, quota_grant, enabled FROM iap_skus WHERE play_product_id=$1`
 	}
 	var sku iapSKU
-	err := q.QueryRow(ctx, query, productID).Scan(&sku.ID, &sku.Code, &sku.Kind, &sku.Bucket, &sku.Grant, &sku.ReadingGrant, &sku.Enabled)
+	err := q.QueryRow(ctx, query, productID).Scan(&sku.ID, &sku.Code, &sku.Kind, &sku.Grant, &sku.Enabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -975,29 +1038,38 @@ func findSKU(ctx context.Context, q rowQuery, platform, productID string) (*iapS
 	return &sku, nil
 }
 
+func loadDeckProductByCode(ctx context.Context, q rowQuery, code string) (deckProduct, error) {
+	var p deckProduct
+	err := q.QueryRow(ctx, `SELECT code, kind, display_name, COALESCE(price_amount_minor, 0), COALESCE(price_currency, 'CNY'),
+		deck_codes, covers_future, deduct_owned, note, enabled, sort_order
+		FROM iap_skus WHERE code=$1`, code).Scan(
+		&p.Code, &p.Kind, &p.Name, &p.Price, &p.Currency, &p.DeckCodes, &p.CoversFuture, &p.DeductOwned, &p.Note, &p.Enabled, &p.Sort)
+	return p, err
+}
+
 func iapOrderSnapshot(ctx context.Context, q rowQuery, orderID int64, idempotent bool) (map[string]any, error) {
 	var uid int64
-	var skuCode, skuKind, bucket, platform, productID, txn, original string
+	var skuCode, skuKind, platform, productID, txn, original string
 	var verifyStatus, creditStatus, source, message string
-	var credited, readings sql.NullInt64
+	var credited sql.NullInt64
 	var periodStart, periodEnd, verifiedAt sql.NullTime
 	var created time.Time
 	var subStatus, subKind sql.NullString
 	var subExpires sql.NullTime
 	var auto sql.NullBool
-	var subDiamonds, packDiamonds int
-	err := q.QueryRow(ctx, `SELECT o.user_id, o.sku_code, o.sku_kind, o.ledger_bucket,
+	var quotaBal int
+	err := q.QueryRow(ctx, `SELECT o.user_id, o.sku_code, o.sku_kind,
 		o.platform, o.product_id, o.store_transaction_id, o.original_transaction_id,
-		o.verify_status, o.credit_status, o.credited_diamonds, o.credited_readings,
+		o.verify_status, o.credit_status, o.credited_quota,
 		o.period_start, o.period_end, o.source, o.verify_message, o.created_at, o.verified_at,
 		s.status, s.expires_at, s.sku_kind, s.auto_renew,
-		COALESCE(d.subscription_diamonds, 0), COALESCE(d.pack_diamonds, 0)
+		COALESCE(d.quota_balance, 0)
 		FROM iap_orders o
 		LEFT JOIN subscriptions s ON s.id = o.subscription_id
-		LEFT JOIN diamond_balances d ON d.user_id = o.user_id
-		WHERE o.id=$1`, orderID).Scan(&uid, &skuCode, &skuKind, &bucket, &platform, &productID, &txn, &original,
-		&verifyStatus, &creditStatus, &credited, &readings, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
-		&subStatus, &subExpires, &subKind, &auto, &subDiamonds, &packDiamonds)
+		LEFT JOIN quota_balances d ON d.user_id = o.user_id
+		WHERE o.id=$1`, orderID).Scan(&uid, &skuCode, &skuKind, &platform, &productID, &txn, &original,
+		&verifyStatus, &creditStatus, &credited, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
+		&subStatus, &subExpires, &subKind, &auto, &quotaBal)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,60 +1083,57 @@ func iapOrderSnapshot(ctx context.Context, q rowQuery, orderID int64, idempotent
 		}
 	}
 	return map[string]any{
-		"order_id": orderID, "user_id": uid, "idempotent": idempotent, "unit": "diamond",
-		"sku_code": skuCode, "sku_kind": skuKind, "ledger_bucket": bucket,
+		"order_id": orderID, "user_id": uid, "idempotent": idempotent, "unit": "quota",
+		"sku_code": skuCode, "sku_kind": skuKind,
 		"platform": platform, "product_id": productID,
 		"store_transaction_id": txn, "original_transaction_id": original,
 		"verify_status": verifyStatus, "credit_status": creditStatus,
-		"credited_diamonds": nullInt(credited),
-		"credited_readings": nullInt(readings),
-		"period_start":      nullTime(periodStart), "period_end": nullTime(periodEnd),
+		"credited_quota":  nullInt(credited),
+		"quota_remaining": quotaBal,
+		"balance":         quotaBal,
+		"period_start":    nullTime(periodStart), "period_end": nullTime(periodEnd),
 		"source": source, "verify_message": message,
-		"subscription_diamonds": subDiamonds, "pack_diamonds": packDiamonds,
 		"subscription": subscription,
 	}, nil
 }
 
-func diamondView(ctx context.Context, q rowQuery, uid int64) (map[string]any, error) {
-	var sub, pack int
-	var periodEnd sql.NullTime
-	err := q.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds, subscription_period_end FROM diamond_balances WHERE user_id=$1`, uid).
-		Scan(&sub, &pack, &periodEnd)
-	if errors.Is(err, sql.ErrNoRows) {
-		sub, pack = 0, 0
-		err = nil
-	}
+func quotaView(ctx context.Context, q rowQuery, uid int64) (map[string]any, error) {
+	quota, err := loadQuotaBalance(ctx, q, uid)
 	if err != nil {
 		return nil, err
 	}
-	var kind, status string
-	var exp time.Time
-	var auto sql.NullBool
-	err = q.QueryRow(ctx, `SELECT sku_kind, status, expires_at, auto_renew FROM subscriptions
-		WHERE user_id=$1 AND status='active' AND expires_at > now() AND merge_state NOT IN ('superseded','expired')
-		ORDER BY expires_at DESC LIMIT 1`, uid).Scan(&kind, &status, &exp, &auto)
-	var subscription any
-	if err == nil {
-		subscription = map[string]any{
-			"sku_kind": kind, "status": status, "expires_at": exp, "auto_renew": nullBool(auto),
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	kind, exp, auto, member, err := loadActiveMembership(ctx, q, uid)
+	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		"unit":                    "diamond",
-		"display_label":           T(ctx, displayLabelTataCoin),
-		"balance":                 sub + pack,
-		"subscription_diamonds":   sub,
-		"pack_diamonds":           pack,
-		"subscription_period_end": nullTime(periodEnd),
-		"subscription":            subscription,
-	}, nil
+	out := map[string]any{
+		"is_member":     member,
+		"unit":          "quota",
+		"display_label": T(ctx, displayLabelQuota),
+		"can_buy_pack":  member,
+		"membership":    nil,
+		"subscription":  nil,
+	}
+	if member {
+		label := "月度会员"
+		if kind == "year" {
+			label = "年度会员"
+		}
+		sub := map[string]any{
+			"sku_kind": kind, "status": "active", "expires_at": exp, "auto_renew": nullBool(auto),
+			"type_label": label,
+		}
+		out["membership"] = sub
+		out["subscription"] = sub
+		out["quota_remaining"] = quota
+		out["balance"] = quota
+	}
+	return out, nil
 }
 
 func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool, kind string) ([]map[string]any, error) {
-	query := `SELECT id, code, kind, ledger_bucket, display_name, app_store_product_id, play_product_id,
-		price_amount_minor, price_currency, diamond_grant, reading_grant, period_unit, period_count, copy, enabled
+	query := `SELECT id, code, kind, display_name, app_store_product_id, play_product_id,
+		price_amount_minor, price_currency, quota_grant, period_unit, period_count, copy, note, deck_codes, covers_future, enabled
 		FROM iap_skus`
 	where := []string{}
 	args := []any{}
@@ -1081,9 +1150,13 @@ func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool, kind string) ([
 	query += ` ORDER BY CASE kind
 		WHEN 'month_subscription' THEN 1
 		WHEN 'year_subscription' THEN 2
-		WHEN 'reading_pack' THEN 3
+		WHEN 'quota_pack' THEN 3
 		WHEN 'yearly_unlock' THEN 4
-		ELSE 5 END, COALESCE(reading_grant, diamond_grant, 0), id`
+		WHEN 'deck_year' THEN 5
+		WHEN 'deck_bundle' THEN 6
+		WHEN 'deck_single' THEN 7
+		WHEN 'deck_addon' THEN 8
+		ELSE 9 END, COALESCE(quota_grant, 0), sort_order, id`
 	rows, err := a.Store.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -1095,28 +1168,44 @@ func (a *App) listIAPSKUs(ctx context.Context, enabledOnly bool, kind string) ([
 	list := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var code, kind, bucket, name, periodUnit, copyText string
+		var code, kind, name, periodUnit, copyText, note, deckCodes string
 		var appID, playID, currency sql.NullString
-		var price, grant, readingGrant, periodCount sql.NullInt64
-		var enabled bool
-		if err := rows.Scan(&id, &code, &kind, &bucket, &name, &appID, &playID, &price, &currency, &grant, &readingGrant, &periodUnit, &periodCount, &copyText, &enabled); err != nil {
+		var price, grant, periodCount sql.NullInt64
+		var coversFuture, enabled bool
+		if err := rows.Scan(&id, &code, &kind, &name, &appID, &playID, &price, &currency, &grant, &periodUnit, &periodCount, &copyText, &note, &deckCodes, &coversFuture, &enabled); err != nil {
 			return nil, err
 		}
 		list = append(list, map[string]any{
-			"id": id, "code": code, "kind": kind, "ledger_bucket": bucket, "display_name": name,
+			"id": id, "code": code, "kind": kind, "display_name": name,
 			"app_store_product_id": nullString(appID), "play_product_id": nullString(playID),
 			"price_amount_minor": nullInt(price), "price_currency": nullString(currency),
-			"diamond_grant": nullInt(grant), "reading_grant": nullInt(readingGrant),
+			"quota_grant": nullInt(grant),
 			"period_unit": periodUnit, "period_count": nullInt(periodCount),
-			"copy": copyText, "enabled": enabled, "unit": "diamond", "display_label": T(ctx, displayLabelTataCoin),
+			"copy": copyText, "note": note, "deck_codes": deckCodeList(deckCodes), "covers_future": coversFuture,
+			"enabled": enabled, "unit": "quota", "display_label": T(ctx, displayLabelQuota),
 			"benefits": skuBenefits(ctx, kind, tarotistCount, followupLimit, followupReady, copyText),
 		})
 	}
 	return list, rows.Err()
 }
 
+func deckCodeList(raw string) []string {
+	var codes []string
+	if json.Unmarshal([]byte(raw), &codes) != nil {
+		return []string{}
+	}
+	out := make([]string, 0, len(codes))
+	for _, code := range codes {
+		code = strings.TrimSpace(code)
+		if code != "" {
+			out = append(out, code)
+		}
+	}
+	return out
+}
+
 func skuBenefits(ctx context.Context, kind string, tarotistCount, followupLimit int, followupReady bool, skuCopy string) []map[string]any {
-	if kind == iapKindPack || kind == iapKindYearlyUnlock || kind == iapKindReadingPack {
+	if isDeckKind(kind) || kind == iapKindYearlyUnlock || kind == iapKindQuotaPack {
 		return []map[string]any{}
 	}
 	year := kind == "year_subscription"
@@ -1159,6 +1248,122 @@ func loadIAPSettings(ctx context.Context, q rowQuery) (bool, bool, error) {
 		return true, false, nil
 	}
 	return hook, required, err
+}
+
+type iapOrderListFilter struct {
+	where string
+	args  []any
+}
+
+func buildIAPOrderFilter(r *http.Request) (iapOrderListFilter, error) {
+	f := iapOrderListFilter{where: " WHERE 1=1", args: []any{}}
+	add := func(cond string, v any) {
+		f.args = append(f.args, v)
+		f.where += fmt.Sprintf(" AND %s $%d", cond, len(f.args))
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("user_id")); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			return iapOrderListFilter{}, biz("用户 id 不正确")
+		}
+		add("o.user_id =", id)
+	}
+	verify := strings.TrimSpace(r.URL.Query().Get("verify_status"))
+	switch verify {
+	case "", "pending", iapVerifyVerified, iapVerifyFailed:
+		if verify != "" {
+			add("o.verify_status =", verify)
+		}
+	default:
+		return iapOrderListFilter{}, biz("验单状态不正确")
+	}
+	if platform := strings.TrimSpace(r.URL.Query().Get("platform")); platform != "" {
+		if platform != iapPlatformAppStore && platform != iapPlatformPlay {
+			return iapOrderListFilter{}, biz("平台不正确")
+		}
+		add("o.platform =", platform)
+	}
+	if sku := strings.TrimSpace(r.URL.Query().Get("sku_code")); sku != "" {
+		add("o.sku_code =", sku)
+	}
+	from, to, err := parseTimeRange(r, "from", "to")
+	if err != nil {
+		return iapOrderListFilter{}, err
+	}
+	if from != nil {
+		add("o.created_at >=", *from)
+	}
+	if to != nil {
+		add("o.created_at <=", *to)
+	}
+	return f, nil
+}
+
+func scanAdminIAPOrderRow(rows *sql.Rows) (map[string]any, error) {
+	var id, uid int64
+	var skuCode, skuKind, platform, productID, txn, original string
+	var verifyStatus, creditStatus, source, message string
+	var credited sql.NullInt64
+	var periodStart, periodEnd, verifiedAt sql.NullTime
+	var created time.Time
+	var subStatus, subKind sql.NullString
+	var subExpires sql.NullTime
+	var orderPrice, skuPrice sql.NullInt64
+	var orderCur, skuCur sql.NullString
+	if err := rows.Scan(&id, &uid, &skuCode, &skuKind, &platform, &productID, &txn, &original,
+		&verifyStatus, &creditStatus, &credited, &periodStart, &periodEnd, &source, &message, &created, &verifiedAt,
+		&subStatus, &subExpires, &subKind,
+		&orderPrice, &orderCur, &skuPrice, &skuCur); err != nil {
+		return nil, err
+	}
+	item := map[string]any{
+		"id": id, "user_id": uid, "sku_code": skuCode, "sku_kind": skuKind,
+		"platform": platform, "product_id": productID, "store_transaction_id": txn, "original_transaction_id": original,
+		"verify_status": verifyStatus, "credit_status": creditStatus, "credited_quota": nullInt(credited),
+		"period_start": nullTime(periodStart), "period_end": nullTime(periodEnd),
+		"source": source, "verify_message": message, "created_at": created, "verified_at": nullTime(verifiedAt),
+		"subscription_status": nullString(subStatus), "subscription_expires_at": nullTime(subExpires),
+		"subscription_sku_kind": nullString(subKind),
+		"unit":                  "quota",
+	}
+	attachIAPOrderPrice(item, orderPrice, orderCur, skuPrice, skuCur)
+	return item, nil
+}
+
+func scanIAPOrderPriceRow(rows *sql.Rows) (map[string]any, error) {
+	var id int64
+	var skuCode, verifyStatus, creditStatus, platform string
+	var created time.Time
+	var orderPrice, skuPrice sql.NullInt64
+	var orderCur, skuCur sql.NullString
+	if err := rows.Scan(&id, &skuCode, &verifyStatus, &creditStatus, &platform, &created,
+		&orderPrice, &orderCur, &skuPrice, &skuCur); err != nil {
+		return nil, err
+	}
+	item := map[string]any{
+		"id": id, "sku_code": skuCode, "verify_status": verifyStatus, "credit_status": creditStatus,
+		"platform": platform, "created_at": created,
+	}
+	attachIAPOrderPrice(item, orderPrice, orderCur, skuPrice, skuCur)
+	return item, nil
+}
+
+func attachIAPOrderPrice(item map[string]any, orderPrice sql.NullInt64, orderCur sql.NullString, skuPrice sql.NullInt64, skuCur sql.NullString) {
+	if orderPrice.Valid {
+		item["price_amount_minor"] = orderPrice.Int64
+		item["price_currency"] = nullString(orderCur)
+		item["price_estimated"] = false
+		return
+	}
+	if skuPrice.Valid {
+		item["price_amount_minor"] = skuPrice.Int64
+		item["price_currency"] = nullString(skuCur)
+		item["price_estimated"] = true
+		return
+	}
+	item["price_amount_minor"] = nil
+	item["price_currency"] = nil
+	item["price_estimated"] = false
 }
 
 func iapOrderFilter(r *http.Request) (int64, string, error) {

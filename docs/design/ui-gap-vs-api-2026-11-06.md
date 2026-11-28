@@ -1,7 +1,7 @@
 # 塔塔 App 定稿 UI ↔ HTTP（2026-11-06）
 
 **设计：** Pixso「手机界面」`619:7`（浅色主屏；深色 / 平板 / 折叠为同一流程的主题与设备变体）。  
-**代码：** `server/internal/tata/routes.go`，App **74** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
+**代码：** `server/internal/tata/routes.go`，App **86** 条 path（含 `GET /uploads/{name}`），与 `docs/openapi-app.yaml` 1:1。
 
 **结论：** 定稿各模块 HTTP path 与字段已对齐，下表标 **已确认**。运营填值见 content backlog。
 
@@ -19,16 +19,16 @@
 | 我的中心 | `565:1551` | 无独立 path，复用 profile / quota / 各入口 | 已确认 |
 | 抽牌 / 灵数 | `595:868`…`595:637` | `POST /readings` 及子资源；`draw` 接受 `mode=numerology` | 已确认 |
 | 牌阵 | `595:95` / `595:5054` | `GET /spreads` 含 recommended / thumbnail；`POST /readings/{id}/spread` | 已确认 |
-| 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label）`GET/DELETE /readings/{id}` | 已确认 |
-| 日历筛选 | `574:306` | `GET /calendar?type=` | 已确认 |
-| 日历日详情 | `574:2` | `GET /calendar` 项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at | 已确认 |
+| 历史记录 | `574:1627` | `GET /readings`（预览 / 缩略图 / status_label；`conversation_type`=`daily`/`moment`/`theme` + `stage`/`stage_label`；explore 可传 `theme_key`）`GET /readings/{id}`（进度+messages）`DELETE /readings/{id}` | 已确认 |
+| 日历筛选 | `574:306` | `GET /calendar?type=`（normal/tarotist/explore/daily；不传=全部） | 已确认 |
+| 日历日详情 | `574:2` | `GET /calendar`：**全部占卜都进**（含 explore）；项含牌名/正逆位/短文/缩略图（多张）、占卜师名头像、created_at、conversation_* | 已确认 |
 | 今日一牌 | 首页 / `POST /daily` | `card_name` / `yi` / `card_thumbnail` / `short_text`；没配图出默认牌背 | 已确认 |
 | 塔塔币 / 会员 | `565:1904` / `593:1905` | `GET /iap/skus` 档位与权益结构已齐；价为种子/管理端值 | 已确认 |
 | 兑换码 | `565:2024` | `POST /redeem` `GET /redeem/records` | 已确认（记录行未定稿，可空） |
 | 参与活动 | `565:6104` | `GET /campaigns` `{id}` `participations` `rewards` | 已确认（详情占位） |
 | 月度报告 | `565:7013` | `GET /monthly-reports` `POST .../save` | 已确认 |
 | 年运解锁卖点 | `574:2376` / `574:2423` / `574:2469` | `GET /yearly-reports/{year}` `POST .../unlock`；年卡免费、单独解锁价取 SKU | 已确认 |
-| 年运四步（12+6） | `574:2469` | `PUT .../profile` → `POST .../rhythm`（12）→ `POST .../domains`（6：感情/事业/财运/健康/人际/成长）→ `POST .../generate` | 已确认 |
+| 年运四步（12+4） | `1034:13493` / `661:*` | `PUT .../profile`（出生日期/时间/地点）→ `POST .../rhythm`（十二宫 12）→ `POST .../domains`（四季 4：春夏秋冬）→ `POST .../generate` | 已确认 |
 | 账号 | `572:1877` | `GET/PUT /profile`：`account_display` 脱敏邮箱（无则微信/Apple），`public_id` 6 位；无手机号 | 已确认 |
 | 通知设置 | `572:2735` | `GET/PUT /notification-preferences`；`POST /push/register` | 已确认 |
 | 心愿单 / 帮助 / 反馈 | `572:40` / `572:544` / `572:805` | 对应 path 已齐；帮助正文空则 pending | 已确认 |
@@ -37,6 +37,14 @@
 | 小组件 | `610:82` | 复用 `POST /daily`，不新开 sync | 已确认（无 path） |
 | 消息中心 | 定稿无入口 | `GET /messages` `POST /messages/{id}/read` 已有 | 已确认（入口客户端可选） |
 | 登录多步 / 删号 | — | 钩子在，UI 后置 / 占位 | 已确认（不补 path） |
+| 开屏 | `872:51` | 无 path，客户端静态 | 已确认（无 path） |
+| 登录三入口 | `907:3` | 已有 wechat/email/apple；`GET /legal` | 已确认 |
+| 个人档案 | `833:78` | `GET/PUT /profile` 性别别名 + explore_preferences | 已确认 |
+| 奖励记录 | `978:222` / `982:203` | `GET /campaigns/rewards` 真实邀请到账；`GET /invites` | 已确认 |
+| 年运分享报告 | `930:200` | `GET /yearly-reports/{year}/share` | 已确认 |
+| 探索牌阵文字总结 | `954:200` | `GET /spreads` 主题/短句字段，运营填 | 已确认 |
+| 自定义塔罗牌 | `875:13` | `/custom-decks` + `GET /cards` | 已确认 |
+| 我的塔罗牌 78 张 | `794:129` | `GET /cards?deck=` | 已确认 |
 
 ---
 
@@ -57,3 +65,5 @@
 | 2026-11-06 | 牌组介绍写入 `decks.description` / `decks.tags`，经 `GET /deck-preference` 与 `PUT /copy/decks` 暴露。 |
 | 2026-11-06 | 选阵「推荐牌阵」写入 `spreads.recommended`，经 `GET /spreads` 与管理端牌阵接口暴露。 |
 | 2026-11-06 | 选阵示意图写入 `spreads.thumbnail`，未配返回默认牌背。 |
+| 2026-11-16 | 新 UI：登录协议、个人档案偏好、邀请奖励、78 张牌、自定义牌组、年运分享、牌阵主题短句。 |
+| 2026-11-18 | 年运改为 12+4：十二宫 12 + 四季 4；资料 birth_date/birth_time/birth_place。路径仍为 rhythm/domains。 |

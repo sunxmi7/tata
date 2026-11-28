@@ -19,7 +19,25 @@ import { useAuthStore } from '#/store';
 
 import { refreshTokenApi } from './core';
 
+declare global {
+  interface Window {
+    __TATA_ADMIN_API_URL__?: string;
+  }
+}
+
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
+
+function resolveApiURL() {
+  if (import.meta.env.DEV) {
+    return apiURL;
+  }
+  const override =
+    typeof window === 'undefined' ? '' : window.__TATA_ADMIN_API_URL__;
+  if (typeof override === 'string' && override.trim()) {
+    return override.trim().replace(/\/$/, '');
+  }
+  return apiURL;
+}
 
 function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   const client = new RequestClient({
@@ -106,8 +124,10 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   return client;
 }
 
-export const requestClient = createRequestClient(apiURL, {
+export const requestClient = createRequestClient(resolveApiURL(), {
   responseReturn: 'data',
 });
 
-export const baseRequestClient = new RequestClient({ baseURL: apiURL });
+export const baseRequestClient = new RequestClient({
+  baseURL: resolveApiURL(),
+});

@@ -1,0 +1,53 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "year": 2026,
+    "unlocked": true,
+    "report_status": "ready",
+    "report": "2026 对你更像「选择—验证—收束」的一年：先允许自己重新定位，再用小步行动检验，最后在年末形成可交付的结果。关系与事业都不要只停在感觉层，把期待、边界和下一周能做的一步写下来。",
+    "user_name": "塔塔体验官",
+    "brand": "塔塔",
+    "slogan": "把想清楚，慢慢做到",
+    "title": "2026 年度运势",
+    "subtitle": "十二宫 × 四季",
+    "generated_for": "塔塔体验官",
+    "share_hint": "长按保存分享图",
+    "rhythm_cards": [
+      {
+        "position": 1,
+        "position_name": "自我",
+        "card_id": 0,
+        "name": "愚者",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 10,
+        "position_name": "事业",
+        "card_id": 7,
+        "name": "战车",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      }
+    ],
+    "domain_cards": [
+      {
+        "position": 1,
+        "position_name": "春",
+        "card_id": 17,
+        "name": "审判",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      },
+      {
+        "position": 4,
+        "position_name": "冬",
+        "card_id": 21,
+        "name": "世界",
+        "orientation": "upright",
+        "card_thumbnail": "https://dev.tarot.himoou.com/uploads/card-default.png"
+      }
+    ]
+  }
+}

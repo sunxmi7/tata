@@ -190,7 +190,7 @@ func (p *Pusher) ToCIDs(ctx context.Context, cids []string, title, body, target 
 // ---- App 端：设备注册与站内信 ----
 
 func (a *App) appRegisterPush(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func (a *App) appRegisterPush(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appListInbox(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func (a *App) appListInbox(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) appReadMessage(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}

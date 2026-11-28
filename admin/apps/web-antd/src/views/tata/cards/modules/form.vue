@@ -8,7 +8,6 @@ import { useVbenModal } from '@vben/common-ui';
 import { message } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
-import { fileListFromURL, fileListToURL, imageUploadProps } from '#/api/core/upload';
 import { createCard, updateCard } from '#/api/tata';
 
 const emit = defineEmits(['success']);
@@ -48,20 +47,33 @@ const [Form, formApi] = useVbenForm({
       label: '韩文',
     },
     {
-      component: 'Input',
-      fieldName: 'yi',
-      label: '今日一牌宜',
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'upright_message',
+      label: '正位寄语',
     },
     {
-      component: 'Upload',
-      componentProps: imageUploadProps('cards'),
-      fieldName: 'thumbnail',
-      label: '单牌图',
-      renderComponentContent: () => {
-        return {
-          default: () => '上传图片',
-        };
-      },
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'upright_yi',
+      label: '正位今日宜',
+    },
+    {
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'reversed_message',
+      label: '逆位寄语',
+    },
+    {
+      component: 'Textarea',
+      componentProps: { rows: 2 },
+      fieldName: 'reversed_yi',
+      label: '逆位今日宜',
+    },
+    {
+      component: 'Input',
+      fieldName: 'yi',
+      label: '正位今日宜覆盖',
     },
     {
       component: 'Switch',
@@ -87,7 +99,10 @@ const [Modal, modalApi] = useVbenModal<null | TataCard>({
       name_ja: data.name_ja,
       name_ko: data.name_ko,
       yi: data.yi,
-      thumbnail: fileListToURL(data.thumbnail),
+      upright_message: data.upright_message,
+      upright_yi: data.upright_yi,
+      reversed_message: data.reversed_message,
+      reversed_yi: data.reversed_yi,
       enabled: data.enabled,
     };
     modalApi.lock();
@@ -123,7 +138,10 @@ const [Modal, modalApi] = useVbenModal<null | TataCard>({
       name_ja: data.name_ja,
       name_ko: data.name_ko,
       yi: data.yi ?? '',
-      thumbnail: fileListFromURL(typeof data.thumbnail === 'string' ? data.thumbnail : ''),
+      upright_message: data.upright_message ?? '',
+      upright_yi: data.upright_yi ?? '',
+      reversed_message: data.reversed_message ?? '',
+      reversed_yi: data.reversed_yi ?? '',
       enabled: data.enabled,
     });
   },

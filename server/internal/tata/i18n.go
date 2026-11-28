@@ -122,6 +122,7 @@ func localizeReadingCfg(ctx context.Context, cfg map[string]string, item map[str
 	for _, key := range []string{
 		"progress", "status_label", "type_label", "orientation_label",
 		"fail_reason", "quota_prompt", "card_name",
+		"conversation_label", "stage_label",
 	} {
 		switch v := item[key].(type) {
 		case string:

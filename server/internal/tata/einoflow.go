@@ -25,7 +25,7 @@ func (t holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (a *App) modelSpec(ctx context.Context, task string) (readingflow.ModelSpec, error) {
-	name, model, base, key, timeout, err := a.binding(ctx, task)
+	vendorID, name, model, base, key, timeout, err := a.binding(ctx, task)
 	if err != nil {
 		return readingflow.ModelSpec{}, err
 	}
@@ -35,6 +35,7 @@ func (a *App) modelSpec(ctx context.Context, task string) (readingflow.ModelSpec
 	}
 	return readingflow.ModelSpec{
 		Vendor:    name,
+		VendorID:  vendorID,
 		Model:     model,
 		BaseURL:   base,
 		APIKey:    key,
@@ -44,21 +45,29 @@ func (a *App) modelSpec(ctx context.Context, task string) (readingflow.ModelSpec
 }
 
 func (a *App) runEino(ctx context.Context, task, userPrompt string) (string, string, string, error) {
+	return a.runEinoVars(ctx, task, map[string]any{"question": userPrompt})
+}
+
+func (a *App) runEinoVars(ctx context.Context, task string, vars map[string]any) (string, string, string, error) {
 	spec, err := a.modelSpec(ctx, task)
 	if err != nil {
 		return "", "", "", err
 	}
-	text, err := readingflow.RunTask(ctx, spec, task, map[string]any{"question": userPrompt})
+	text, err := readingflow.RunTask(a.watchUsage(ctx), spec, task, vars)
 	return spec.Vendor, spec.Model, text, err
 }
 
 // runEinoStream 流式版本：每个增量片段回调 onChunk，返回拼好的完整文本。
 func (a *App) runEinoStream(ctx context.Context, task, userPrompt string, onChunk func(string) error) (string, string, string, error) {
+	return a.runEinoStreamVars(ctx, task, map[string]any{"question": userPrompt}, onChunk)
+}
+
+func (a *App) runEinoStreamVars(ctx context.Context, task string, vars map[string]any, onChunk func(string) error) (string, string, string, error) {
 	spec, err := a.modelSpec(ctx, task)
 	if err != nil {
 		return "", "", "", err
 	}
-	text, err := readingflow.RunTaskStream(ctx, spec, task, map[string]any{"question": userPrompt}, onChunk)
+	text, err := readingflow.RunTaskStream(a.watchUsage(ctx), spec, task, vars, onChunk)
 	return spec.Vendor, spec.Model, text, err
 }
 
@@ -67,7 +76,14 @@ func (a *App) einoChat(ctx context.Context, baseURL, apiKey, model string, timeo
 	if timeoutSec != nil && *timeoutSec > 0 {
 		wait = time.Duration(*timeoutSec) * time.Second
 	}
-	return readingflow.RunTask(ctx, readingflow.ModelSpec{
+	bill, _ := ctx.Value(aiBillKey{}).(aiBill)
+	if bill.Kind == "" {
+		ctx = mergeAIBill(ctx, aiBill{Kind: "probe"})
+		bill, _ = ctx.Value(aiBillKey{}).(aiBill)
+	}
+	return readingflow.RunTask(a.watchUsage(ctx), readingflow.ModelSpec{
+		Vendor:    bill.Vendor,
+		VendorID:  bill.VendorID,
 		Model:     model,
 		BaseURL:   baseURL,
 		APIKey:    apiKey,

@@ -11,12 +11,12 @@ type passthroughWeChat struct{}
 
 func (passthroughWeChat) Ready() bool { return true }
 
-func (passthroughWeChat) ExchangeCode(_ context.Context, code string) (string, error) {
+func (passthroughWeChat) ExchangeCode(_ context.Context, code string) (wechatProfile, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return "", biz("微信授权码不能为空")
+		return wechatProfile{}, biz("微信授权码不能为空")
 	}
-	return code, nil
+	return wechatProfile{ID: code}, nil
 }
 
 type passthroughApple struct{}

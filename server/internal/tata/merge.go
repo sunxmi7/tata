@@ -30,6 +30,7 @@ type bindSpec struct {
 	kind         string
 	value        string
 	passwordHash string
+	wechat       wechatProfile
 }
 
 type execer interface {
@@ -118,7 +119,7 @@ func consumeMergedDaily(ctx context.Context, ex execer, uid int64, cycle string)
 }
 
 func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindSpec) error {
-	uid, _, err := a.appActor(r)
+	uid, err := a.appActor(r)
 	if err != nil {
 		return err
 	}
@@ -128,10 +129,6 @@ func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindS
 	col, ok := identityColumns[spec.kind]
 	if !ok || spec.value == "" {
 		return biz("请求字段不正确")
-	}
-	storedValue := spec.value
-	if spec.kind == "email" {
-		storedValue = strings.ToLower(strings.TrimSpace(spec.value))
 	}
 	var current *string
 	var cancelled *time.Time
@@ -155,19 +152,20 @@ func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindS
 			if spec.kind == "email" {
 				return biz("邮箱已绑定或账号已注销")
 			}
+			a.applyWeChatProfile(r, uid, spec.wechat)
 			writeOK(w, true)
 			return nil
 		}
 		return biz("该登录方式已绑定，换绑未开放")
 	}
 
-	var other int64
+	var found int
 	var findErr error
 	if spec.kind == "email" {
-		findErr = a.Store.QueryRow(r.Context(), `SELECT id FROM app_users WHERE lower(email)=lower($1) AND id<>$2`, spec.value, uid).Scan(&other)
+		findErr = a.Store.QueryRow(r.Context(), `SELECT 1 FROM app_users WHERE lower(email)=lower($1) AND id<>$2`, spec.value, uid).Scan(&found)
 	} else {
-		findQ := fmt.Sprintf(`SELECT id FROM app_users WHERE %s=$1 AND id<>$2`, col)
-		findErr = a.Store.QueryRow(r.Context(), findQ, spec.value, uid).Scan(&other)
+		findQ := fmt.Sprintf(`SELECT 1 FROM app_users WHERE %s=$1 AND id<>$2`, col)
+		findErr = a.Store.QueryRow(r.Context(), findQ, spec.value, uid).Scan(&found)
 	}
 	if findErr != nil {
 		if !errors.Is(findErr, sql.ErrNoRows) {
@@ -175,55 +173,12 @@ func (a *App) bindWithConfirm(w http.ResponseWriter, r *http.Request, spec bindS
 		}
 		return a.bindFreeIdentity(w, r, spec, col, uid)
 	}
-	var otherCancelled *time.Time
-	var otherMerged *int64
-	if err := a.Store.QueryRow(r.Context(), `SELECT cancelled_at, merged_into FROM app_users WHERE id=$1`, other).Scan(&otherCancelled, &otherMerged); err != nil {
-		return err
-	}
-	if otherCancelled != nil {
-		return biz("对方账号已注销，不能合并")
-	}
-	if otherMerged != nil {
-		return biz("对方账号已合并")
-	}
-	requestID, created, err := a.ensureMergeRequest(r.Context(), uid, other, spec.kind, storedValue, spec.passwordHash)
-	if err != nil {
-		return err
-	}
-	if created {
-		detail, _ := json.Marshal(map[string]any{
-			"before":            map[string]int64{"primary_user_id": uid, "secondary_user_id": other},
-			"after":             map[string]int64{"primary_user_id": uid, "secondary_user_id": other},
-			"merged":            false,
-			"confirm_required":  true,
-			"identity_kind":     spec.kind,
-			"confirmer_kind":    "app_user",
-			"confirmer_user_id": uid,
-		})
-		a.Store.auditActor(r.Context(), uid, "app_user", "account_merge_conflict", "app_user", fmtID(uid), string(detail))
-	}
-	writeBindConflict(w, map[string]any{
-		"bound":             false,
-		"conflict":          true,
-		"merged":            false,
-		"confirm_required":  true,
-		"merge_request_id":  requestID,
-		"primary_user_id":   uid,
-		"secondary_user_id": other,
-		"identity_kind":     spec.kind,
-	})
-	return nil
+	return biz("该身份已绑定其他账号")
 }
 
 func (a *App) bindFreeIdentity(w http.ResponseWriter, r *http.Request, spec bindSpec, col string, uid int64) error {
-	var tag tagResult
-	var err error
-	if spec.kind == "email" {
-		tag, err = a.Store.Exec(r.Context(), `UPDATE app_users SET email=$1, password_hash=$2 WHERE id=$3 AND cancelled_at IS NULL AND merged_into IS NULL AND email IS NULL`, spec.value, spec.passwordHash, uid)
-	} else {
-		upd := fmt.Sprintf(`UPDATE app_users SET %s=$1 WHERE id=$2 AND cancelled_at IS NULL AND merged_into IS NULL AND %s IS NULL`, col, col)
-		tag, err = a.Store.Exec(r.Context(), upd, spec.value, uid)
-	}
+	upd := fmt.Sprintf(`UPDATE app_users SET %s=$1 WHERE id=$2 AND cancelled_at IS NULL AND merged_into IS NULL AND %s IS NULL`, col, col)
+	tag, err := a.Store.Exec(r.Context(), upd, spec.value, uid)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return biz("该身份已绑定其他账号")
@@ -236,6 +191,7 @@ func (a *App) bindFreeIdentity(w http.ResponseWriter, r *http.Request, spec bind
 		}
 		return biz("账号已注销")
 	}
+	a.applyWeChatProfile(r, uid, spec.wechat)
 	writeOK(w, true)
 	return nil
 }
@@ -268,14 +224,6 @@ func (a *App) ensureMergeRequest(ctx context.Context, primary, secondary int64, 
 	return id, true, nil
 }
 
-func writeBindConflict(w http.ResponseWriter, payload map[string]any) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"code":    1,
-		"data":    payload,
-		"message": "身份已被其他账号占用，需要确认后才会合并",
-	})
-}
-
 func (s *Store) auditActor(ctx context.Context, operatorID int64, actorKind, action, objectType, objectID, detail string) {
 	if actorKind == "" {
 		actorKind = "operator"
@@ -285,61 +233,10 @@ func (s *Store) auditActor(ctx context.Context, operatorID int64, actorKind, act
 }
 
 func (a *App) appMergeConfirm(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := a.appActor(r)
-	if err != nil {
+	if _, err := a.appActor(r); err != nil {
 		return err
 	}
-	if uid == 0 {
-		return biz("登录后才能确认合并")
-	}
-	var req struct {
-		MergeRequestID int64 `json:"merge_request_id"`
-		Confirm        bool  `json:"confirm"`
-	}
-	if err := decode(r, &req); err != nil || req.MergeRequestID <= 0 {
-		return biz("请求字段不正确")
-	}
-	if !req.Confirm {
-		return biz("未确认，不会合并账号")
-	}
-	var status string
-	var primary int64
-	var result string
-	err = a.Store.QueryRow(r.Context(), `SELECT status, primary_user_id, result FROM account_merge_requests WHERE id=$1`, req.MergeRequestID).Scan(&status, &primary, &result)
-	if err != nil {
-		return biz("合并请求不存在")
-	}
-	if primary != uid {
-		return biz("只能确认自己发起的合并")
-	}
-	if status == "merged" {
-		return writeStoredMerge(w, result)
-	}
-	if status != "pending_confirm" {
-		return biz("合并请求不可确认")
-	}
-	out, err := a.applyMerge(r.Context(), req.MergeRequestID, uid)
-	if errors.Is(err, errMergeAlready) {
-		_ = a.Store.QueryRow(r.Context(), `SELECT result FROM account_merge_requests WHERE id=$1`, req.MergeRequestID).Scan(&result)
-		return writeStoredMerge(w, result)
-	}
-	if err != nil {
-		return err
-	}
-	writeOK(w, out)
-	return nil
-}
-
-func writeStoredMerge(w http.ResponseWriter, raw string) error {
-	if raw == "" {
-		return biz("合并结果缺失")
-	}
-	var out mergeOutcome
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return err
-	}
-	writeOK(w, out)
-	return nil
+	return biz("不提供账号合并")
 }
 
 func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutcome, error) {
@@ -420,7 +317,7 @@ func (a *App) applyMerge(ctx context.Context, requestID, actor int64) (mergeOutc
 	if err != nil {
 		return mergeOutcome{}, err
 	}
-	if err := foldDiamonds(ctx, tx, primary, secondary); err != nil {
+	if err := foldQuota(ctx, tx, primary, secondary); err != nil {
 		return mergeOutcome{}, err
 	}
 	if err := foldAppShell(ctx, tx, primary, secondary); err != nil {
@@ -520,6 +417,15 @@ func adminGrantRemaining(ctx context.Context, ex execer, uid int64) (int, error)
 	return n, err
 }
 
+func inviteRemainingOf(ctx context.Context, ex execer, uid int64) (int, error) {
+	var n int
+	err := ex.QueryRow(ctx, `SELECT invite_remaining FROM rewards WHERE user_id=$1`, uid).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
 func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.Time) (int, int, int, error) {
 	beforeP, expP, err := rewardBalance(ctx, tx, primary, now)
 	if err != nil {
@@ -537,20 +443,29 @@ func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.
 	if err != nil {
 		return 0, 0, 0, err
 	}
+	inviteP, err := inviteRemainingOf(ctx, tx, primary)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	inviteS, err := inviteRemainingOf(ctx, tx, secondary)
+	if err != nil {
+		return 0, 0, 0, err
+	}
 	after := beforeP + beforeS
 	adminAfter := adminP + adminS
+	inviteAfter := inviteP + inviteS
 	if after > 0 {
 		exp := expP
 		if beforeP == 0 || (beforeS > 0 && expS.After(expP)) {
 			exp = expS
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining, consumed_at)
-			VALUES ($1, now(), $2, $3, $4, NULL)
-			ON CONFLICT (user_id) DO UPDATE SET remaining=EXCLUDED.remaining, expires_at=EXCLUDED.expires_at, consumed_at=NULL, admin_grant_remaining=EXCLUDED.admin_grant_remaining`,
-			primary, exp, after, adminAfter); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining, invite_remaining, consumed_at)
+			VALUES ($1, now(), $2, $3, $4, $5, NULL)
+			ON CONFLICT (user_id) DO UPDATE SET remaining=EXCLUDED.remaining, expires_at=EXCLUDED.expires_at, consumed_at=NULL, admin_grant_remaining=EXCLUDED.admin_grant_remaining, invite_remaining=EXCLUDED.invite_remaining`,
+			primary, exp, after, adminAfter, inviteAfter); err != nil {
 			return 0, 0, 0, err
 		}
-	} else if adminAfter > 0 {
+	} else if adminAfter > 0 || inviteAfter > 0 {
 		exp := now
 		var existing time.Time
 		err := tx.QueryRow(ctx, `SELECT expires_at FROM rewards WHERE user_id=$1`, primary).Scan(&existing)
@@ -559,10 +474,10 @@ func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return 0, 0, 0, err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining, consumed_at)
-			VALUES ($1, now(), $2, 0, $3, now())
-			ON CONFLICT (user_id) DO UPDATE SET remaining=0, admin_grant_remaining=EXCLUDED.admin_grant_remaining`,
-			primary, exp, adminAfter); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining, invite_remaining, consumed_at)
+			VALUES ($1, now(), $2, 0, $3, $4, now())
+			ON CONFLICT (user_id) DO UPDATE SET remaining=0, admin_grant_remaining=EXCLUDED.admin_grant_remaining, invite_remaining=EXCLUDED.invite_remaining`,
+			primary, exp, adminAfter, inviteAfter); err != nil {
 			return 0, 0, 0, err
 		}
 	} else if _, err := tx.Exec(ctx, `UPDATE rewards SET remaining=0 WHERE user_id=$1`, primary); err != nil {
@@ -574,19 +489,16 @@ func foldRewards(ctx context.Context, tx Tx, primary, secondary int64, now time.
 	return beforeP, beforeS, after, nil
 }
 
-// foldDiamonds adds both diamond buckets onto the surviving account and moves
-// diamond_ledger rows with it. IAP order rows are left untouched.
-func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
+// foldQuota adds both diamond buckets onto the surviving account and moves
+// quota_ledger rows with it. IAP order rows are left untouched.
+func foldQuota(ctx context.Context, tx Tx, primary, secondary int64) error {
 	type bal struct {
-		sub, pack int
-		end       sql.NullTime
-		key       string
-		ok        bool
+		quota int
+		ok    bool
 	}
 	load := func(uid int64) (bal, error) {
 		var b bal
-		err := tx.QueryRow(ctx, `SELECT subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key
-			FROM diamond_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&b.sub, &b.pack, &b.end, &b.key)
+		err := tx.QueryRow(ctx, `SELECT COALESCE(quota_balance,0) FROM quota_balances WHERE user_id=$1 FOR UPDATE`, uid).Scan(&b.quota)
 		if errors.Is(err, sql.ErrNoRows) {
 			return bal{}, nil
 		}
@@ -605,32 +517,21 @@ func foldDiamonds(ctx context.Context, tx Tx, primary, secondary int64) error {
 		return err
 	}
 	if !left.ok && !right.ok {
-		_, err = tx.Exec(ctx, `UPDATE diamond_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
+		_, err = tx.Exec(ctx, `UPDATE quota_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
 		return err
 	}
-	end, key := left.end, left.key
-	if right.end.Valid && (!end.Valid || right.end.Time.After(end.Time)) {
-		end, key = right.end, right.key
-	}
-	var endArg any
-	if end.Valid {
-		endArg = end.Time
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO diamond_balances(user_id, subscription_diamonds, pack_diamonds, subscription_period_end, subscription_period_key, updated_at)
-		VALUES ($1,$2,$3,$4,$5,now())
+	if _, err = tx.Exec(ctx, `INSERT INTO quota_balances(user_id, quota_balance, updated_at)
+		VALUES ($1,$2,now())
 		ON CONFLICT (user_id) DO UPDATE SET
-			subscription_diamonds=EXCLUDED.subscription_diamonds,
-			pack_diamonds=EXCLUDED.pack_diamonds,
-			subscription_period_end=EXCLUDED.subscription_period_end,
-			subscription_period_key=EXCLUDED.subscription_period_key,
+			quota_balance=EXCLUDED.quota_balance,
 			updated_at=now()`,
-		primary, left.sub+right.sub, left.pack+right.pack, endArg, key); err != nil {
+		primary, left.quota+right.quota); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `DELETE FROM diamond_balances WHERE user_id=$1`, secondary); err != nil {
+	if _, err = tx.Exec(ctx, `DELETE FROM quota_balances WHERE user_id=$1`, secondary); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE diamond_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
+	_, err = tx.Exec(ctx, `UPDATE quota_ledger SET user_id=$1 WHERE user_id=$2`, primary, secondary)
 	return err
 }
 
@@ -925,27 +826,5 @@ func (a *App) adminListAccountMerges(w http.ResponseWriter, r *http.Request) err
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT id, primary_user_id, secondary_user_id, identity_kind, status, subscription_resolution, confirm_at, result, created_at
-		FROM account_merge_requests ORDER BY id DESC LIMIT 200`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	list := []map[string]any{}
-	for rows.Next() {
-		var id, primary, secondary int64
-		var kind, status, resolution, result string
-		var confirmAt *time.Time
-		var created time.Time
-		if err := rows.Scan(&id, &primary, &secondary, &kind, &status, &resolution, &confirmAt, &result, &created); err != nil {
-			return err
-		}
-		list = append(list, map[string]any{
-			"id": id, "primary_user_id": primary, "secondary_user_id": secondary,
-			"identity_kind": kind, "status": status, "subscription_resolution": resolution,
-			"confirm_at": confirmAt, "result": result, "created_at": created,
-		})
-	}
-	writeOK(w, list)
-	return nil
+	return biz("不提供账号合并")
 }

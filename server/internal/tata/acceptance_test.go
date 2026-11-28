@@ -24,6 +24,9 @@ func TestAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	protectLiveAIConfig(t, store)
+	t.Cleanup(func() {
+		_, _ = store.Exec(context.Background(), `UPDATE spreads SET enabled=true, recommended=true WHERE name='时间流'`)
+	})
 	app := testApp(store)
 	ts := httptest.NewServer(app.Handler())
 	defer ts.Close()
@@ -44,17 +47,9 @@ func TestAcceptance(t *testing.T) {
 		t.Fatalf("price accepted: %s", body)
 	}
 	qstatus, qraw := call(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 9, "daily_slot_count": 3})
-	if qstatus != "" {
-		t.Fatalf("quota counts: %s %s", qstatus, qraw)
+	if !strings.Contains(qstatus, "已下线") {
+		t.Fatalf("daily free still editable: %s %s", qstatus, qraw)
 	}
-	params := decodeData(t, qraw)
-	if params["daily_free_count"] != float64(9) || params["daily_slot_count"] != float64(3) {
-		t.Fatalf("quota saved: %#v", params)
-	}
-	t.Cleanup(func() {
-		_, _ = store.Exec(context.Background(), `UPDATE quota_settings SET daily_free_count=1, daily_slot_count=1 WHERE id=1`)
-	})
-	must(t, ts, admin.access, http.MethodPut, "/api/admin/v1/quota-params", map[string]any{"daily_free_count": 1, "daily_slot_count": 1})
 	lstatus, _ := call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/ledger", map[string]any{"amount": 1})
 	if !strings.Contains(lstatus, "不能") {
 		t.Fatalf("ledger writable: %s", lstatus)
@@ -106,7 +101,7 @@ func TestAcceptance(t *testing.T) {
 		t.Fatalf("admin token reached app: %d", resp2.StatusCode)
 	}
 
-	spreads := list(t, ts, appToken, "/api/app/v1/spreads")
+	spreads := list(t, ts, admin.access, "/api/admin/v1/spreads")
 	var spreadID float64
 	for _, s := range spreads {
 		if s["name"] == "时间流" {
@@ -118,15 +113,21 @@ func TestAcceptance(t *testing.T) {
 	}
 	reading := create(t, ts, appToken, "/api/app/v1/readings", map[string]any{"question": "工作怎么选", "type": "normal"})
 	rid := int64(reading["id"].(float64))
-	if reading["reward_consumed"] != true || reading["quota_consumed"] == true {
-		t.Fatalf("new user should spend registration reward first: %#v", reading)
+	if reading["quota_outcome"] != quotaDeferred {
+		t.Fatalf("new user defers charge until spread: %#v", reading)
 	}
-	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID})
-	drawn := create(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d/draw", rid), map[string]any{"mode": "normal"})
-	cardsBefore, _ := json.Marshal(drawn["cards"])
-	if !strings.Contains(string(cardsBefore), "过去") || !strings.Contains(string(cardsBefore), "正义") && !strings.Contains(string(cardsBefore), "力量") {
-		// cards are random; positions must be present
+	uid := userIDByEmail(t, store, email)
+	setMember(t, store, uid, "month")
+	resetDiamondCost(t, store)
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 5)
+	must(t, ts, appToken, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "normal"})
+	clientCards := `[{"position":1,"position_name":"过去","name":"愚者","orientation":"upright","card_id":0},{"position":2,"position_name":"现在","name":"魔术师","orientation":"reversed","card_id":1},{"position":3,"position_name":"未来","name":"女祭司","orientation":"upright","card_id":2}]`
+	if _, err := store.Exec(t.Context(), `UPDATE readings SET cards=$2, status='CARDS_FIXED' WHERE id=$1`, rid, clientCards); err != nil {
+		t.Fatal(err)
 	}
+	before := listOne(t, ts, appToken, fmt.Sprintf("/api/app/v1/readings/%d", rid))
+	cardsBefore, _ := json.Marshal(before["cards"])
 	if !strings.Contains(string(cardsBefore), "过去") || !strings.Contains(string(cardsBefore), "现在") || !strings.Contains(string(cardsBefore), "未来") {
 		t.Fatalf("positions: %s", cardsBefore)
 	}
@@ -180,7 +181,7 @@ func TestAcceptance(t *testing.T) {
 		"name": "时间流", "description": "停用", "card_count": 3,
 		"positions": positions, "enabled": false, "charged": false,
 	})
-	for _, s := range list(t, ts, appToken, "/api/app/v1/spreads") {
+	for _, s := range appSpreadItems(t, ts, appToken) {
 		if s["id"] == spreadID {
 			t.Fatal("disabled spread still listed")
 		}
@@ -207,17 +208,17 @@ func TestAcceptance(t *testing.T) {
 	}
 
 	firstDaily, _ := call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if strings.Contains(firstDaily, "已用完") {
-		t.Fatalf("daily consumed before the daily quota: %s", firstDaily)
+	if firstDaily != "" {
+		t.Fatalf("member daily: %s", firstDaily)
 	}
 	dailyMsg, _ := call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(dailyMsg, "已用完") && !strings.Contains(dailyMsg, "已占用") {
+	if !strings.Contains(dailyMsg, "已占用") && !strings.Contains(dailyMsg, "不重复扣") {
 		t.Fatalf("second daily: %s", dailyMsg)
 	}
 	must(t, ts, appToken, http.MethodDelete, fmt.Sprintf("/api/app/v1/readings/%d", rid), nil)
 	dailyMsg, _ = call(t, ts, appToken, http.MethodPost, "/api/app/v1/daily", map[string]any{})
-	if !strings.Contains(dailyMsg, "已用完") && !strings.Contains(dailyMsg, "已占用") {
-		t.Fatalf("delete refunded quota: %s", dailyMsg)
+	if !strings.Contains(dailyMsg, "已占用") && !strings.Contains(dailyMsg, "不重复扣") {
+		t.Fatalf("delete refunded the day: %s", dailyMsg)
 	}
 	must(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/spreads/%.0f", spreadID), map[string]any{
 		"name": "时间流", "description": "过去 / 现在 / 未来", "card_count": 3,
@@ -245,8 +246,8 @@ func sendEmailCode(t *testing.T, ts *httptest.Server, token, email, scene string
 
 func register(t *testing.T, ts *httptest.Server, email string) string {
 	t.Helper()
-	code := sendEmailCode(t, ts, "", email, "register")
-	data := create(t, ts, "", "/api/app/v1/auth/register", map[string]string{"email": email, "password": "demo1234", "code": code})
+	code := sendEmailCode(t, ts, "", email, "login")
+	data := create(t, ts, "", "/api/app/v1/auth/login", map[string]string{"email": email, "code": code})
 	return data["accessToken"].(string)
 }
 
@@ -272,16 +273,42 @@ func must(t *testing.T, ts *httptest.Server, token, method, path string, body an
 	}
 }
 
+func appSpreadItems(t *testing.T, ts *httptest.Server, token string) []map[string]any {
+	t.Helper()
+	body := listOne(t, ts, token, "/api/app/v1/spreads")
+	groups, _ := body["groups"].([]any)
+	out := []map[string]any{}
+	for _, raw := range groups {
+		group, _ := raw.(map[string]any)
+		items, _ := group["spreads"].([]any)
+		for _, item := range items {
+			out = append(out, item.(map[string]any))
+		}
+	}
+	return out
+}
+
 func list(t *testing.T, ts *httptest.Server, token, path string) []map[string]any {
 	t.Helper()
 	raw := get(t, ts, token, path)
 	var env struct {
-		Data []map[string]any `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatal(err, string(raw))
 	}
-	return env.Data
+	var arr []map[string]any
+	if err := json.Unmarshal(env.Data, &arr); err == nil {
+		return arr
+	}
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(env.Data, &page); err == nil {
+		return page.Items
+	}
+	t.Fatalf("list data: %s", env.Data)
+	return nil
 }
 
 func listOne(t *testing.T, ts *httptest.Server, token, path string) map[string]any {
@@ -304,10 +331,29 @@ func get(t *testing.T, ts *httptest.Server, token, path string) []byte {
 
 func call(t *testing.T, ts *httptest.Server, token, method, path string, body any) (string, []byte) {
 	t.Helper()
-	var rdr io.Reader
+	var bodyBytes []byte
 	if body != nil {
-		b, _ := json.Marshal(body)
-		rdr = bytes.NewReader(b)
+		bodyBytes, _ = json.Marshal(body)
+	}
+	if rawApp, ok := liveTestApps.Load(ts.URL); ok {
+		if status, raw, handled := dispatchRetired(rawApp.(*App), method, path, bodyBytes, token); handled {
+			if status == http.StatusUnauthorized {
+				return "401", raw
+			}
+			var env struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(raw, &env)
+			if env.Code != 0 {
+				return env.Message, raw
+			}
+			return "", raw
+		}
+	}
+	var rdr io.Reader
+	if bodyBytes != nil {
+		rdr = bytes.NewReader(bodyBytes)
 	}
 	req, err := http.NewRequest(method, ts.URL+path, rdr)
 	if err != nil {

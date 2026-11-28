@@ -1,9 +1,12 @@
 package tata
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -29,6 +32,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/v1/auth/codes", a.h(a.adminCodes))
 	mux.HandleFunc("GET /api/admin/v1/menu/all", a.h(a.adminMenu))
 
+	mux.HandleFunc("GET /api/admin/v1/deck-products", a.h(a.adminListDeckProducts))
+	mux.HandleFunc("PUT /api/admin/v1/deck-products/{code}", a.h(a.adminUpdateDeckProduct))
+	mux.HandleFunc("POST /api/admin/v1/deck-unlocks", a.h(a.adminGrantDeckUnlock))
+
 	mux.HandleFunc("GET /api/admin/v1/spreads", a.h(a.adminListSpreads))
 	mux.HandleFunc("POST /api/admin/v1/spreads", a.h(a.adminCreateSpread))
 	mux.HandleFunc("PUT /api/admin/v1/spreads/{id}", a.h(a.adminUpdateSpread))
@@ -48,6 +55,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/vendors/{id}", a.h(a.adminUpdateVendor))
 	mux.HandleFunc("DELETE /api/admin/v1/vendors/{id}", a.h(a.adminDeleteVendor))
 	mux.HandleFunc("POST /api/admin/v1/vendors/{id}/probe", a.h(a.adminProbeVendor))
+	mux.HandleFunc("GET /api/admin/v1/vendors/{id}/prices", a.h(a.adminGetVendorPrices))
+	mux.HandleFunc("PUT /api/admin/v1/vendors/{id}/prices", a.h(a.adminPutVendorPrices))
 
 	mux.HandleFunc("GET /api/admin/v1/bindings", a.h(a.adminListBindings))
 	mux.HandleFunc("PUT /api/admin/v1/bindings/{task}", a.h(a.adminPutBinding))
@@ -57,7 +66,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/v1/quota-params", a.h(a.rejectQuotaWrite))
 
 	mux.HandleFunc("GET /api/admin/v1/copy/{kind}", a.h(a.adminGetCopy))
+	mux.HandleFunc("POST /api/admin/v1/copy/{kind}", a.h(a.adminPostCopy))
 	mux.HandleFunc("PUT /api/admin/v1/copy/{kind}", a.h(a.adminPutCopy))
+	mux.HandleFunc("DELETE /api/admin/v1/copy/{kind}/{id}", a.h(a.adminDeleteCopy))
 	mux.HandleFunc("POST /api/admin/v1/uploads", a.h(a.adminUploads))
 
 	mux.HandleFunc("GET /api/admin/v1/banners", a.h(a.adminListBanners))
@@ -67,6 +78,7 @@ func (a *App) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/admin/v1/readings", a.h(a.adminListReadings))
 	mux.HandleFunc("GET /api/admin/v1/readings/{id}", a.h(a.adminGetReading))
+	mux.HandleFunc("GET /api/admin/v1/readings/{id}/usages", a.h(a.adminReadingUsages))
 	mux.HandleFunc("POST /api/admin/v1/readings/{id}/retry", a.h(a.adminRetry))
 	mux.HandleFunc("POST /api/admin/v1/workflow/simulate", a.h(a.adminSimulate))
 
@@ -75,24 +87,41 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/v1/ledger/{id}", a.h(a.rejectLedgerWrite))
 	mux.HandleFunc("GET /api/admin/v1/grants", a.h(a.adminListGrants))
 	mux.HandleFunc("POST /api/admin/v1/grants", a.h(a.adminCreateGrant))
+	mux.HandleFunc("GET /api/admin/v1/memberships", a.h(a.adminListMemberships))
+	mux.HandleFunc("POST /api/admin/v1/memberships", a.h(a.adminGrantMembership))
+	mux.HandleFunc("GET /api/admin/v1/invites", a.h(a.adminListInvites))
+	mux.HandleFunc("GET /api/admin/v1/registration-gifts", a.h(a.adminListRegistrationGifts))
+	mux.HandleFunc("GET /api/admin/v1/quota-lots", a.h(a.adminListQuotaLots))
+	mux.HandleFunc("GET /api/admin/v1/yearly-qualifications", a.h(a.adminListYearlyQualifications))
+	mux.HandleFunc("GET /api/admin/v1/redeem-codes", a.h(a.adminListRedeemCodes))
+	mux.HandleFunc("POST /api/admin/v1/redeem-codes", a.h(a.adminCreateRedeemCodes))
+	mux.HandleFunc("PUT /api/admin/v1/redeem-codes/{id}", a.h(a.adminUpdateRedeemCode))
 
 	mux.HandleFunc("GET /api/admin/v1/operators", a.h(a.adminListOperators))
 	mux.HandleFunc("POST /api/admin/v1/operators", a.h(a.adminCreateOperator))
 	mux.HandleFunc("PUT /api/admin/v1/operators/{id}", a.h(a.adminUpdateOperator))
 	mux.HandleFunc("GET /api/admin/v1/users", a.h(a.adminListUsers))
+	mux.HandleFunc("GET /api/admin/v1/users/export", a.h(a.adminExportUsers))
+	mux.HandleFunc("GET /api/admin/v1/onboarding", a.h(a.adminListOnboarding))
+	mux.HandleFunc("GET /api/admin/v1/users/stats", a.h(a.adminUserStats))
+	mux.HandleFunc("POST /api/admin/v1/users/regions/backfill", a.h(a.adminBackfillUserRegions))
+	mux.HandleFunc("GET /api/admin/v1/users/{id}", a.h(a.adminGetUser))
 	mux.HandleFunc("GET /api/admin/v1/audit", a.h(a.adminListAudit))
+	mux.HandleFunc("GET /api/admin/v1/audit/export", a.h(a.adminExportAudit))
 	mux.HandleFunc("GET /api/admin/v1/account-merges", a.h(a.adminListAccountMerges))
 	mux.HandleFunc("GET /api/admin/v1/iap/orders", a.h(a.adminListIAPOrders))
+	mux.HandleFunc("GET /api/admin/v1/iap/orders/export", a.h(a.adminExportIAPOrders))
+	mux.HandleFunc("GET /api/admin/v1/iap/revenue", a.h(a.adminIAPRevenue))
 	mux.HandleFunc("GET /api/admin/v1/iap/skus", a.h(a.adminListIAPSKUs))
 	mux.HandleFunc("POST /api/admin/v1/iap/skus", a.h(a.adminCreateIAPSKU))
 	mux.HandleFunc("PUT /api/admin/v1/iap/skus/{id}", a.h(a.adminUpdateIAPSKU))
-	mux.HandleFunc("GET /api/admin/v1/iap/diamonds", a.h(a.adminIAPDiamonds))
+	mux.HandleFunc("GET /api/admin/v1/iap/quota", a.h(a.adminIAPQuota))
 	mux.HandleFunc("GET /api/admin/v1/iap/config", a.h(a.adminIAPConfig))
 	mux.HandleFunc("GET /api/admin/v1/messages", a.h(a.adminListMessages))
 	mux.HandleFunc("GET /api/admin/v1/calendar", a.h(a.adminListCalendar))
-	mux.HandleFunc("POST /api/app/v1/auth/anonymous", a.appAnonymous)
+	mux.HandleFunc("GET /api/admin/v1/wishlists", a.h(a.adminListWishlists))
+	mux.HandleFunc("GET /api/admin/v1/feedback", a.h(a.adminListFeedback))
 	mux.HandleFunc("POST /api/app/v1/auth/email/code", a.h(a.appSendEmailCode))
-	mux.HandleFunc("POST /api/app/v1/auth/register", a.appRegister)
 	mux.HandleFunc("POST /api/app/v1/auth/login", a.appLogin)
 	mux.HandleFunc("POST /api/app/v1/auth/wechat", a.appWechat)
 	mux.HandleFunc("POST /api/app/v1/auth/apple", a.appApple)
@@ -103,27 +132,33 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/app/v1/auth/cancel", a.h(a.appCancel))
 	mux.HandleFunc("GET /api/app/v1/profile", a.h(a.appGetProfile))
 	mux.HandleFunc("PUT /api/app/v1/profile", a.h(a.appPutProfile))
+	mux.HandleFunc("GET /api/app/v1/legal", a.h(a.appLegal))
+	mux.HandleFunc("GET /api/app/v1/onboarding", a.h(a.appGetOnboarding))
+	mux.HandleFunc("PUT /api/app/v1/onboarding", a.h(a.appPutOnboarding))
+	mux.HandleFunc("POST /api/app/v1/onboarding/abandon", a.h(a.appAbandonOnboarding))
+	mux.HandleFunc("POST /api/app/v1/onboarding/sync", a.h(a.appSyncOnboarding))
+	mux.HandleFunc("GET /api/app/v1/invites", a.h(a.appGetInvites))
+	mux.HandleFunc("POST /api/app/v1/invites/open", a.h(a.appOpenInvite))
+	mux.HandleFunc("POST /api/app/v1/invites/accept", a.h(a.appAcceptInvite))
+	mux.HandleFunc("GET /api/app/v1/cards", a.h(a.appListCards))
 	mux.HandleFunc("GET /api/app/v1/spreads", a.h(a.appSpreads))
+	mux.HandleFunc("GET /api/app/v1/explore/topics", a.h(a.appExploreTopics))
 	mux.HandleFunc("GET /api/app/v1/preset-questions", a.h(a.appPresetQuestions))
 	mux.HandleFunc("GET /api/app/v1/banners", a.h(a.appBanners))
 	mux.HandleFunc("GET /api/app/v1/tarotists", a.h(a.appTarotists))
 	mux.HandleFunc("GET /api/app/v1/quota", a.h(a.appQuota))
+	mux.HandleFunc("POST /api/app/v1/question-suggestions", a.h(a.appQuestionSuggestions))
 	mux.HandleFunc("POST /api/app/v1/readings", a.h(a.appCreateReading))
-	mux.HandleFunc("PUT /api/app/v1/readings/{id}/question", a.h(a.appEditQuestion))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/detect", a.h(a.appDetect))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/detect/stream", a.h(a.appDetectStream))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/recommend", a.h(a.appRecommend))
+	mux.HandleFunc("GET /api/app/v1/readings/{id}/spread-choices", a.h(a.appSpreadChoices))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/spread", a.h(a.appSelectSpread))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/shuffle", a.h(a.appShuffle))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/cut", a.h(a.appCut))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/draw", a.h(a.appDraw))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/numerology", a.h(a.appNumerologyMessages))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/redraw", a.h(a.appRedraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret", a.h(a.appInterpret))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/interpret/stream", a.h(a.appInterpretStream))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/confirm-quota", a.h(a.appConfirmQuota))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/use-reward", a.h(a.appUseReward))
-	mux.HandleFunc("POST /api/app/v1/readings/{id}/paywall", a.h(a.appCancelPaywall))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups", a.h(a.appFollowup))
+	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/redraw", a.h(a.appFollowupRedraw))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/followups/stream", a.h(a.appFollowupStream))
-	mux.HandleFunc("GET /api/app/v1/readings/{id}/messages", a.h(a.appMessages))
 	mux.HandleFunc("POST /api/app/v1/readings/{id}/workflow", a.h(a.appWorkflow))
 	mux.HandleFunc("GET /api/app/v1/readings", a.h(a.appListReadings))
 	mux.HandleFunc("GET /api/app/v1/readings/{id}", a.h(a.appGetReading))
@@ -134,22 +169,23 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/app/v1/monthly-reports", a.h(a.appMonthlyReports))
 	mux.HandleFunc("POST /api/app/v1/monthly-reports/save", a.h(a.appSaveMonthlyReport))
 	mux.HandleFunc("GET /api/app/v1/yearly-reports/{id}", a.h(a.appYearlyReport))
+	mux.HandleFunc("GET /api/app/v1/yearly-reports/{id}/share", a.h(a.appYearlyShare))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/unlock", a.h(a.appUnlockYearlyReport))
 	mux.HandleFunc("PUT /api/app/v1/yearly-reports/{id}/profile", a.h(a.appYearlyProfile))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/rhythm", a.h(a.appYearlyRhythm))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/domains", a.h(a.appYearlyDomains))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/generate", a.h(a.appYearlyGenerate))
 	mux.HandleFunc("POST /api/app/v1/yearly-reports/{id}/generate/stream", a.h(a.appYearlyGenerateStream))
+	mux.HandleFunc("GET /api/app/v1/deck-shop", a.h(a.appDeckShop))
 	mux.HandleFunc("GET /api/app/v1/deck-preference", a.h(a.appGetDeckPreference))
 	mux.HandleFunc("PUT /api/app/v1/deck-preference", a.h(a.appPutDeckPreference))
+	// App IAP：权益/商品/验单（eefe8bd 去匿名时误下线路由；处理函数一直在）
 	mux.HandleFunc("POST /api/app/v1/iap/verify", a.h(a.appIAPVerify))
 	mux.HandleFunc("POST /api/app/v1/iap/restore", a.h(a.appIAPRestore))
 	mux.HandleFunc("GET /api/app/v1/iap/entitlements", a.h(a.appIAPEntitlements))
 	mux.HandleFunc("GET /api/app/v1/iap/skus", a.h(a.appIAPSKUs))
 	mux.HandleFunc("GET /api/app/v1/iap/config", a.h(a.appIAPConfig))
-	mux.HandleFunc("GET /api/app/v1/explore/topics", a.h(a.appExploreTopics))
 	mux.HandleFunc("POST /api/app/v1/redeem", a.h(a.appRedeem))
-	mux.HandleFunc("GET /api/app/v1/wallet/ledger", a.h(a.appWalletLedger))
 	mux.HandleFunc("POST /api/app/v1/uploads", a.h(a.appUploads))
 	mux.HandleFunc("GET /uploads/{name...}", a.serveUpload)
 	mux.HandleFunc("POST /api/app/v1/wishlist", a.h(a.appWishlist))
@@ -229,7 +265,7 @@ type actor struct {
 }
 
 func (a *App) adminActor(r *http.Request, write bool) (actor, error) {
-	id, _, role, err := a.parseAccess(r, "admin")
+	id, role, err := a.parseAccess(r, "admin")
 	if err != nil {
 		return actor{}, err
 	}
@@ -238,29 +274,36 @@ func (a *App) adminActor(r *http.Request, write bool) (actor, error) {
 	if err != nil || disabled {
 		return actor{}, authFail{}
 	}
-	if write && role != "admin" {
-		return actor{}, biz("只读账号不能修改")
+	if err := a.checkAdminAccess(r, id, role, write); err != nil {
+		return actor{}, err
 	}
 	return actor{id: id, role: role}, nil
 }
 
-func (a *App) appActor(r *http.Request) (userID int64, anon string, err error) {
-	userID, anon, _, err = a.parseAccess(r, "app")
-	if err != nil || userID == 0 {
-		return userID, anon, err
+func (a *App) appActor(r *http.Request) (userID int64, err error) {
+	userID, _, err = a.parseAccess(r, "app")
+	if err != nil {
+		return 0, err
+	}
+	if userID == 0 {
+		return 0, authFail{}
 	}
 	var merged *int64
-	scanErr := a.Store.QueryRow(r.Context(), `SELECT merged_into FROM app_users WHERE id=$1`, userID).Scan(&merged)
+	var cancelled *time.Time
+	scanErr := a.Store.QueryRow(r.Context(), `SELECT merged_into, cancelled_at FROM app_users WHERE id=$1`, userID).Scan(&merged, &cancelled)
 	if scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
-			return 0, "", authFail{}
+			return 0, authFail{}
 		}
-		return 0, "", scanErr
+		return 0, scanErr
 	}
 	if merged != nil {
-		return 0, "", authFail{}
+		return 0, authFail{}
 	}
-	return userID, anon, nil
+	if cancelled != nil {
+		return 0, biz("账号已注销")
+	}
+	return userID, nil
 }
 
 func (a *App) lockGen(id int64) (func(), error) {
@@ -300,11 +343,69 @@ func validBase(raw string) error {
 	return biz("供应商地址只允许 HTTPS；本机演示可使用 http://127.0.0.1 或 http://localhost")
 }
 
-func (a *App) ownReading(ctx context.Context, id, userID int64, anon string) error {
+// divinationActor accepts a logged-in token, or a device id when the caller has not logged in.
+// The device id is how a later onboarding check finds this handset.
+func (a *App) divinationActor(r *http.Request) (userID int64, deviceID string, err error) {
+	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		userID, err = a.appActor(r)
+		if err != nil {
+			return 0, "", err
+		}
+		if userID > 0 {
+			return userID, "", nil
+		}
+	}
+	deviceID = strings.TrimSpace(r.URL.Query().Get("device_id"))
+	if deviceID == "" {
+		deviceID = peekDeviceID(r)
+	}
+	if !validDeviceID(deviceID) {
+		return 0, "", biz("缺少设备标识")
+	}
+	return 0, deviceID, nil
+}
+
+func (a *App) beginReading(r *http.Request) (userID, id int64, deviceID string, err error) {
+	userID, deviceID, err = a.divinationActor(r)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	id, err = pathID(r)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	if err = a.ownReading(r.Context(), id, userID, deviceID); err != nil {
+		return 0, 0, "", err
+	}
+	return userID, id, deviceID, nil
+}
+
+func peekDeviceID(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var probe struct {
+		DeviceID string `json:"device_id"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return ""
+	}
+	return strings.TrimSpace(probe.DeviceID)
+}
+
+func (a *App) ownReading(ctx context.Context, id, userID int64, guest string) error {
 	var owner *int64
-	var anonID *string
+	var deviceID string
 	var deleted *time.Time
-	err := a.Store.QueryRow(ctx, `SELECT user_id, anonymous_id, deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &anonID, &deleted)
+	err := a.Store.QueryRow(ctx, `SELECT user_id, COALESCE(device_id,''), deleted_at FROM readings WHERE id=$1`, id).Scan(&owner, &deviceID, &deleted)
 	if err != nil {
 		return bizCode("reading_not_found", "记录不存在")
 	}
@@ -317,8 +418,9 @@ func (a *App) ownReading(ctx context.Context, id, userID int64, anon string) err
 		}
 		return nil
 	}
-	if anonID == nil || *anonID != anon {
-		return bizCode("reading_forbidden", "记录不属于当前用户")
+	guest = strings.TrimSpace(guest)
+	if guest != "" && strings.EqualFold(deviceID, guest) {
+		return nil
 	}
-	return nil
+	return bizCode("reading_forbidden", "记录不属于当前用户")
 }
