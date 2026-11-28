@@ -1500,7 +1500,8 @@ paths:
       description: |
         仅 QUESTION_CREATED 可进入 SPREAD_SELECTED。牌阵必须启用。
         draw_mode 为 normal 或 numerology，覆盖创建时记下的值。普通占卜与探索均可提交；空字符串 / 仅空白视为未传。普通占卜仍未选方式时返回「请先选择抽牌方式」。非法枚举或今日运势等类型带非空 draw_mode 返回「抽牌方式不正确」。扣过之后不能再改。
-        成功 data 为占卜记录，不是 messages。记录里的 draw_mode 就是这次提交的值。探索选 numerology 后与普通相同：POST /numerology 落牌再 interpret。
+        成功 data 为占卜记录，不是 messages。记录里的 draw_mode 就是这次提交的值。
+        探索/普通选 numerology 后：可 POST /interpret 直接交 cards（与 normal 同），或可选 POST /numerology 交 numbers 落牌后再 interpret。
         未登录不带令牌，query 带 device_id。不要把 device_id 放进请求体。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'
@@ -1537,6 +1538,8 @@ paths:
       description: |
         请求体带 spread_id 和客户端已经抽好的牌。牌已经落库时可以不带 body。
         牌名必须是牌库里的名字，orientation 只能是 upright 或 reversed，张数必须等于牌阵张数，同一张牌不能出现两次。
+        draw_mode=numerology 与 normal 相同：App 可直接在本接口交 `{spread_id,cards}` 落成 CARDS_FIXED 并解读，不必先调 POST /numerology。
+        POST /numerology 仍可用（按 numbers 映射落牌），落牌后本接口空 body 即可。
         成功 data 与 GET /readings/{id} 同形：Reading 字段（含 status / continue / stage / interpretation）+ reading_id + messages + has_more。
         普通抽牌与灵数落牌后共用这一接收形态；messages 从类型二、类型一、类型三开始。客户端按 status=COMPLETED 与 messages 进入解读屏。
         explore 允许问题为空（主题占卜无提问环节）；空问题时按所选主题分类与牌阵解读，不回写 question。登录用户先过 play 门槛。未绑定供应商会把状态写成 FAILED_RETRYABLE。
@@ -1694,16 +1697,15 @@ paths:
     post:
       tags: [抽牌]
       operationId: appNumerologyMessages
-      summary: 灵数抽牌
+      summary: 灵数抽牌（可选）
       description: |
-        仅 draw_mode=numerology。选完牌阵后调用；服务端没有 /draw、/shuffle、/cut。
-        请求体 numbers：空数组返回类型八引导；个数须等于牌阵张数且 1–78 不重复才落牌。
+        仅 draw_mode=numerology。可选兼容路径：按 numbers 映射落牌。服务端没有 /draw、/shuffle、/cut。
+        推荐主路径：App 客户端抽牌后直接 POST /interpret `{spread_id,cards}`（与普通相同，张数=牌阵张数）。
+        本接口仍可用：请求体 numbers 空数组返回类型八引导；个数须等于牌阵张数且 1–78 不重复才落牌。
         数字不齐 → 类型十；重复 → 类型九；均不落牌。齐了按本问 78 张映射落成 CARDS_FIXED。
         任意 numbers（含空数组、校验失败）的 data 都带 reading_id、has_more、messages，
         以及 status、continue、stage、draw_mode、reading，避免客户端把缺 meta 当成失败。
-        正确顺序：POST /spread（draw_mode=numerology）→（可选）POST /numerology numbers=[] 取引导
-        → POST /numerology 交齐数字 → POST /interpret。也可只靠 GET /readings/{id}：未落牌时
-        messages 已含类型八，continue=numerology、stage=pending_numerology。
+        未落牌时 GET /readings/{id} 已含类型八，continue=numerology、stage=pending_numerology。
         未登录不带令牌，query 带 device_id。不要把 device_id 放进请求体。
       parameters:
         - $ref: '#/components/parameters/DivinationAuthorization'

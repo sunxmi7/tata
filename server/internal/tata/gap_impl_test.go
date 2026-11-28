@@ -78,6 +78,62 @@ func TestYearlyReportUnlockRequiresYearCard(t *testing.T) {
 	}
 }
 
+func TestNumerologyInterpretAcceptsClientCards(t *testing.T) {
+	// Product: App may skip POST /numerology and lock faces via interpret {spread_id,cards}
+	// like ordinary draw. continue=numerology stays until cards are fixed.
+	store, ts := newMergeServer(t)
+	resetDiamondCost(t, store)
+	token, uid := registerUser(t, ts, store, "numerclient")
+	setMember(t, store, uid, "month")
+	setDiamondCost(t, store, 1)
+	setQuota(t, store, uid, 20)
+	spreadID := ensureTimeFlow(t, store)
+	reading := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "灵数客户端交牌", "type": "normal"})
+	rid := asID(reading["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", rid), map[string]any{"spread_id": spreadID, "draw_mode": "numerology"})
+	pending := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
+	if pending["continue"] != "numerology" || pending["stage"] != "pending_numerology" {
+		t.Fatalf("before cards: continue=%v stage=%v", pending["continue"], pending["stage"])
+	}
+	hand := []map[string]any{
+		{"position": 1, "name": "愚者", "orientation": "upright"},
+		{"position": 2, "name": "魔术师", "orientation": "reversed"},
+		{"position": 3, "name": "女祭司", "orientation": "upright"},
+	}
+	msg, raw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", rid), map[string]any{
+		"spread_id": spreadID, "cards": hand,
+	})
+	if msg != "" {
+		t.Fatalf("interpret client cards: %s %s", msg, raw)
+	}
+	view := listOne(t, ts, token, fmt.Sprintf("/api/app/v1/readings/%d", rid))
+	if view["status"] != "COMPLETED" && view["status"] != "CARDS_FIXED" && view["status"] != "FAILED_RETRYABLE" {
+		t.Fatalf("status after interpret: %#v", view["status"])
+	}
+	rawCards, _ := json.Marshal(view["cards"])
+	var cards []drawnCard
+	if err := json.Unmarshal(rawCards, &cards); err != nil || len(cards) != 3 {
+		t.Fatalf("cards: %s err=%v", rawCards, err)
+	}
+	if cards[0].Name != "愚者" || cards[1].Name != "魔术师" || cards[2].Name != "女祭司" {
+		t.Fatalf("submitted faces: %s", rawCards)
+	}
+	if view["continue"] == "numerology" {
+		t.Fatalf("continue should leave numerology after lock: %#v", view["continue"])
+	}
+	// Wrong count still rejected (same as ordinary).
+	again := create(t, ts, token, "/api/app/v1/readings", map[string]any{"question": "灵数张数校验", "type": "normal"})
+	aid := asID(again["id"])
+	must(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/spread", aid), map[string]any{"spread_id": spreadID, "draw_mode": "numerology"})
+	bad, badRaw := call(t, ts, token, http.MethodPost, fmt.Sprintf("/api/app/v1/readings/%d/interpret", aid), map[string]any{
+		"spread_id": spreadID,
+		"cards":     []map[string]any{{"name": "愚者", "orientation": "upright"}},
+	})
+	if !strings.Contains(bad, "牌数须等于牌阵张数") {
+		t.Fatalf("short hand: %s %s", bad, badRaw)
+	}
+}
+
 func TestNumerologyDrawMapsDeck(t *testing.T) {
 	store, ts := newMergeServer(t)
 	token, _ := registerUser(t, ts, store, "numer")
