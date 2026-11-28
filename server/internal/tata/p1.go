@@ -39,7 +39,7 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 	if uid == 0 {
 		return biz("登录后才能查看兑换记录")
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT r.id, r.created_at, c.code, c.benefit_name, c.amount
+	rows, err := a.Store.Query(r.Context(), `SELECT r.id, r.created_at, c.code, c.benefit_name, c.kind, c.amount, c.sku_code
 		FROM redeem_redemptions r
 		JOIN redeem_codes c ON c.id = r.code_id
 		WHERE r.user_id=$1
@@ -53,19 +53,25 @@ func (a *App) appRedeemRecords(w http.ResponseWriter, r *http.Request) error {
 	for rows.Next() {
 		var id int64
 		var created sql.NullTime
-		var code, benefit string
+		var code, benefit, kind, skuCode string
 		var amount int
-		if err := rows.Scan(&id, &created, &code, &benefit, &amount); err != nil {
+		if err := rows.Scan(&id, &created, &code, &benefit, &kind, &amount, &skuCode); err != nil {
 			return err
 		}
 		var at any
 		if created.Valid {
 			at = created.Time
 		}
+		unit := ""
+		var label any
+		if kind == redeemKindBare || kind == iapKindQuotaPack {
+			unit = "quota"
+			label = T(r.Context(), displayLabelQuota)
+		}
 		items = append(items, map[string]any{
 			"id": id, "created_at": at, "code": code, "benefit_name": benefit,
-			"kind": grantKindQuota, "amount": amount, "unit": "quota",
-			"display_label": T(r.Context(), displayLabelQuota),
+			"kind": kind, "amount": amount, "sku_code": skuCode,
+			"unit": unit, "display_label": label,
 		})
 	}
 	if err := rows.Err(); err != nil {

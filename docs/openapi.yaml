@@ -65,7 +65,7 @@ tags:
   - name: 探索
     description: 探索目录分组与主题条目。spread 映射可为空 stub。
   - name: 钱包兑换
-    description: 兑换码核销、兑换记录与额度流水。兑换码仅写入统一额度（kind=quota）。兑换记录行字段仍待确认。
+    description: 兑换码核销、兑换记录与额度流水。兑换码可绑 iap_skus（会员/额度包/年运/牌组）或裸额度。兑换记录行字段仍待确认。
   - name: 活动
     description: 参与活动列表。详情、参与记录、奖励记录在设计包里仍是占位，不编造奖励承诺。
   - name: 帮助
@@ -3999,15 +3999,16 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [quota]
-          description: 仅 quota，写入统一额度。
+          description: 裸额度为 quota；SKU 码为对应 iap_skus.kind。
+        sku_code:
+          type: string
+          description: 绑定的 iap_skus.code；裸额度码为空。
         amount:
           type: integer
-          description: 到账额度数量。
+          description: 额度类到账数量；会员/年运/牌组可能省略。
         unit:
           type: string
-          enum: [quota]
-          description: 固定为 quota。
+          description: 额度类为 quota；其它权益可省略。
         display_label:
           type: string
           example: 额度
@@ -4018,6 +4019,17 @@ components:
         balance:
           type: integer
           description: 核销后统一额度。
+        year:
+          type: integer
+          description: 年运解锁的年份（北京时区当前年）。
+        deck_codes:
+          type: array
+          items:
+            type: string
+          description: 牌组解锁结果。
+        membership_held:
+          type: boolean
+          description: 会员已存在且新周期进入 pending 时为 true。
     WalletLedger:
       type: object
       properties:
@@ -4347,21 +4359,23 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [quota]
-          description: 到账类型，仅 quota。
+          description: 到账类型（quota 或 iap_skus.kind）。
+        sku_code:
+          type: string
+          description: 绑定的 SKU；裸额度码为空。
         amount:
           type: integer
-          description: 到账额度数量。
+          description: 额度类数量；其它权益可为 0。
         unit:
           type: string
-          enum: [quota]
-          description: 固定为 quota。
+          description: 额度类为 quota。
         display_label:
           type: string
-          description: UI 展示名「额度」。
+          nullable: true
+          description: 额度类为「额度」。
     RedeemCode:
       type: object
-      description: 管理端兑换码。仅额度。App 核销走 POST /redeem。
+      description: 管理端兑换码。可绑 iap_skus 或裸额度。App 核销走 POST /redeem。
       properties:
         id:
           type: integer
@@ -4371,10 +4385,16 @@ components:
           description: 大写。自动生成形如 AB3K-9MPQ，不含 0/O/1/I。
         kind:
           type: string
-          enum: [quota]
+          description: quota 或 iap_skus.kind。
+        sku_code:
+          type: string
+          description: 绑定的 iap_skus.code；裸额度码为空。
+        addon_deck_code:
+          type: string
+          description: 仅 deck_addon 使用。
         amount:
           type: integer
-          description: 到账额度数量。
+          description: 裸额度或额度包快照数量；其它权益为 0。
         benefit_name:
           type: string
         max_redemptions:
@@ -4409,21 +4429,26 @@ components:
     RedeemCodeCreate:
       type: object
       additionalProperties: false
-      required: [amount, benefit_name]
       properties:
+        sku_code:
+          type: string
+          description: 绑定 iap_skus.code。与裸额度二选一；优先。
+        addon_deck_code:
+          type: string
+          description: 仅 sku 为 deck_addon 时必填。
         kind:
           type: string
           enum: [quota]
-          description: 仅 quota。省略时服务端按 quota。其它值拒绝。
+          description: 无 sku_code 时用 quota 生成裸额度码。
         amount:
           type: integer
           minimum: 1
           maximum: 100000
-          description: 到账额度数量。
+          description: 裸额度必填。SKU 额度包取自 quota_grant。
         benefit_name:
           type: string
           maxLength: 64
-          description: 必填，按码点最多 64。
+          description: 裸额度必填；SKU 码省略则用商品名。
         code:
           type: string
           description: 可选自定义码。空则自动生成。只允许 A-Z、0-9 与连字符，4–64 个字符。会转成大写。与 count>1 不能同时使用。
@@ -8339,7 +8364,8 @@ paths:
       description: |
         需要付费模块写权限。code 为空则自动生成 XXXX-XXXX（不含 0/O/1/I）。
         count 默认 1、上限 100。自定义码不能批量。
-        仅生成 kind=quota 额度码；free_count 已下线。生成后用户用 POST /api/app/v1/redeem 核销。
+        优先传 sku_code 绑定 iap_skus（月/年会员、额度包、年运、牌组）；核销履约与 IAP 一致。
+        亦可 kind=quota+amount 生成运营裸额度码。生成后用户用 POST /api/app/v1/redeem 核销。
       parameters:
         - $ref: "#/components/parameters/Authorization"
       requestBody:
@@ -8349,16 +8375,14 @@ paths:
             schema:
               $ref: "#/components/schemas/RedeemCodeCreate"
             examples:
-              auto:
-                summary: 自动生成 10 个额度码
+              sku_month:
+                summary: 绑定月卡 SKU
                 value:
-                  kind: quota
-                  amount: 60
-                  benefit_name: 新春礼
+                  sku_code: sub_month
                   count: 10
                   max_redemptions: 1
-              custom:
-                summary: 指定一条共用额度码
+              bare_quota:
+                summary: 运营裸额度码
                 value:
                   kind: quota
                   amount: 20

@@ -140,13 +140,13 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var codeID int64
-	var kind, benefit string
+	var kind, benefit, skuCode, addon string
 	var amount int
 	var max sql.NullInt64
 	var enabled bool
 	var expires sql.NullTime
-	err = tx.QueryRow(r.Context(), `SELECT id, kind, amount, benefit_name, max_redemptions, enabled, expires_at
-		FROM redeem_codes WHERE code=$1 FOR UPDATE`, code).Scan(&codeID, &kind, &amount, &benefit, &max, &enabled, &expires)
+	err = tx.QueryRow(r.Context(), `SELECT id, kind, amount, benefit_name, sku_code, addon_deck_code, max_redemptions, enabled, expires_at
+		FROM redeem_codes WHERE code=$1 FOR UPDATE`, code).Scan(&codeID, &kind, &amount, &benefit, &skuCode, &addon, &max, &enabled, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return biz("兑换码无效")
 	}
@@ -175,13 +175,41 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 			return biz("兑换码已使用")
 		}
 	}
-	if kind != grantKindQuota {
-		return biz("兑换码无效")
-	}
 	now := time.Now().UTC()
-	ledgerID, err := creditRedeemQuota(r.Context(), tx, uid, amount, codeID)
-	if err != nil {
-		return err
+	out := map[string]any{
+		"code": code, "benefit_name": benefit, "kind": kind,
+	}
+	var ledgerID any
+	if skuCode != "" {
+		sku, err := loadRedeemSKU(r.Context(), tx, skuCode)
+		if err != nil {
+			return err
+		}
+		if err := validateRedeemSKU(sku, addon); err != nil {
+			return err
+		}
+		extra, lid, err := fulfillRedeemSKU(r.Context(), tx, uid, codeID, sku, addon)
+		if err != nil {
+			return err
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		if lid != nil {
+			ledgerID = *lid
+		}
+	} else {
+		if kind != redeemKindBare || amount <= 0 {
+			return biz("兑换码无效")
+		}
+		id, err := creditRedeemQuota(r.Context(), tx, uid, amount, codeID)
+		if err != nil {
+			return err
+		}
+		ledgerID = id
+		out["amount"] = amount
+		out["unit"] = "quota"
+		out["kind"] = redeemKindBare
 	}
 	if _, err := tx.Exec(r.Context(), `INSERT INTO redeem_redemptions(code_id, user_id, quota_ledger_id, created_at)
 		VALUES ($1,$2,$3,$4)`, codeID, uid, ledgerID, now); err != nil {
@@ -191,11 +219,13 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	quota, _ := loadQuotaBalance(r.Context(), a.Store, uid)
-	writeOK(w, map[string]any{
-		"code": code, "benefit_name": benefit, "kind": grantKindQuota, "amount": amount,
-		"unit": "quota", "display_label": T(r.Context(), displayLabelQuota),
-		"quota_remaining": quota, "balance": quota,
-	})
+	out["display_label"] = T(r.Context(), displayLabelQuota)
+	out["quota_remaining"] = quota
+	out["balance"] = quota
+	if _, ok := out["unit"]; !ok && out["kind"] == redeemKindBare {
+		out["unit"] = "quota"
+	}
+	writeOK(w, out)
 	return nil
 }
 

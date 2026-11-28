@@ -72,9 +72,8 @@ BEGIN
     );
   END IF;
   IF to_regclass('public.redeem_codes') IS NOT NULL THEN
-    ALTER TABLE redeem_codes DROP CONSTRAINT IF EXISTS redeem_codes_kind_chk;
     UPDATE redeem_codes SET kind = 'quota' WHERE kind = 'diamonds';
-    ALTER TABLE redeem_codes ADD CONSTRAINT redeem_codes_kind_chk CHECK (kind IN ('quota','free_count'));
+    -- kind 约束由后续 migrate 统一落到 SKU/裸额度集合；此处不再写回 free_count。
   END IF;
   IF to_regclass('public.quota_charges') IS NOT NULL THEN
     UPDATE quota_charges SET entitlement = 'quota_pack' WHERE entitlement = 'diamond_pack';

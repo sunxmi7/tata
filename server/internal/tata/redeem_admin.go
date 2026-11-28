@@ -21,6 +21,8 @@ const (
 )
 
 type redeemCodeCreate struct {
+	SKUCode        string  `json:"sku_code"`
+	AddonDeckCode  string  `json:"addon_deck_code"`
 	Kind           string  `json:"kind"`
 	Amount         int     `json:"amount"`
 	BenefitName    string  `json:"benefit_name"`
@@ -43,8 +45,8 @@ func (a *App) adminListRedeemCodes(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	rows, err := a.Store.Query(r.Context(), `SELECT c.id, c.code, c.kind, c.amount, c.benefit_name, c.max_redemptions,
-		c.enabled, c.expires_at, c.created_at,
+	rows, err := a.Store.Query(r.Context(), `SELECT c.id, c.code, c.kind, c.amount, c.benefit_name, c.sku_code, c.addon_deck_code,
+		c.max_redemptions, c.enabled, c.expires_at, c.created_at,
 		(SELECT count(*) FROM redeem_redemptions r WHERE r.code_id=c.id) AS redeemed_count
 		FROM redeem_codes c
 		ORDER BY c.id DESC LIMIT 200`)
@@ -69,19 +71,46 @@ func (a *App) adminCreateRedeemCodes(w http.ResponseWriter, r *http.Request) err
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	kind := strings.TrimSpace(req.Kind)
-	if kind == "" {
-		kind = grantKindQuota
-	}
-	if kind != grantKindQuota {
-		return biz("兑换码只允许 quota")
-	}
-	if req.Amount <= 0 || req.Amount > grantMaxAmount {
-		return biz("兑换数量不正确")
-	}
+	skuCode := strings.TrimSpace(req.SKUCode)
+	addon := strings.TrimSpace(req.AddonDeckCode)
+	var kind string
+	var amount int
 	benefit := strings.TrimSpace(req.BenefitName)
-	if benefit == "" {
-		return biz("请填写权益名称")
+	if skuCode != "" {
+		sku, err := loadRedeemSKU(r.Context(), a.Store, skuCode)
+		if err != nil {
+			return err
+		}
+		if err := validateRedeemSKU(sku, addon); err != nil {
+			return err
+		}
+		kind = sku.Kind
+		skuCode = sku.Code
+		if kind == iapKindQuotaPack {
+			amount = int(sku.Grant.Int64)
+		}
+		if benefit == "" {
+			benefit = sku.Name
+		}
+		if kind != "deck_addon" {
+			addon = ""
+		}
+	} else {
+		kind = strings.TrimSpace(req.Kind)
+		if kind == "" {
+			kind = redeemKindBare
+		}
+		if kind != redeemKindBare {
+			return biz("请填写 sku_code，或使用 kind=quota 生成裸额度码")
+		}
+		if req.Amount <= 0 || req.Amount > grantMaxAmount {
+			return biz("兑换数量不正确")
+		}
+		amount = req.Amount
+		addon = ""
+		if benefit == "" {
+			return biz("请填写权益名称")
+		}
 	}
 	if utf8.RuneCountInString(benefit) > redeemBenefitMax {
 		return biz("权益名称过长")
@@ -145,7 +174,7 @@ func (a *App) adminCreateRedeemCodes(w http.ResponseWriter, r *http.Request) err
 		var id int64
 		for attempt := 0; attempt < 8; attempt++ {
 			var err error
-			id, err = insertRedeemCode(r.Context(), tx, code, kind, benefit, req.Amount, maxRedemptions, enabled, expires, now)
+			id, err = insertRedeemCode(r.Context(), tx, code, kind, benefit, skuCode, addon, amount, maxRedemptions, enabled, expires, now)
 			if err == nil {
 				break
 			}
@@ -163,7 +192,7 @@ func (a *App) adminCreateRedeemCodes(w http.ResponseWriter, r *http.Request) err
 		if id == 0 {
 			return biz("兑换码生成失败")
 		}
-		items = append(items, redeemCodeView(id, code, kind, benefit, req.Amount, maxRedemptions, enabled, expires, now, 0))
+		items = append(items, redeemCodeView(id, code, kind, benefit, skuCode, addon, amount, maxRedemptions, enabled, expires, now, 0))
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
@@ -188,14 +217,14 @@ func (a *App) adminUpdateRedeemCode(w http.ResponseWriter, r *http.Request) erro
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	var kind, benefit, code string
+	var kind, benefit, code, skuCode, addon string
 	var amount int
 	var max sql.NullInt64
 	var enabled bool
 	var expires sql.NullTime
 	var created time.Time
-	err = a.Store.QueryRow(r.Context(), `SELECT code, kind, amount, benefit_name, max_redemptions, enabled, expires_at, created_at
-		FROM redeem_codes WHERE id=$1`, id).Scan(&code, &kind, &amount, &benefit, &max, &enabled, &expires, &created)
+	err = a.Store.QueryRow(r.Context(), `SELECT code, kind, amount, benefit_name, sku_code, addon_deck_code, max_redemptions, enabled, expires_at, created_at
+		FROM redeem_codes WHERE id=$1`, id).Scan(&code, &kind, &amount, &benefit, &skuCode, &addon, &max, &enabled, &expires, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return biz("兑换码不存在")
 	}
@@ -258,11 +287,11 @@ func redeemCodeMeta(canWrite bool, items []map[string]any) map[string]any {
 	}
 }
 
-func insertRedeemCode(ctx context.Context, tx Tx, code, kind, benefit string, amount int, max sql.NullInt64, enabled bool, expires sql.NullTime, now time.Time) (int64, error) {
+func insertRedeemCode(ctx context.Context, tx Tx, code, kind, benefit, skuCode, addon string, amount int, max sql.NullInt64, enabled bool, expires sql.NullTime, now time.Time) (int64, error) {
 	var id int64
-	err := tx.QueryRow(ctx, `INSERT INTO redeem_codes(code, kind, amount, benefit_name, max_redemptions, enabled, expires_at, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		code, kind, amount, benefit, nullInt(max), enabled, nullTime(expires), now).Scan(&id)
+	err := tx.QueryRow(ctx, `INSERT INTO redeem_codes(code, kind, amount, benefit_name, sku_code, addon_deck_code, max_redemptions, enabled, expires_at, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+		code, kind, amount, benefit, skuCode, addon, nullInt(max), enabled, nullTime(expires), now).Scan(&id)
 	if err != nil {
 		if cardUniqueErr(err) {
 			return 0, biz("兑换码已存在")
@@ -273,28 +302,29 @@ func insertRedeemCode(ctx context.Context, tx Tx, code, kind, benefit string, am
 }
 
 func loadRedeemCode(ctx context.Context, store *Store, id int64) (map[string]any, error) {
-	var code, kind, benefit string
+	var code, kind, benefit, skuCode, addon string
 	var amount, redeemed int
 	var max sql.NullInt64
 	var enabled bool
 	var expires sql.NullTime
 	var created time.Time
-	err := store.QueryRow(ctx, `SELECT c.id, c.code, c.kind, c.amount, c.benefit_name, c.max_redemptions,
+	err := store.QueryRow(ctx, `SELECT c.id, c.code, c.kind, c.amount, c.benefit_name, c.sku_code, c.addon_deck_code, c.max_redemptions,
 		c.enabled, c.expires_at, c.created_at,
 		(SELECT count(*) FROM redeem_redemptions r WHERE r.code_id=c.id)
-		FROM redeem_codes c WHERE c.id=$1`, id).Scan(&id, &code, &kind, &amount, &benefit, &max, &enabled, &expires, &created, &redeemed)
+		FROM redeem_codes c WHERE c.id=$1`, id).Scan(&id, &code, &kind, &amount, &benefit, &skuCode, &addon, &max, &enabled, &expires, &created, &redeemed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, biz("兑换码不存在")
 	}
 	if err != nil {
 		return nil, err
 	}
-	return redeemCodeView(id, code, kind, benefit, amount, max, enabled, expires, created, redeemed), nil
+	return redeemCodeView(id, code, kind, benefit, skuCode, addon, amount, max, enabled, expires, created, redeemed), nil
 }
 
-func redeemCodeView(id int64, code, kind, benefit string, amount int, max sql.NullInt64, enabled bool, expires sql.NullTime, created time.Time, redeemed int) map[string]any {
+func redeemCodeView(id int64, code, kind, benefit, skuCode, addon string, amount int, max sql.NullInt64, enabled bool, expires sql.NullTime, created time.Time, redeemed int) map[string]any {
 	return map[string]any{
 		"id": id, "code": code, "kind": kind, "amount": amount, "benefit_name": benefit,
+		"sku_code": skuCode, "addon_deck_code": addon,
 		"max_redemptions": nullInt(max), "enabled": enabled, "expires_at": nullTime(expires),
 		"created_at": created, "redeemed_count": redeemed,
 	}
@@ -308,16 +338,16 @@ func scanRedeemCodes(rows interface {
 	items := []map[string]any{}
 	for rows.Next() {
 		var id int64
-		var code, kind, benefit string
+		var code, kind, benefit, skuCode, addon string
 		var amount, redeemed int
 		var max sql.NullInt64
 		var enabled bool
 		var expires sql.NullTime
 		var created time.Time
-		if err := rows.Scan(&id, &code, &kind, &amount, &benefit, &max, &enabled, &expires, &created, &redeemed); err != nil {
+		if err := rows.Scan(&id, &code, &kind, &amount, &benefit, &skuCode, &addon, &max, &enabled, &expires, &created, &redeemed); err != nil {
 			return nil, err
 		}
-		items = append(items, redeemCodeView(id, code, kind, benefit, amount, max, enabled, expires, created, redeemed))
+		items = append(items, redeemCodeView(id, code, kind, benefit, skuCode, addon, amount, max, enabled, expires, created, redeemed))
 	}
 	return items, rows.Err()
 }
