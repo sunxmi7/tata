@@ -160,7 +160,7 @@ func TestWechatAppleLoginAndBind(t *testing.T) {
 	store, ts := newMergeServer(t)
 	wxCode := fmt.Sprintf("wx-login-%d", time.Now().UnixNano())
 	data := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]string{"code": wxCode})
-	if data["accessToken"] == nil || data["id"] == nil {
+	if data["accessToken"] == nil || data["id"] == nil || data["login"] != "wechat" {
 		t.Fatalf("wechat login: %#v", data)
 	}
 	again := create(t, ts, "", "/api/app/v1/auth/wechat", map[string]string{"code": wxCode})

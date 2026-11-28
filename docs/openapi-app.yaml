@@ -228,7 +228,7 @@ paths:
                   device_id: device-demo-001
       responses:
         '200':
-          description: code=0 时 data 含 accessToken、id、reward_consumed、reward_note。
+          description: code=0 时 data 含 accessToken、id、login=wechat、reward_consumed、reward_note。
           content:
             application/json:
               schema:
@@ -4046,7 +4046,7 @@ components:
           description: 注册奖励到期时间。该身份已领过时为零值时间。
         login:
           type: string
-          description: 邮箱登录为 email，苹果登录为 apple。微信登录可不出现。
+          description: 邮箱 email、微信 wechat、苹果 apple。成功登录必带；客户端应用 data.accessToken，勿因缺 login 判失败。
     Message:
       type: object
       properties:
