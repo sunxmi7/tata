@@ -1239,13 +1239,8 @@ func (a *App) acceptClientCards(ctx context.Context, id, spreadID int64, cards [
 	if spreadID <= 0 {
 		return biz("请先选择牌阵")
 	}
-	var drawMode string
-	if err := a.Store.QueryRow(ctx, `SELECT draw_mode FROM readings WHERE id=$1`, id).Scan(&drawMode); err != nil {
-		return err
-	}
-	if drawMode == "numerology" {
-		return biz("抽牌方式不正确")
-	}
+	// normal and numerology share client-card lock: App draws, server only stores.
+	// POST /numerology remains an optional path that maps numbers → cards.
 	if len(cards) == 0 {
 		return biz("请交上抽好的牌")
 	}
@@ -1359,25 +1354,19 @@ func (a *App) takeClientCards(r *http.Request, id int64) error {
 	if req.SpreadID == 0 && len(req.Cards) == 0 {
 		return nil
 	}
-	var status, drawMode string
+	var status string
 	var cards sql.NullString
-	if err := a.Store.QueryRow(r.Context(), `SELECT status, cards, COALESCE(draw_mode,'') FROM readings WHERE id=$1`, id).Scan(&status, &cards, &drawMode); err != nil {
+	if err := a.Store.QueryRow(r.Context(), `SELECT status, cards FROM readings WHERE id=$1`, id).Scan(&status, &cards); err != nil {
 		return err
 	}
 	hasFixed := cards.Valid && strings.TrimSpace(cards.String) != "" && strings.TrimSpace(cards.String) != "[]" && strings.TrimSpace(cards.String) != "null"
 	// App often posts cards on every interpret. Once locked, keep the fixed face and continue.
+	// normal and numerology both accept {spread_id,cards}; POST /numerology stays optional.
 	switch status {
 	case "CARDS_FIXED", "FAILED_RETRYABLE", "INTERPRETING", "COMPLETED":
 		if hasFixed {
 			return nil
 		}
-	}
-	// Numerology locks faces via POST /numerology only; ignore client card payloads.
-	if drawMode == "numerology" {
-		if hasFixed {
-			return nil
-		}
-		return biz("请先用灵数抽牌")
 	}
 	return a.acceptClientCards(r.Context(), id, req.SpreadID, req.Cards)
 }

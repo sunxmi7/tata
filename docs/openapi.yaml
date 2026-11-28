@@ -5769,8 +5769,10 @@ paths:
       summary: 生成解读
       description: |
         explore 允许问题为空（主题占卜无提问环节）；空问题时按所选主题分类与牌阵解读，不回写 question。登录用户先过 play 门槛。
+        可带 body `{spread_id,cards}` 落牌（普通与灵数相同，张数=牌阵张数）；牌已落库时可空 body。
+        draw_mode=numerology 不必先调 POST /numerology，App 客户端抽牌后直接本接口交牌即可；`/numerology` 仍为可选兼容。
         生成前必须已登录、牌面已固定、额度已结算。未绑定供应商会把状态写成 FAILED_RETRYABLE。
-        失败文案「解读失败，可重试，未重新扣费」。无请求体。
+        失败文案「解读失败，可重试，未重新扣费」。
         生成会先落成 ai_jobs 任务，不绑 HTTP 连接。App 退出后任务继续；再进来用 GET /readings/{id}：INTERPRETING 为进行中（interpretation 可能是片段），COMPLETED 为全文。未完成可再调 `/interpret/stream` 续听，不会重扣费。
       parameters:
         - $ref: "#/components/parameters/Authorization"

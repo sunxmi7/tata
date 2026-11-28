@@ -201,7 +201,7 @@
 2. `POST /api/app/v1/readings/{id}/spread` 带 `spread_id` + `draw_mode`（`normal` 或 `numerology`）
 3. 落牌方式不同，解读接收相同：
    - **普通** `draw_mode=normal`：客户端洗切抽 → `POST .../interpret` 带牌面
-   - **灵数** `draw_mode=numerology`：`POST .../numerology` 交 `numbers`（个数=牌阵张数，1–78 不重复）把状态写成 `CARDS_FIXED` → 再 `POST .../interpret`（可不带牌面）
+   - **灵数** `draw_mode=numerology`：与普通一样，客户端抽完后 `POST .../interpret` 带 `spread_id`+`cards`（张数=牌阵张数）落牌并解读；也可可选 `POST .../numerology` 交 `numbers` 落牌后再空 body interpret
 4. `GET /readings/{id}` 与成功的 `POST /interpret` data 同形（Reading 字段 + `messages` + `has_more`）。灵数不需要、也不提供单独的洗牌/切牌/抽牌后端响应。
 
 选阵后、灵数尚未落牌时：`continue=numerology`，`stage=pending_numerology`（避免客户端误进普通洗切屏）。牌面锁定后与普通一样：`continue=interpret`。
@@ -212,7 +212,7 @@
 
 ### 4.4 解读
 
-`POST /api/app/v1/readings/{id}/interpret` 必须登录。普通抽牌 body 带 `spread_id` 和 `cards`；灵数牌已由 `/numerology` 落库时可空 body。
+`POST /api/app/v1/readings/{id}/interpret` 必须登录。普通与灵数均可 body 带 `spread_id` 和 `cards`（张数=牌阵张数）；若牌已由 `/numerology` 或上次 interpret 落库，可空 body。
 
 - [ ] 供应商已绑：`data` 含 Reading 字段（含 `status` / `continue` / `interpretation`）+ `messages`（类型二、一、三）
 - [ ] 未绑：失败可重试，不重复扣费
