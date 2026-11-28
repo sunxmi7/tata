@@ -323,6 +323,8 @@ export interface RedeemCode {
   kind: 'quota' | 'free_count' | string;
   amount: number;
   benefit_name: string;
+  sku_code?: string;
+  addon_deck_code?: string;
   max_redemptions: number | null;
   enabled: boolean;
   expires_at: string | null;
@@ -463,9 +465,11 @@ export function listRedeemCodes() {
 }
 
 export function createRedeemCodes(data: {
-  kind: string;
-  amount: number;
-  benefit_name: string;
+  sku_code?: string;
+  addon_deck_code?: string;
+  kind?: string;
+  amount?: number;
+  benefit_name?: string;
   code?: string;
   count?: number;
   max_redemptions?: number;
