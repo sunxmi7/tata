@@ -37,36 +37,34 @@ func TestAppP1RedeemRecordsCampaignsHelp(t *testing.T) {
 		t.Fatal(err)
 	}
 	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": code})
-	freeCode := fmt.Sprintf("P1F%d", time.Now().UnixNano())
+	quotaCode2 := fmt.Sprintf("P1Q%d", time.Now().UnixNano())
 	if _, err := store.Exec(t.Context(), `INSERT INTO redeem_codes(code, kind, amount, benefit_name, enabled)
-		VALUES ($1,'free_count',1,'免费一次',true)`, strings.ToUpper(freeCode)); err != nil {
+		VALUES ($1,'quota',10,'二次额度礼',true)`, strings.ToUpper(quotaCode2)); err != nil {
 		t.Fatal(err)
 	}
-	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": freeCode})
+	create(t, ts, token, "/api/app/v1/redeem", map[string]any{"code": quotaCode2})
 
 	got := listOne(t, ts, token, "/api/app/v1/redeem/records")
 	rows, _ := got["items"].([]any)
 	if len(rows) != 2 || got["fields_confirmed"] != false {
 		t.Fatalf("redeem records: %#v", got)
 	}
-	byKind := map[string]map[string]any{}
 	for _, raw := range rows {
 		row := raw.(map[string]any)
-		byKind[row["kind"].(string)] = row
 		if _, hasPrice := row["price"]; hasPrice {
 			t.Fatalf("invented price on redeem row: %#v", row)
 		}
+		if row["kind"] != "quota" || row["unit"] != "quota" || row["display_label"] != displayLabelQuota {
+			t.Fatalf("quota-only record: %#v", row)
+		}
 	}
-	quota := byKind["quota"]
-	if quota["benefit_name"] != "新春钻石礼" || quota["amount"].(float64) != 60 || quota["unit"] != "quota" || quota["display_label"] != displayLabelQuota {
-		t.Fatalf("diamond record: %#v", quota)
+	newer := rows[0].(map[string]any) // ORDER BY id DESC
+	older := rows[1].(map[string]any)
+	if newer["benefit_name"] != "二次额度礼" || newer["amount"].(float64) != 10 || newer["code"] == "" || newer["created_at"] == "" {
+		t.Fatalf("newer record: %#v", newer)
 	}
-	if quota["created_at"] == "" || quota["code"] == "" {
-		t.Fatalf("diamond record identity: %#v", quota)
-	}
-	free := byKind["free_count"]
-	if free["unit"] != "count" || free["display_label"] != nil || free["amount"].(float64) != 1 {
-		t.Fatalf("free record: %#v", free)
+	if older["benefit_name"] != "新春钻石礼" || older["amount"].(float64) != 60 || older["code"] == "" {
+		t.Fatalf("older record: %#v", older)
 	}
 	otherEmpty := listOne(t, ts, other, "/api/app/v1/redeem/records")
 	if otherItems, _ := otherEmpty["items"].([]any); len(otherItems) != 0 {

@@ -70,8 +70,11 @@ func (a *App) adminCreateRedeemCodes(w http.ResponseWriter, r *http.Request) err
 		return err
 	}
 	kind := strings.TrimSpace(req.Kind)
-	if kind != grantKindQuota && kind != grantKindFree {
-		return biz("兑换码类型只允许 quota 或 free_count")
+	if kind == "" {
+		kind = grantKindQuota
+	}
+	if kind != grantKindQuota {
+		return biz("兑换码只允许 quota")
 	}
 	if req.Amount <= 0 || req.Amount > grantMaxAmount {
 		return biz("兑换数量不正确")

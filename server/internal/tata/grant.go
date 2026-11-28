@@ -19,7 +19,7 @@ import (
 //
 // quota 写入 quota_balance，并记入 quota_lots。quota_bucket 只能是
 // subscription（套餐赠送）或 pack（补充包）。订阅有效期不改。
-// 免费次数不能从这里补。兑换码仍按码上的配置入账。
+// 免费次数不能从这里补；兑换码也只发额度（kind=quota）。
 // Reason on every grant row is admin_grant.
 
 const (

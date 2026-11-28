@@ -359,7 +359,7 @@
 
 必须登录。本地若没有启用中的码，这条可以记「无码可测」或去管理端建一条。
 
-- [ ] `POST /api/app/v1/redeem` `{"code":"实际兑换码"}`：成功则钻石或免费次数到账
+- [ ] `POST /api/app/v1/redeem` `{"code":"实际兑换码"}`：成功则额度到账（kind=quota）
 - [ ] 无效码「兑换码无效」；用过「兑换码已使用」；过期「兑换码已过期」
 - [ ] `GET /api/app/v1/redeem/records`：列表可空；fields_confirmed=false 是占位，不是失败
 

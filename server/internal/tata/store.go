@@ -197,11 +197,6 @@ ALTER TABLE app_users ADD COLUMN IF NOT EXISTS birth_place TEXT NOT NULL DEFAULT
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tarotist_trial_used BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS reading_trial_used BOOLEAN NOT NULL DEFAULT FALSE;
-UPDATE app_users u SET reading_trial_used=TRUE
-WHERE reading_trial_used=FALSE AND (
-  EXISTS (SELECT 1 FROM device_experiences d WHERE d.user_id=u.id AND d.consumed)
-  OR EXISTS (SELECT 1 FROM quota_charges c WHERE c.user_id=u.id AND c.entitlement='onboard_trial')
-);
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tease_off BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS spread_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE readings ADD COLUMN IF NOT EXISTS business_date TEXT NOT NULL DEFAULT '';
@@ -334,9 +329,6 @@ ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_expires_at TIMESTAMPT
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_quota INT;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_order_id BIGINT;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS pending_sku_kind TEXT NOT NULL DEFAULT '';
-ALTER TABLE iap_orders DROP CONSTRAINT IF EXISTS iap_orders_credit_chk;
-ALTER TABLE iap_orders ADD CONSTRAINT iap_orders_credit_chk
-  CHECK (credit_status IN ('none','credited','amount_unconfigured','skipped_expired','deferred'));
 CREATE INDEX IF NOT EXISTS subscriptions_store_txn_idx ON subscriptions(user_id, platform, store_original_transaction_id);
 CREATE TABLE IF NOT EXISTS iap_skus (
   id BIGSERIAL PRIMARY KEY,
@@ -403,6 +395,9 @@ CREATE TABLE IF NOT EXISTS iap_orders (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS iap_orders_platform_txn ON iap_orders(platform, store_transaction_id);
 CREATE INDEX IF NOT EXISTS iap_orders_user_idx ON iap_orders(user_id, id DESC);
+ALTER TABLE iap_orders DROP CONSTRAINT IF EXISTS iap_orders_credit_chk;
+ALTER TABLE iap_orders ADD CONSTRAINT iap_orders_credit_chk
+  CHECK (credit_status IN ('none','credited','amount_unconfigured','skipped_expired','deferred'));
 CREATE TABLE IF NOT EXISTS quota_balances (
   user_id BIGINT PRIMARY KEY,
   quota_balance INT NOT NULL DEFAULT 0,
@@ -548,7 +543,7 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT redeem_codes_kind_chk CHECK (kind IN ('quota','free_count')),
+  CONSTRAINT redeem_codes_kind_chk CHECK (kind = 'quota'),
   CONSTRAINT redeem_codes_amount_chk CHECK (amount > 0)
 );
 CREATE TABLE IF NOT EXISTS redeem_redemptions (
@@ -1002,6 +997,11 @@ CREATE TABLE IF NOT EXISTS device_experiences (
   consumed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+UPDATE app_users u SET reading_trial_used=TRUE
+WHERE reading_trial_used=FALSE AND (
+  EXISTS (SELECT 1 FROM device_experiences d WHERE d.user_id=u.id AND d.consumed)
+  OR EXISTS (SELECT 1 FROM quota_charges c WHERE c.user_id=u.id AND c.entitlement='onboard_trial')
+);
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS guide_completed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
 ALTER TABLE device_experiences ADD COLUMN IF NOT EXISTS birth_date TEXT NOT NULL DEFAULT '';
@@ -1040,6 +1040,21 @@ BEGIN
 END $$;
 `)
 	if err != nil {
+		return err
+	}
+	if _, err := s.Exec(ctx, `
+DELETE FROM redeem_redemptions WHERE code_id IN (SELECT id FROM redeem_codes WHERE kind <> 'quota');
+DELETE FROM redeem_codes WHERE kind <> 'quota';
+DO $$
+DECLARE def text;
+BEGIN
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'redeem_codes_kind_chk';
+  IF def IS NULL OR position('free_count' in def) > 0 THEN
+    ALTER TABLE redeem_codes DROP CONSTRAINT IF EXISTS redeem_codes_kind_chk;
+    ALTER TABLE redeem_codes ADD CONSTRAINT redeem_codes_kind_chk CHECK (kind = 'quota');
+  END IF;
+END $$;
+`); err != nil {
 		return err
 	}
 	if err := s.unifyPaymentCatalog(ctx); err != nil {
@@ -1188,7 +1203,7 @@ COMMENT ON COLUMN quota_balances.quota_balance IS '会员额度池合计，等�
 
 COMMENT ON TABLE rewards IS '免费次数账本。invite_remaining=邀请奖励；admin_grant_remaining=后台补发/兑换码。remaining 注册奖励已下线。';
 COMMENT ON COLUMN rewards.remaining IS '历史注册奖励，扣费不再读取。';
-COMMENT ON COLUMN rewards.admin_grant_remaining IS '管理端补发、兑换码 free_count。免费用户在邀请次数之后可扣。';
+COMMENT ON COLUMN rewards.admin_grant_remaining IS '历史人工/兑换免费次数余额。新兑换码不再写入；免费用户在邀请次数之后仍可扣存量。';
 COMMENT ON COLUMN rewards.invite_remaining IS '邀请奖励次数。不过日清，最多 15。与每日免费分开记账。';
 
 COMMENT ON TABLE quota_settings IS '计费参数。id=1。quota_cost 现为会员单次额度消耗，未配置为 null 不猜测。daily_free_count 默认 1。';
@@ -1214,7 +1229,7 @@ COMMENT ON TABLE daily_free_uses IS '并账后每日免费消耗明细。';
 COMMENT ON TABLE ledger IS '次数扣减流水。管理端 GET /admin/v1/ledger；IAP 额度记在 quota_ledger。';
 
 COMMENT ON TABLE admin_grants IS '管理端人工补发。新记录只写 kind=quota，bucket 为 subscription 或 pack。历史 free_count 只保留查询。';
-COMMENT ON TABLE redeem_codes IS '兑换码。kind=quota 入额度，free_count 入免费次数。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
+COMMENT ON TABLE redeem_codes IS '兑换码。仅 kind=quota 入统一额度。管理端 POST /redeem-codes 生成，App POST /redeem 核销。';
 COMMENT ON TABLE redeem_redemptions IS '兑换码核销记录。对应 GET /redeem/records。';
 
 COMMENT ON TABLE notification_preferences IS '通知三开关。今日/明日抽牌走本地通知；messages_enabled 控制优惠/活动推送。对应 /notification-preferences。';
