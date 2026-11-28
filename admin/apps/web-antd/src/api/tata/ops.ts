@@ -22,6 +22,7 @@ export interface AppUser {
   region_province?: string;
   region_city?: string;
   region_status?: string;
+  is_member?: boolean;
 }
 
 export interface AdminPage<T> {

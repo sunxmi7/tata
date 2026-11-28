@@ -8,11 +8,12 @@ import (
 )
 
 func TestAdminUsersPageAndSearch(t *testing.T) {
-	_, ts := newMergeServer(t)
+	store, ts := newMergeServer(t)
 	admin := login(t, ts, "/api/admin/v1/auth/login", map[string]string{"username": "admin", "password": "admin123"})
 	email := fmt.Sprintf("ops-user-%d@tata.local", time.Now().UnixNano())
 	token := register(t, ts, email)
-	_ = token
+	me := listOne(t, ts, token, "/api/app/v1/profile")
+	uid := asID(me["id"])
 
 	page := listOne(t, ts, admin.access, "/api/admin/v1/users?limit=10&offset=0")
 	if page["total"] == nil || page["items"] == nil {
@@ -25,6 +26,19 @@ func TestAdminUsersPageAndSearch(t *testing.T) {
 	found := list(t, ts, admin.access, "/api/admin/v1/users?q="+email)
 	if len(found) != 1 {
 		t.Fatalf("search by email: %#v", found)
+	}
+	if found[0]["is_member"] != false {
+		t.Fatalf("non-member should be false: %#v", found[0])
+	}
+	setMember(t, store, uid, "month")
+	found = list(t, ts, admin.access, "/api/admin/v1/users?q="+email)
+	if len(found) != 1 || found[0]["is_member"] != true {
+		t.Fatalf("active member should be true: %#v", found)
+	}
+	detail := listOne(t, ts, admin.access, fmt.Sprintf("/api/admin/v1/users/%d", uid))
+	user := detail["user"].(map[string]any)
+	if user["is_member"] != true {
+		t.Fatalf("user detail is_member: %#v", user)
 	}
 }
 

@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+const adminUserSelectCols = `id, email, wechat_openid, apple_sub, phone,
+		COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), tarotist_trial_used, tease_off, cancelled_at, created_at,
+		COALESCE(name,''), COALESCE(avatar_url,''), gender, birth_date, COALESCE(explore_preferences,'[]'),
+		merged_into, COALESCE(register_ip,''), COALESCE(region_province,''), COALESCE(region_city,''), COALESCE(region_status,''),
+		EXISTS(
+			SELECT 1 FROM subscriptions s
+			WHERE s.user_id = app_users.id
+			  AND s.status = 'active'
+			  AND s.expires_at > now()
+			  AND s.merge_state NOT IN ('superseded','expired')
+		)`
+
 func (a *App) adminListUsers(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.adminActor(r, false); err != nil {
 		return err
@@ -26,10 +38,7 @@ func (a *App) adminListUsers(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	args = append(args, page.Limit, page.Offset)
-	rows, err := a.Store.Query(r.Context(), `SELECT id, email, wechat_openid, apple_sub, phone,
-		COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), tarotist_trial_used, tease_off, cancelled_at, created_at,
-		COALESCE(name,''), COALESCE(avatar_url,''), gender, birth_date, COALESCE(explore_preferences,'[]'),
-		merged_into, COALESCE(register_ip,''), COALESCE(region_province,''), COALESCE(region_city,''), COALESCE(region_status,'')
+	rows, err := a.Store.Query(r.Context(), `SELECT `+adminUserSelectCols+`
 		FROM app_users WHERE `+where+` ORDER BY created_at DESC, id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return err
@@ -60,10 +69,7 @@ func (a *App) adminExportUsers(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	args = append(args, 10000)
-	rows, err := a.Store.Query(r.Context(), `SELECT id, email, wechat_openid, apple_sub, phone,
-		COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), tarotist_trial_used, tease_off, cancelled_at, created_at,
-		COALESCE(name,''), COALESCE(avatar_url,''), gender, birth_date, COALESCE(explore_preferences,'[]'),
-		merged_into, COALESCE(register_ip,''), COALESCE(region_province,''), COALESCE(region_city,''), COALESCE(region_status,'')
+	rows, err := a.Store.Query(r.Context(), `SELECT `+adminUserSelectCols+`
 		FROM app_users WHERE `+where+` ORDER BY created_at DESC, id DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return err
@@ -74,6 +80,10 @@ func (a *App) adminExportUsers(w http.ResponseWriter, r *http.Request) error {
 		item, err := scanAdminUser(r, rows)
 		if err != nil {
 			return err
+		}
+		member := "否"
+		if item["is_member"] == true {
+			member = "是"
 		}
 		csvRows = append(csvRows, []string{
 			fmt.Sprint(item["id"]),
@@ -88,6 +98,7 @@ func (a *App) adminExportUsers(w http.ResponseWriter, r *http.Request) error {
 			fmt.Sprint(item["region_province"]),
 			fmt.Sprint(item["region_city"]),
 			fmt.Sprint(item["register_ip"]),
+			member,
 			nullCSV(item["cancelled_at"]),
 			nullCSV(item["merged_into"]),
 			fmt.Sprint(item["created_at"]),
@@ -99,7 +110,7 @@ func (a *App) adminExportUsers(w http.ResponseWriter, r *http.Request) error {
 	a.Store.audit(r.Context(), act.id, "export", "app_user", "", fmt.Sprintf("rows=%d", len(csvRows)))
 	return writeCSV(w, "users.csv", []string{
 		"id", "name", "email", "phone", "wechat_openid", "apple_sub", "gender", "birth_date",
-		"timezone", "region_province", "region_city", "register_ip", "cancelled_at", "merged_into", "created_at",
+		"timezone", "region_province", "region_city", "register_ip", "is_member", "cancelled_at", "merged_into", "created_at",
 	}, csvRows)
 }
 
@@ -111,10 +122,7 @@ func (a *App) adminGetUser(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	row := a.Store.QueryRow(r.Context(), `SELECT id, email, wechat_openid, apple_sub, phone,
-		COALESCE(NULLIF(timezone,''),'Asia/Shanghai'), tarotist_trial_used, tease_off, cancelled_at, created_at,
-		COALESCE(name,''), COALESCE(avatar_url,''), gender, birth_date, COALESCE(explore_preferences,'[]'),
-		merged_into, COALESCE(register_ip,''), COALESCE(region_province,''), COALESCE(region_city,''), COALESCE(region_status,'')
+	row := a.Store.QueryRow(r.Context(), `SELECT `+adminUserSelectCols+`
 		FROM app_users WHERE id=$1`, id)
 	user, err := scanAdminUser(r, row)
 	if err == sql.ErrNoRows {
@@ -241,12 +249,12 @@ func scanAdminUser(r *http.Request, row scannable) (map[string]any, error) {
 	var id int64
 	var email, openid, apple, phone, gender, birth *string
 	var tz, name, avatar, prefs, registerIP, province, city, regionStatus string
-	var trial, tease bool
+	var trial, tease, isMember bool
 	var cancelled *time.Time
 	var created time.Time
 	var merged *int64
 	if err := row.Scan(&id, &email, &openid, &apple, &phone, &tz, &trial, &tease, &cancelled, &created,
-		&name, &avatar, &gender, &birth, &prefs, &merged, &registerIP, &province, &city, &regionStatus); err != nil {
+		&name, &avatar, &gender, &birth, &prefs, &merged, &registerIP, &province, &city, &regionStatus, &isMember); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -257,6 +265,7 @@ func scanAdminUser(r *http.Request, row scannable) (map[string]any, error) {
 		"gender": gender, "birth_date": birth, "explore_preferences": parseExplorePreferences(prefs),
 		"merged_into": merged, "register_ip": registerIP,
 		"region_province": province, "region_city": city, "region_status": regionStatus,
+		"is_member": isMember,
 	}, nil
 }
 
