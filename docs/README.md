@@ -19,7 +19,7 @@
 
 App 路由现为 **76** 条（含公开 `GET /uploads/{name}`）、完整契约 **154** 条，与 `routes.go` 仍 1:1。管理端可查 `GET /api/admin/v1/wishlists`（功能心愿单）、`GET /api/admin/v1/feedback`（反馈意见）。
 
-管理端兑换码：`GET/POST /api/admin/v1/redeem-codes`、`PUT /redeem-codes/{id}`。付费模块可写才能生成或停用。空码自动生成 `XXXX-XXXX`，App 仍走 `POST /api/app/v1/redeem` 核销。
+管理端兑换码：`GET/POST /api/admin/v1/redeem-codes`、`PUT /redeem-codes/{id}`。仅 `kind=quota` 额度码；`free_count` 已下线。付费模块可写才能生成或停用。空码自动生成 `XXXX-XXXX`，App 仍走 `POST /api/app/v1/redeem` 核销。
 
 下线塔塔币字段：人工执行 [sql/drop_tata_coin_2026-11-17.sql](./sql/drop_tata_coin_2026-11-17.sql)，不随服务启动自动跑。执行前备份。代码只读写 `quota_balance`。
 

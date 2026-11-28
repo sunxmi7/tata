@@ -29,8 +29,14 @@ func TestAdminRedeemCodes(t *testing.T) {
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/redeem-codes", map[string]any{
 		"kind": "other", "amount": 10, "benefit_name": "错",
 	})
-	if msg != "兑换码类型只允许 quota 或 free_count" {
+	if msg != "兑换码只允许 quota" {
 		t.Fatalf("kind: %s", msg)
+	}
+	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/redeem-codes", map[string]any{
+		"kind": "free_count", "amount": 1, "benefit_name": "旧免费",
+	})
+	if msg != "兑换码只允许 quota" {
+		t.Fatalf("free_count: %s", msg)
 	}
 	msg, _ = call(t, ts, admin.access, http.MethodPost, "/api/admin/v1/redeem-codes", map[string]any{
 		"kind": "quota", "amount": 10, "benefit_name": "礼", "count": 2, "code": "CUSTOM1",
@@ -76,7 +82,7 @@ func TestAdminRedeemCodes(t *testing.T) {
 	}
 
 	batch := create(t, ts, admin.access, "/api/admin/v1/redeem-codes", map[string]any{
-		"kind": "free_count", "amount": 2, "benefit_name": "体验次数", "count": 3, "max_redemptions": 1,
+		"kind": "quota", "amount": 20, "benefit_name": "批量额度", "count": 3, "max_redemptions": 1,
 	})
 	batchItems, _ := batch["items"].([]any)
 	if len(batchItems) != 3 {
@@ -86,6 +92,9 @@ func TestAdminRedeemCodes(t *testing.T) {
 	for _, raw := range batchItems {
 		item := raw.(map[string]any)
 		code := item["code"].(string)
+		if item["kind"] != "quota" {
+			t.Fatalf("batch kind: %#v", item)
+		}
 		if _, ok := seen[code]; ok || !strings.Contains(code, "-") {
 			t.Fatalf("batch code: %#v", item)
 		}
@@ -95,7 +104,7 @@ func TestAdminRedeemCodes(t *testing.T) {
 	first := batchItems[0].(map[string]any)
 	batchID := int64(first["id"].(float64))
 	_, raw := call(t, ts, admin.access, http.MethodPut, fmt.Sprintf("/api/admin/v1/redeem-codes/%d", batchID), map[string]any{
-		"enabled": false, "benefit_name": "已停用体验",
+		"enabled": false, "benefit_name": "已停用额度",
 	})
 	var env struct {
 		Code int            `json:"code"`
@@ -106,7 +115,7 @@ func TestAdminRedeemCodes(t *testing.T) {
 	}
 	updatedItems, _ := env.Data["items"].([]any)
 	updated := updatedItems[0].(map[string]any)
-	if updated["enabled"] != false || updated["benefit_name"] != "已停用体验" {
+	if updated["enabled"] != false || updated["benefit_name"] != "已停用额度" {
 		t.Fatalf("updated: %#v", updated)
 	}
 	if msg, _ := call(t, ts, token, http.MethodPost, "/api/app/v1/redeem", map[string]any{"code": first["code"]}); msg != "兑换码无效" {

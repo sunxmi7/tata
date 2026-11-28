@@ -175,21 +175,13 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 			return biz("兑换码已使用")
 		}
 	}
-	now := time.Now().UTC()
-	var ledgerID any
-	switch kind {
-	case "quota":
-		id, err := creditRedeemQuota(r.Context(), tx, uid, amount, codeID)
-		if err != nil {
-			return err
-		}
-		ledgerID = id
-	case "free_count":
-		if err := creditRedeemFree(r.Context(), tx, uid, amount); err != nil {
-			return err
-		}
-	default:
+	if kind != grantKindQuota {
 		return biz("兑换码无效")
+	}
+	now := time.Now().UTC()
+	ledgerID, err := creditRedeemQuota(r.Context(), tx, uid, amount, codeID)
+	if err != nil {
+		return err
 	}
 	if _, err := tx.Exec(r.Context(), `INSERT INTO redeem_redemptions(code_id, user_id, quota_ledger_id, created_at)
 		VALUES ($1,$2,$3,$4)`, codeID, uid, ledgerID, now); err != nil {
@@ -198,14 +190,10 @@ func (a *App) appRedeem(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
-	unit := "quota"
-	if kind == "free_count" {
-		unit = "count"
-	}
 	quota, _ := loadQuotaBalance(r.Context(), a.Store, uid)
 	writeOK(w, map[string]any{
-		"code": code, "benefit_name": benefit, "kind": kind, "amount": amount,
-		"unit": unit, "display_label": T(r.Context(), displayLabelQuota),
+		"code": code, "benefit_name": benefit, "kind": grantKindQuota, "amount": amount,
+		"unit": "quota", "display_label": T(r.Context(), displayLabelQuota),
 		"quota_remaining": quota, "balance": quota,
 	})
 	return nil
@@ -221,16 +209,6 @@ func creditRedeemQuota(ctx context.Context, tx Tx, uid int64, amount int, codeID
 		return 0, err
 	}
 	return ledgerID, nil
-}
-
-func creditRedeemFree(ctx context.Context, tx Tx, uid int64, amount int) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO rewards(user_id, granted_at, expires_at, remaining, admin_grant_remaining)
-		VALUES ($1, now(), now(), 0, 0)
-		ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE rewards SET admin_grant_remaining = admin_grant_remaining + $2 WHERE user_id=$1`, uid, amount)
-	return err
 }
 
 func (a *App) appWalletLedger(w http.ResponseWriter, r *http.Request) error {

@@ -1993,7 +1993,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Authorization'
       description: |
-        必须登录。成功时 quota 类兑换写入统一额度，free_count 写入免费次数。
+        必须登录。成功时写入统一额度（kind=quota）。free_count 已下线。
         无效码 message=兑换码无效；已核销=兑换码已使用；过期=兑换码已过期。到账数量以账本为准。
       requestBody:
         required: true
@@ -5754,18 +5754,19 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [quota, free_count]
-          description: quota 入额度；free_count 入免费次数。
+          enum: [quota]
+          description: 仅 quota，写入统一额度。
         amount:
           type: integer
-          description: 到账数量。
+          description: 到账额度数量。
         unit:
           type: string
-          description: quota 或 count。
+          enum: [quota]
+          description: 固定为 quota。
         display_label:
           type: string
           example: 额度
-          description: kind=quota 时为「额度」。
+          description: UI 展示名「额度」。
         quota_remaining:
           type: integer
           description: 核销后统一额度。
@@ -5966,19 +5967,18 @@ components:
           description: 权益名称。
         kind:
           type: string
-          enum: [quota, free_count]
-          description: 到账类型。
+          enum: [quota]
+          description: 到账类型，仅 quota。
         amount:
           type: integer
-          description: 到账数量。
+          description: 到账额度数量。
         unit:
           type: string
-          enum: [quota, count]
-          description: quota 或 count。
+          enum: [quota]
+          description: 固定为 quota。
         display_label:
           type: string
-          nullable: true
-          description: kind=quota 时为「额度」。免费次数为 null。
+          description: UI 展示名「额度」。
     CampaignList:
       type: object
       properties:
